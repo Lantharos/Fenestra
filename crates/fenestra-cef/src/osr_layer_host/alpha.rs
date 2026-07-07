@@ -34,7 +34,6 @@ impl LayerAlphaModifier {
                 0,
                 factor,
             );
-            wl_proxy_marshal_flags(self.surface, SURFACE_COMMIT, ptr::null(), 1, 0);
             wl_display_flush(self.display);
         }
         true
@@ -244,7 +243,6 @@ unsafe impl Sync for InterfaceTypes {}
 const ALPHA_MANAGER_INTERFACE_NAME: &[u8] = b"wp_alpha_modifier_v1";
 const DISPLAY_GET_REGISTRY: u32 = 1;
 const REGISTRY_BIND: u32 = 0;
-const SURFACE_COMMIT: u32 = 6;
 const ALPHA_MANAGER_DESTROY: u32 = 0;
 const ALPHA_MANAGER_GET_SURFACE: u32 = 1;
 const ALPHA_SURFACE_DESTROY: u32 = 0;

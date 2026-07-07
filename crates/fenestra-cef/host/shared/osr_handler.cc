@@ -1455,12 +1455,13 @@ bool FenestraOsrHandler::IsNativePopupBrowser(CefRefPtr<CefBrowser> browser) con
 }
 
 bool FenestraOsrHandler::OpenNativePopup(const std::string& html,
+                                         const std::string& page_url,
                                          int x,
                                          int y,
                                          int width,
                                          int height) {
   CEF_REQUIRE_UI_THREAD();
-  if (html.empty()) {
+  if (html.empty() && page_url.empty()) {
     CloseNativePopup();
     return false;
   }
@@ -1468,7 +1469,7 @@ bool FenestraOsrHandler::OpenNativePopup(const std::string& html,
   native_popup_rect_ = CefRect(x, y, std::max(1, width), std::max(1, height));
   native_popup_pending_ = true;
   native_popup_visible_ = false;
-  native_popup_url_ = DataUri(html);
+  native_popup_url_ = page_url.empty() ? DataUri(html) : page_url;
 
   CefBrowserSettings browser_settings;
   browser_settings.windowless_frame_rate = std::max(1, active_frame_rate_);
@@ -1522,6 +1523,7 @@ bool FenestraOsrHandler::HandleBridgeCommand(CefRefPtr<CefBrowser> browser,
   }
   if (command == "fenestra.popup.open") {
     const bool opened = OpenNativePopup(JsonStringValue(payload, "html"),
+                                        JsonStringValue(payload, "url"),
                                         JsonIntValue(payload, "x", 0),
                                         JsonIntValue(payload, "y", 0),
                                         JsonIntValue(payload, "width", 1),

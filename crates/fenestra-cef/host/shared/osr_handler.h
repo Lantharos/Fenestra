@@ -131,7 +131,12 @@ class FenestraOsrHandler : public CefClient,
                            const std::string& url);
   bool HandleWindowCommand(CefRefPtr<CefBrowser> browser, const std::string& url);
   bool IsNativePopupBrowser(CefRefPtr<CefBrowser> browser) const;
-  bool OpenNativePopup(const std::string& html, int x, int y, int width, int height);
+  bool OpenNativePopup(const std::string& html,
+                       const std::string& page_url,
+                       int x,
+                       int y,
+                       int width,
+                       int height);
   void CloseNativePopup();
   void RequestNativeClose();
 	  void InstallBridge(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame);

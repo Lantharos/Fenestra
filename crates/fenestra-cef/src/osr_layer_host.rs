@@ -40,12 +40,27 @@ use shell::{anchor_for_shell, keyboard_for_shell, layer_for_shell};
 use socket::{LayerHostEvent, open_socket_reader, spawn_layer_bridge_proxy};
 
 pub(crate) fn run(config: OsrHostConfig) -> Result<(), String> {
-    let shell_surface = config
+    let mut shell_surface = config
         .shell_surface
         .clone()
         .ok_or_else(|| "missing Fenestra shell surface options".to_string())?;
+    if shell_surface
+        .size
+        .is_none_or(|(width, height)| height == 0 || (width == 0 && !shell_surface.anchor.left && !shell_surface.anchor.right))
+    {
+        let (width, height) = shell_surface.size.unwrap_or((0, 0));
+        shell_surface.size = Some((
+            if width == 0 && shell_surface.anchor.left && shell_surface.anchor.right {
+                0
+            } else {
+                config.width.max(1)
+            },
+            height.max(config.height.max(1)),
+        ));
+    }
+    let layer_size = shell_surface.size.unwrap_or((config.width.max(1), config.height.max(1)));
     let mut window_state = WindowState::new(&shell_surface.namespace)
-        .with_option_size(shell_surface.size)
+        .with_size(layer_size)
         .with_layer(layer_for_shell(shell_surface.layer))
         .with_anchor(anchor_for_shell(shell_surface.anchor))
         .with_margin((
@@ -260,7 +275,7 @@ impl OsrLayerHost {
                 self.send_resize();
                 if self.visible && self.main_frame_ready() {
                     self.refresh_surface(state, id);
-                } else {
+                } else if self.visible {
                     self.hide_surface(state);
                 }
             }
@@ -353,12 +368,13 @@ impl OsrLayerHost {
         match event {
             LayerHostEvent::Connected(stream) => {
                 self.socket = Some(Arc::new(Mutex::new(stream)));
-                self.set_surface_alpha(self.surface_alpha, state);
+                if self.visible {
+                    self.set_surface_alpha(self.surface_alpha, state);
+                } else {
+                    self.force_suspend("hidden");
+                }
                 self.send_resize();
                 self.force_current_lifecycle("connect");
-                if !self.visible {
-                    self.hide_surface(state);
-                }
             }
             LayerHostEvent::Message(OsrMessage::Frame(frame)) => {
                 if self.visible {
@@ -714,7 +730,11 @@ impl OsrLayerHost {
     }
 
     fn hide_surface(&mut self, state: &mut WindowState<()>) {
+        if !self.surface_mapped {
+            return;
+        }
         let unit = state.main_window();
+        self.ensure_layer_unit_size(unit);
         unit.set_keyboard_interactivity(keyboard_for_shell(
             ShellSurfaceKeyboardInteractivity::None,
         ));
@@ -1074,6 +1094,7 @@ impl OsrLayerHost {
     }
 
     fn commit_surface(&mut self, unit: &layershellev::WindowStateUnit<()>, damage: DamageRect) {
+        self.ensure_layer_unit_size(unit);
         let Some(buffer) = self.wayland_buffer.as_ref() else {
             unit.refresh();
             self.surface_mapped = true;
@@ -1094,6 +1115,31 @@ impl OsrLayerHost {
         );
         surface.commit();
         self.surface_mapped = true;
+    }
+
+    fn ensure_layer_unit_size(&self, unit: &layershellev::WindowStateUnit<()>) {
+        let (width, height) = self.layer_commit_size();
+        unit.set_size((width, height));
+    }
+
+    fn layer_commit_size(&self) -> (u32, u32) {
+        if let Some(shell_surface) = &self.config.shell_surface {
+            if let Some((width, height)) = shell_surface.size {
+                let width = if width == 0
+                    && shell_surface.anchor.left
+                    && shell_surface.anchor.right
+                {
+                    0
+                } else {
+                    width.max(1)
+                };
+                return (width, height.max(1));
+            }
+        }
+        (
+            self.surface_size.0.max(1),
+            self.surface_size.1.max(1),
+        )
     }
 }
 

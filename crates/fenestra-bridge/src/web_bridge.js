@@ -142,6 +142,7 @@
           width: Math.max(1, Math.round(Number(options.width) || 1)),
           height: Math.max(1, Math.round(Number(options.height) || 1)),
           html: String(options.html || ""),
+          url: String(options.url || ""),
         });
       },
       close() {
