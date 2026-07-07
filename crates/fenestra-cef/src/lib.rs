@@ -133,7 +133,7 @@ pub(crate) fn apply_cef_launch_args(
     options: &CefLaunchOptions,
     dev_mode: bool,
 ) {
-    let mut enabled_features = Vec::new();
+    let mut enabled_features: Vec<&str> = Vec::new();
     #[cfg(target_os = "linux")]
     {
         command.arg("--ozone-platform=wayland");
