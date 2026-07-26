@@ -24,7 +24,10 @@
 
 use std::sync::Arc;
 
-use fenestra_bridge::{BridgeResult, WindowCommand, parse_bridge_url};
+use fenestra_bridge::{
+    BridgeCommand, POPUP_CLOSE_COMMAND, POPUP_OPEN_COMMAND, WindowCommand, guest::is_guest_command,
+    parse_bridge_url,
+};
 use webview2_com::{
     AddScriptToExecuteOnDocumentCreatedCompletedHandler, ExecuteScriptCompletedHandler,
     Microsoft::Web::WebView2::Win32::{
@@ -128,10 +131,16 @@ fn handle_navigation_starting(
         );
         return;
     }
-    // Guest and popup commands are host-owned; the app's registry never
-    // sees them.
-    if let Some(response) = guest_commands::dispatch(&inner, &request.command) {
-        emit_bridge_response(&webview, &request.id, response);
+    // Guest/popup commands create WebView2 controllers. Doing that inside
+    // NavigationStarting (with a nested message pump) deadlocks — the
+    // CreateCoreWebView2Controller callback never runs. Defer to the
+    // winit loop and resolve the bridge promise afterward.
+    if should_defer_guest_command(&request.command.name) {
+        let _ = WebView2UserEvent::GuestBridge {
+            request_id: request.id,
+            command: request.command,
+        }
+        .dispatch_and_wake(&inner);
         return;
     }
     let runtime = inner.bridge_runtime.lock().unwrap().clone();
@@ -146,6 +155,33 @@ fn handle_navigation_starting(
     };
     let response = runtime.dispatch(request.command);
     emit_bridge_response(&webview, &request.id, response);
+}
+
+fn should_defer_guest_command(name: &str) -> bool {
+    name == POPUP_OPEN_COMMAND || name == POPUP_CLOSE_COMMAND || is_guest_command(name)
+}
+
+/// Run a deferred guest/popup bridge command on the UI loop and resolve
+/// the page-side promise.
+pub(crate) fn complete_guest_bridge(
+    inner: &Arc<WebView2ProcessInner>,
+    request_id: &str,
+    command: BridgeCommand,
+) {
+    let response = guest_commands::dispatch(inner, &command).unwrap_or_else(|| {
+        Err(fenestra_bridge::BridgeError::new(format!(
+            "unhandled guest command: {}",
+            command.name
+        )))
+    });
+    let webview = inner
+        .webview
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    if let Some(webview) = webview {
+        emit_bridge_response(&webview, request_id, response);
+    }
 }
 
 fn handle_web_message(

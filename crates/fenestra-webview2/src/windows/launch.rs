@@ -154,8 +154,12 @@ pub(crate) fn launch(
                 event_tx.clone(),
                 command_allowlist.clone(),
             )),
+            wake: Mutex::new(None),
         })
     };
+
+    let proxy = event_loop.create_proxy();
+    *inner.wake.lock().unwrap() = Some(proxy);
 
     let desktop = desktop_services::apply_windows_desktop_services(
         window.config.desktop_services.tray_icon.as_ref(),
@@ -413,6 +417,12 @@ impl LaunchApp {
             }
             WebView2UserEvent::GuestOpenRequested { parent, url } => {
                 guest_commands::open_requested_guest(&self.state.inner, &parent, &url);
+            }
+            WebView2UserEvent::GuestBridge {
+                request_id,
+                command,
+            } => {
+                bridge::complete_guest_bridge(&self.state.inner, &request_id, command);
             }
             WebView2UserEvent::SetVisible(visible) => {
                 if visible {
@@ -1038,6 +1048,12 @@ pub enum WebView2UserEvent {
         parent: String,
         url: String,
     },
+    /// Deferred `fenestra.guest.*` / popup bridge work. Must not run inside
+    /// a WebView2 NavigationStarting callback (controller create deadlocks).
+    GuestBridge {
+        request_id: String,
+        command: fenestra_bridge::BridgeCommand,
+    },
     SetVisible(bool),
     Show,
     Hide,
@@ -1051,5 +1067,15 @@ pub enum WebView2UserEvent {
 impl WebView2UserEvent {
     pub(crate) fn dispatch(self, sender: &Sender<Self>) -> bool {
         sender.send(self).is_ok()
+    }
+
+    pub(crate) fn dispatch_and_wake(self, inner: &Arc<WebView2ProcessInner>) -> bool {
+        let ok = inner.event_sender.send(self).is_ok();
+        if let Ok(wake) = inner.wake.lock()
+            && let Some(proxy) = wake.as_ref()
+        {
+            proxy.wake_up();
+        }
+        ok
     }
 }

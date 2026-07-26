@@ -882,6 +882,7 @@ pub(crate) struct WebView2ProcessInner {
     pub(crate) hide_on_blur: std::sync::atomic::AtomicBool,
     pub(crate) desktop_services: Mutex<Option<desktop_services::WindowsDesktopServiceState>>,
     pub(crate) guests: Mutex<guest::GuestManager>,
+    pub(crate) wake: Mutex<Option<winit::event_loop::EventLoopProxy>>,
 }
 
 impl WebView2Process {
