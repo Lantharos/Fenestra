@@ -47,10 +47,42 @@ use crate::{WebView2Config, WebView2Result};
 
 static FRAMELESS_ORIG_WNDPROC: Mutex<Option<HashMap<isize, isize>>> = Mutex::new(None);
 
-/// Pixel band left around the WebView2 controller so the host HWND can
-/// receive edge hit-tests. Without this, WebView2 eats all mouse input
-/// and borderless windows cannot be resized from the sides.
+/// Pixel band used for frameless edge-resize hit testing.
 pub(crate) const FRAMELESS_RESIZE_BORDER: i32 = 6;
+
+/// Start a Win32 non-client resize drag for a frameless window.
+pub(crate) fn begin_resize(hwnd: isize, hit: &str) -> bool {
+    if hwnd == 0 {
+        return false;
+    }
+    use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT,
+        SendMessageW, WM_NCLBUTTONDOWN,
+    };
+    let ht = match hit {
+        "left" | "HTLEFT" => HTLEFT,
+        "right" | "HTRIGHT" => HTRIGHT,
+        "top" | "HTTOP" => HTTOP,
+        "bottom" | "HTBOTTOM" => HTBOTTOM,
+        "top-left" | "HTTOPLEFT" => HTTOPLEFT,
+        "top-right" | "HTTOPRIGHT" => HTTOPRIGHT,
+        "bottom-left" | "HTBOTTOMLEFT" => HTBOTTOMLEFT,
+        "bottom-right" | "HTBOTTOMRIGHT" => HTBOTTOMRIGHT,
+        _ => return false,
+    };
+    let win = HWND(hwnd as *mut _);
+    unsafe {
+        let _ = ReleaseCapture();
+        SendMessageW(
+            win,
+            WM_NCLBUTTONDOWN,
+            Some(WPARAM(ht as usize)),
+            Some(LPARAM(0)),
+        );
+    }
+    true
+}
 
 /// Show the window. Equivalent to `ShowWindow(hwnd, SW_SHOW)`.
 pub(crate) fn show_window(hwnd: isize) -> bool {
@@ -323,9 +355,9 @@ fn install_frameless_wndproc(hwnd: isize) {
 }
 
 /// Eat the non-client area so even if caption styles flicker back during
-/// resize/maximize, Windows cannot paint the default title bar. Also
-/// map edge pixels to resize hit-tests (WebView2 is inset so these
-/// reach the host HWND).
+/// resize/maximize, Windows cannot paint the default title bar. Edge resize
+/// for frameless windows is driven by page-side hit strips that call
+/// `begin_resize` (WebView2 stays edge-to-edge).
 unsafe extern "system" fn frameless_wnd_proc(
     hwnd: HWND,
     msg: u32,

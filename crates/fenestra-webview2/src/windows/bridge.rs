@@ -172,13 +172,17 @@ fn handle_web_message(
 }
 
 fn dispatch_window_command(inner: &Arc<WebView2ProcessInner>, action: &str) -> bool {
+    if let Some(hit) = action.strip_prefix("begin-resize/") {
+        let hwnd = inner.hwnd.load(std::sync::atomic::Ordering::Relaxed);
+        return crate::windows::host_controls::begin_resize(hwnd, hit);
+    }
     let event = match action {
         "show" => WebView2UserEvent::Show,
         "hide" => WebView2UserEvent::Hide,
         "focus" => WebView2UserEvent::Focus,
         "minimize" => WebView2UserEvent::Minimize,
-        "maximize" => WebView2UserEvent::Maximize,
-        "unmaximize" => WebView2UserEvent::Unmaximize,
+        "maximize" | "toggle-maximize" => WebView2UserEvent::Maximize,
+        "unmaximize" | "restore" => WebView2UserEvent::Unmaximize,
         "close" => WebView2UserEvent::Exit,
         _ => return false,
     };

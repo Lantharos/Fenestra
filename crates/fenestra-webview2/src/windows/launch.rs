@@ -633,6 +633,8 @@ fn create_webview2(
         config.transparent || config.effective_background_effect().requires_transparency();
     if needs_clear_bg {
         set_webview_transparent_background(&controller);
+    } else {
+        set_webview_opaque_background(&controller, 0x0a, 0x0a, 0x0a);
     }
 
     let webview = unsafe { controller.CoreWebView2() }.map_err(|error| {
@@ -701,25 +703,17 @@ fn controller_bounds(
 fn controller_bounds_for_size(
     width: u32,
     height: u32,
-    frameless: bool,
-    hwnd: isize,
-    work_area_maximized: bool,
+    _frameless: bool,
+    _hwnd: isize,
+    _work_area_maximized: bool,
 ) -> windows::Win32::Foundation::RECT {
-    let inset = if frameless
-        && !work_area_maximized
-        && !super::host_controls::is_zoomed(hwnd)
-    {
-        super::host_controls::FRAMELESS_RESIZE_BORDER
-    } else {
-        0
-    };
-    let right = (width as i32).saturating_sub(inset);
-    let bottom = (height as i32).saturating_sub(inset);
+    // Keep WebView2 edge-to-edge. Frameless resize is handled by injected
+    // edge hit strips (see regions.rs) that ask the host to begin an NC drag.
     windows::Win32::Foundation::RECT {
-        left: inset,
-        top: inset,
-        right: right.max(inset + 1),
-        bottom: bottom.max(inset + 1),
+        left: 0,
+        top: 0,
+        right: (width as i32).max(1),
+        bottom: (height as i32).max(1),
     }
 }
 
@@ -769,24 +763,35 @@ fn platform_event_payload(
 fn set_webview_transparent_background(
     controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,
 ) {
+    set_webview_background_color(controller, 0, 0, 0, 0);
+}
+
+fn set_webview_opaque_background(
+    controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,
+    r: u8,
+    g: u8,
+    b: u8,
+) {
+    set_webview_background_color(controller, 255, r, g, b);
+}
+
+fn set_webview_background_color(
+    controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,
+    a: u8,
+    r: u8,
+    g: u8,
+    b: u8,
+) {
     match controller.cast::<ICoreWebView2Controller2>() {
         Ok(controller2) => {
             let color = COREWEBVIEW2_COLOR {
-                A: 0,
-                R: 0,
-                G: 0,
-                B: 0,
+                A: a,
+                R: r,
+                G: g,
+                B: b,
             };
             if let Err(error) = unsafe { controller2.SetDefaultBackgroundColor(color) } {
-                eprintln!("fenestra: WebView2 transparent background failed: {error}");
-                return;
-            }
-            let mut got = COREWEBVIEW2_COLOR::default();
-            if unsafe { controller2.DefaultBackgroundColor(&mut got) }.is_ok() && got.A != 0 {
-                eprintln!(
-                    "fenestra: WebView2 DefaultBackgroundColor stayed opaque (A={})",
-                    got.A
-                );
+                eprintln!("fenestra: WebView2 background color failed: {error}");
             }
         }
         Err(error) => {
@@ -870,8 +875,8 @@ fn spawn_dev_command(command: Option<&str>) -> Option<std::process::Child> {
     process.arg("/C").arg(command);
     process
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
         .spawn()
         .ok()
 }

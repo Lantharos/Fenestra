@@ -62,10 +62,17 @@
   };
 
   const windowCommand = function (action, params) {
-    window.location.href =
+    const url =
       "fenestra://window/" +
       action +
       encodeQuery(Object.assign({ at: Date.now() + "-" + Math.random() }, params || {}));
+    try {
+      if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {
+        window.chrome.webview.postMessage(url);
+        return;
+      }
+    } catch (e) {}
+    window.location.href = url;
   };
 
   window.fenestra = window.fenestra || {};
