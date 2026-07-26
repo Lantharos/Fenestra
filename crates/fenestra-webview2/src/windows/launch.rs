@@ -217,13 +217,15 @@ impl ApplicationHandler for LaunchApp {
         }
         let dwm_glass = super::host_controls::wants_dwm_glass(&self.state.config);
         let winit_transparent = self.state.config.transparent && !dwm_glass;
+        // Always create hidden; show only after Navigate so the user never
+        // stares at a blank/white HWND while WebView2 + Vite come up.
         let mut attributes = WindowAttributes::default()
             .with_title(self.state.config.title.clone())
             .with_surface_size(PhysicalSize::new(
                 self.state.config.width.max(1) as f64,
                 self.state.config.height.max(1) as f64,
             ))
-            .with_visible(self.state.config.visible)
+            .with_visible(false)
             .with_resizable(self.state.config.resizable)
             .with_min_surface_size(PhysicalSize::new(
                 self.state.config.min_width.max(1) as f64,
@@ -321,12 +323,9 @@ impl ApplicationHandler for LaunchApp {
                     work_area_maximized,
                 );
                 if frameless {
-                    if let Some(window) = self.state.window.as_ref() {
-                        window.set_decorations(false);
-                    }
-                    super::host_controls::apply_frameless_window(hwnd);
-                    // Snap-maximize sets IsZoomed and brings back caption;
-                    // convert to a work-area fill instead.
+                    // Do not call winit set_decorations here — toggling decorations
+                    // after a work-area maximize resets the window size (flash then
+                    // undo). Styles are already applied at create / maximize time.
                     if super::host_controls::is_zoomed(hwnd)
                         && let Some(rect) =
                             super::host_controls::suppress_system_maximize(hwnd)
@@ -447,9 +446,6 @@ impl LaunchApp {
                     } else if let Some(rect) = super::host_controls::maximize_frameless(hwnd) {
                         self.state.frameless_restore = Some(rect);
                     }
-                    if let Some(window) = self.state.window.as_ref() {
-                        window.set_decorations(false);
-                    }
                 } else {
                     let _ = super::host_controls::maximize_window(hwnd);
                 }
@@ -462,14 +458,13 @@ impl LaunchApp {
                         let _ = super::host_controls::unmaximize_window(hwnd);
                         super::host_controls::apply_frameless_window(hwnd);
                     }
-                    if let Some(window) = self.state.window.as_ref() {
-                        window.set_decorations(false);
-                    }
                 } else {
                     let _ = super::host_controls::unmaximize_window(hwnd);
                 }
             }
             WebView2UserEvent::Exit => {
+                // Hide first so teardown does not flash a blank/white surface.
+                let _ = super::host_controls::hide_window(hwnd);
                 if let Some(mut child) = self.state.sidecar.take() {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -527,6 +522,10 @@ fn create_webview2(
             "invalid parent HWND for WebView2 controller: null".into(),
         ));
     }
+    // Probe before creating the controller so a slow Vite handoff never
+    // paints a frozen white window on the UI thread mid-setup.
+    wait_for_dev_server(url, &inner.event_sender);
+
     let parent = windows::Win32::Foundation::HWND(hwnd as *mut _);
 
     let user_data_dir = webview_user_data_dir(config);
@@ -628,7 +627,9 @@ fn create_webview2(
                 (size.left, size.top, size.right, size.bottom)
             ))
         })?;
-        controller.SetIsVisible(config.visible).map_err(|error| {
+        // Keep the controller hidden until Navigate — visible=true here is what
+        // produced the white frozen window during startup.
+        controller.SetIsVisible(false).map_err(|error| {
             WebView2Error::Backend(format!("SetIsVisible: {error}"))
         })?;
     }
@@ -667,8 +668,6 @@ fn create_webview2(
     bridge::register_navigation_starting(&webview, inner.clone())?;
     bridge::register_web_message_received(&webview, inner.clone())?;
 
-    wait_for_dev_server(url, &inner.event_sender);
-
     let url_wide = bridge::wide_pwstr(url);
     unsafe {
         webview
@@ -676,6 +675,13 @@ fn create_webview2(
             .map_err(|error| WebView2Error::Backend(format!("Navigate({url}): {error}")))?;
     }
     inner.metrics.mark("navigate.ready");
+
+    if config.visible {
+        unsafe {
+            let _ = controller.SetIsVisible(true);
+        }
+        let _ = super::host_controls::show_window(hwnd);
+    }
 
     *inner.controller.lock().unwrap() = Some(controller);
     *inner.webview.lock().unwrap() = Some(webview);

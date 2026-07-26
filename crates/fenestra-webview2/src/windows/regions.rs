@@ -154,14 +154,14 @@ pub(crate) fn region_install_script(
       var el = document.createElement('div');
       var b = {border};
       var css = 'position:fixed;pointer-events:auto;-webkit-app-region:no-drag;app-region:no-drag;z-index:2147483001;';
-      if (edge === 'left') css += 'left:0;top:'+b+'px;width:'+b+'px;height:'+Math.max(0,winH-2*b)+'px;cursor:ew-resize;';
-      else if (edge === 'right') css += 'right:0;top:'+b+'px;width:'+b+'px;height:'+Math.max(0,winH-2*b)+'px;cursor:ew-resize;';
-      else if (edge === 'top') css += 'left:'+b+'px;top:0;width:'+Math.max(0,winW-2*b)+'px;height:'+b+'px;cursor:ns-resize;';
-      else if (edge === 'bottom') css += 'left:'+b+'px;bottom:0;width:'+Math.max(0,winW-2*b)+'px;height:'+b+'px;cursor:ns-resize;';
-      else if (edge === 'top-left') css += 'left:0;top:0;width:'+b+'px;height:'+b+'px;cursor:nwse-resize;';
-      else if (edge === 'top-right') css += 'right:0;top:0;width:'+b+'px;height:'+b+'px;cursor:nesw-resize;';
-      else if (edge === 'bottom-left') css += 'left:0;bottom:0;width:'+b+'px;height:'+b+'px;cursor:nesw-resize;';
-      else if (edge === 'bottom-right') css += 'right:0;bottom:0;width:'+b+'px;height:'+b+'px;cursor:nwse-resize;';
+      else if (edge === 'bottom') css += 'left:'+b+'px;bottom:0;width:'+Math.max(0,winW-2*b)+'px;height:'+b+'px;cursor:ns-resize;background:transparent;';
+      else if (edge === 'top-left') css += 'left:0;top:0;width:'+b+'px;height:'+b+'px;cursor:nwse-resize;background:transparent;';
+      else if (edge === 'top-right') css += 'right:0;top:0;width:'+b+'px;height:'+b+'px;cursor:nesw-resize;background:transparent;';
+      else if (edge === 'bottom-left') css += 'left:0;bottom:0;width:'+b+'px;height:'+b+'px;cursor:nesw-resize;background:transparent;';
+      else if (edge === 'bottom-right') css += 'right:0;bottom:0;width:'+b+'px;height:'+b+'px;cursor:nwse-resize;background:transparent;';
+      else if (edge === 'left') css += 'left:0;top:'+b+'px;width:'+b+'px;height:'+Math.max(0,winH-2*b)+'px;cursor:ew-resize;background:transparent;';
+      else if (edge === 'right') css += 'right:0;top:'+b+'px;width:'+b+'px;height:'+Math.max(0,winH-2*b)+'px;cursor:ew-resize;background:transparent;';
+      else if (edge === 'top') css += 'left:'+b+'px;top:0;width:'+Math.max(0,winW-2*b)+'px;height:'+b+'px;cursor:ns-resize;background:transparent;';
       el.style.cssText = css;
       el.addEventListener('mousedown', function(ev) {{
         if (ev.button !== 0) return;
