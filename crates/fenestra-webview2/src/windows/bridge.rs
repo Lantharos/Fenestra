@@ -168,12 +168,24 @@ pub(crate) fn complete_guest_bridge(
     request_id: &str,
     command: BridgeCommand,
 ) {
+    eprintln!(
+        "fenestra: guest bridge `{}` (request {request_id})",
+        command.name
+    );
     let response = guest_commands::dispatch(inner, &command).unwrap_or_else(|| {
         Err(fenestra_bridge::BridgeError::new(format!(
             "unhandled guest command: {}",
             command.name
         )))
     });
+    if let Err(error) = &response {
+        eprintln!(
+            "fenestra: guest bridge `{}` failed: {}",
+            command.name, error.message
+        );
+    } else {
+        eprintln!("fenestra: guest bridge `{}` ok", command.name);
+    }
     let webview = inner
         .webview
         .lock()
@@ -202,8 +214,51 @@ fn handle_web_message(
     } else {
         webview2_com::string_from_pcwstr(&PCWSTR(raw.0))
     };
-    if let Some(window_command) = WindowCommand::parse(message.trim_matches('"')) {
+    let message = message.trim().trim_matches('"');
+    if let Some(window_command) = WindowCommand::parse(message) {
         let _ = dispatch_window_command(&inner, &window_command.action);
+        return;
+    }
+    if let Some(request) = parse_bridge_url(message, None) {
+        let allowed = inner
+            .command_allowlist
+            .iter()
+            .any(|name| name == &request.command.name);
+        if !allowed {
+            if let Some(webview) = inner.webview.lock().ok().and_then(|guard| guard.clone()) {
+                resolve_bridge(
+                    &webview,
+                    &request.id,
+                    false,
+                    "{\"message\":\"bridge command not allowed\"}",
+                );
+            }
+            return;
+        }
+        if should_defer_guest_command(&request.command.name) {
+            let _ = WebView2UserEvent::GuestBridge {
+                request_id: request.id,
+                command: request.command,
+            }
+            .dispatch_and_wake(&inner);
+            return;
+        }
+        let runtime = inner.bridge_runtime.lock().unwrap().clone();
+        let Some(runtime) = runtime else {
+            if let Some(webview) = inner.webview.lock().ok().and_then(|guard| guard.clone()) {
+                resolve_bridge(
+                    &webview,
+                    &request.id,
+                    false,
+                    "{\"message\":\"bridge runtime unavailable\"}",
+                );
+            }
+            return;
+        };
+        let response = runtime.dispatch(request.command);
+        if let Some(webview) = inner.webview.lock().ok().and_then(|guard| guard.clone()) {
+            emit_bridge_response(&webview, &request.id, response);
+        }
     }
 }
 

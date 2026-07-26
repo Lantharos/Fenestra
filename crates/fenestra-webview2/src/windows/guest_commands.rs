@@ -78,7 +78,12 @@ fn apply(
 ) -> BridgeResult {
     match control {
         GuestHostControl::Create(options) => {
-            ok_info(manager.create(inner, options).map_err(bridge_error)?)
+            let info = manager.create(inner, options).map_err(bridge_error)?;
+            let primary = inner
+                .primary_host
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let _ = manager.raise_above_primary(&info.id, primary);
+            ok_info(info)
         }
         GuestHostControl::Destroy { id } => {
             manager.destroy(&id).map_err(bridge_error)?;
@@ -90,10 +95,20 @@ fn apply(
         }
         GuestHostControl::SetBounds { id, bounds } => {
             manager.set_bounds(&id, bounds).map_err(bridge_error)?;
+            let primary = inner
+                .primary_host
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let _ = manager.raise_above_primary(&id, primary);
             ok_empty()
         }
         GuestHostControl::SetVisible { id, visible } => {
             manager.set_visible(&id, visible).map_err(bridge_error)?;
+            if visible {
+                let primary = inner
+                    .primary_host
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                let _ = manager.raise_above_primary(&id, primary);
+            }
             ok_empty()
         }
         GuestHostControl::Focus { id } => {

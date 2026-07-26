@@ -868,6 +868,9 @@ pub struct WebView2Process {
 
 pub(crate) struct WebView2ProcessInner {
     pub(crate) hwnd: std::sync::atomic::AtomicIsize,
+    /// Child HWND that owns the primary WebView2 controller. Guests are
+    /// siblings of this window so they can be raised above the app UI.
+    pub(crate) primary_host: std::sync::atomic::AtomicIsize,
     pub(crate) controller:
         Mutex<Option<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller>>,
     pub(crate) webview: Mutex<Option<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2>>,

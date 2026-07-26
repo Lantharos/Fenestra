@@ -76,7 +76,7 @@ use windows::core::Interface;
 use crate::{
     WebView2Config, WebView2Error, WebView2Process, WebView2ProcessInner, WebView2Result,
     WebView2Window,
-    windows::{bridge, desktop_services, guest::GuestManager, guest_commands, regions},
+    windows::{bridge, desktop_services, guest::GuestManager, guest_commands, guest_host, regions},
 };
 
 pub(crate) fn launch(
@@ -137,6 +137,7 @@ pub(crate) fn launch(
         #[allow(clippy::arc_with_non_send_sync)]
         Arc::new(WebView2ProcessInner {
             hwnd: std::sync::atomic::AtomicIsize::new(0),
+            primary_host: std::sync::atomic::AtomicIsize::new(0),
             controller: Mutex::new(None),
             webview: Mutex::new(None),
             bridge_runtime: Mutex::new(Some(bridge_runtime)),
@@ -209,6 +210,10 @@ struct LaunchApp {
 }
 
 impl ApplicationHandler for LaunchApp {
+    fn new_events(&mut self, event_loop: &dyn ActiveEventLoop, _cause: winit::event::StartCause) {
+        self.drain_user_events(event_loop);
+    }
+
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         if self
             .state
@@ -302,10 +307,11 @@ impl ApplicationHandler for LaunchApp {
 
     fn window_event(
         &mut self,
-        _event_loop: &dyn ActiveEventLoop,
+        event_loop: &dyn ActiveEventLoop,
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        self.drain_user_events(event_loop);
         match event {
             WindowEvent::CloseRequested => {
                 let _ = self.state.inner.event_sender.send(WebView2UserEvent::Exit);
@@ -368,6 +374,12 @@ impl ApplicationHandler for LaunchApp {
         for event in platform_events {
             self.dispatch_platform_event(event);
         }
+        self.drain_user_events(event_loop);
+    }
+}
+
+impl LaunchApp {
+    fn drain_user_events(&mut self, event_loop: &dyn ActiveEventLoop) {
         loop {
             match self.state.event_rx.try_recv() {
                 Ok(event) => self.handle_user_event(event_loop, event),
@@ -379,9 +391,7 @@ impl ApplicationHandler for LaunchApp {
             }
         }
     }
-}
 
-impl LaunchApp {
     fn dispatch_platform_event(&mut self, event: fenestra_platform::PlatformEvent) {
         if let fenestra_platform::PlatformEvent::SingleInstance(activation) = &event
             && activation.policy == fenestra_platform::SingleInstancePolicy::FocusExisting
@@ -487,6 +497,12 @@ fn resize_controller(
     if width == 0 || height == 0 {
         return;
     }
+    let primary_host = inner
+        .primary_host
+        .load(std::sync::atomic::Ordering::Relaxed);
+    if primary_host != 0 {
+        guest_host::resize_primary_host_window(primary_host, hwnd);
+    }
     let Ok(guard) = inner.controller.lock() else {
         return;
     };
@@ -496,6 +512,10 @@ fn resize_controller(
     let size =
         controller_bounds_for_size(width, height, frameless, hwnd, work_area_maximized);
     let _ = unsafe { controller.SetBounds(size) };
+    drop(guard);
+    if let Ok(manager) = inner.guests.try_lock() {
+        manager.raise_all(primary_host);
+    }
 }
 
 fn create_webview2(
@@ -513,7 +533,11 @@ fn create_webview2(
     // paints a frozen white window on the UI thread mid-setup.
     wait_for_dev_server(url, &inner.event_sender);
 
-    let parent = windows::Win32::Foundation::HWND(hwnd as *mut _);
+    let primary_host = guest_host::create_primary_host_window(hwnd)?;
+    inner
+        .primary_host
+        .store(primary_host, std::sync::atomic::Ordering::Relaxed);
+    let parent = windows::Win32::Foundation::HWND(primary_host as *mut _);
 
     let user_data_dir = webview_user_data_dir(config);
     std::fs::create_dir_all(&user_data_dir).map_err(WebView2Error::Io)?;
@@ -606,7 +630,7 @@ fn create_webview2(
 
     // GetClientRect can return an empty rect before the first layout
     // pass; WebView2 SetBounds rejects 0×0 with E_INVALIDARG.
-    let size = controller_bounds(hwnd, config);
+    let size = controller_bounds(primary_host, config);
     unsafe {
         controller.SetBounds(size).map_err(|error| {
             WebView2Error::Backend(format!(

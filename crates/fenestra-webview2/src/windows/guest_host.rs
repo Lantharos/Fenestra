@@ -32,20 +32,22 @@ use webview2_com::{
 };
 use webview2_com_sys::Microsoft::Web::WebView2::Win32 as SysWin32;
 use windows::Win32::{
-    Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+    Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
     System::LibraryLoader::GetModuleHandleW,
     UI::WindowsAndMessaging::{
         CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-        HWND_TOP, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassExW, SW_HIDE,
-        SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
-        ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_QUIT, WNDCLASSEXW, WS_CHILD,
-        WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_VISIBLE,
+        GetClientRect, HWND_BOTTOM, HWND_TOP, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage,
+        RegisterClassExW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE,
+        SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW, SetWindowPos, ShowWindow, TranslateMessage,
+        WINDOW_EX_STYLE, WM_QUIT, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+        WS_VISIBLE,
     },
 };
 
 use crate::{WebView2Error, WebView2Result, windows::bridge};
 
 const GUEST_WINDOW_CLASS: &str = "FenestraGuestHostWindow";
+const PRIMARY_WINDOW_CLASS: &str = "FenestraPrimaryHostWindow";
 
 /// Upper bound on the nested message pump used while a guest
 /// environment or controller is created. Guest creation is driven from a
@@ -62,12 +64,42 @@ pub(crate) fn create_host_window(
     bounds: GuestBounds,
     visible: bool,
 ) -> WebView2Result<isize> {
+    create_child_host_window(GUEST_WINDOW_CLASS, parent, bounds, visible)
+}
+
+/// Full-client child that owns the primary WebView2 controller.
+///
+/// Guests are siblings of this window. Keeping the primary controller off
+/// the top-level HWND is what lets `SetWindowPos` raise a guest above the
+/// app UI instead of leaving it buried under WebView2's chrome HWND.
+pub(crate) fn create_primary_host_window(parent: isize) -> WebView2Result<isize> {
+    let bounds = client_bounds(parent);
+    let hwnd = create_child_host_window(PRIMARY_WINDOW_CLASS, parent, bounds, true)?;
+    lower_host_window(hwnd);
+    Ok(hwnd)
+}
+
+pub(crate) fn resize_primary_host_window(hwnd: isize, parent: isize) {
+    if hwnd == 0 || parent == 0 {
+        return;
+    }
+    let bounds = client_bounds(parent);
+    move_host_window(hwnd, bounds);
+    lower_host_window(hwnd);
+}
+
+fn create_child_host_window(
+    class_name: &'static str,
+    parent: isize,
+    bounds: GuestBounds,
+    visible: bool,
+) -> WebView2Result<isize> {
     if parent == 0 {
         return Err(WebView2Error::Backend(
-            "guest host window needs a parent HWND".to_string(),
+            "host window needs a parent HWND".to_string(),
         ));
     }
-    let class = register_host_window_class()?;
+    let class = register_named_host_window_class(class_name)?;
     let class_wide = bridge::wide_pwstr(class);
     let mut style = WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
     if visible {
@@ -89,8 +121,27 @@ pub(crate) fn create_host_window(
             None,
         )
     }
-    .map_err(|error| WebView2Error::Backend(format!("guest CreateWindowExW: {error}")))?;
+    .map_err(|error| WebView2Error::Backend(format!("{class_name} CreateWindowExW: {error}")))?;
     Ok(hwnd.0 as isize)
+}
+
+fn client_bounds(parent: isize) -> GuestBounds {
+    let mut rect = RECT::default();
+    let ok = unsafe { GetClientRect(HWND(parent as *mut _), &mut rect) }.is_ok();
+    if !ok {
+        return GuestBounds {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+    }
+    GuestBounds {
+        x: 0,
+        y: 0,
+        width: (rect.right - rect.left).max(1) as u32,
+        height: (rect.bottom - rect.top).max(1) as u32,
+    }
 }
 
 pub(crate) fn destroy_host_window(hwnd: isize) {
@@ -113,7 +164,7 @@ pub(crate) fn move_host_window(hwnd: isize, bounds: GuestBounds) {
             bounds.y,
             bounds.width.max(1) as i32,
             bounds.height.max(1) as i32,
-            SWP_NOACTIVATE | SWP_NOCOPYBITS,
+            SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
         )
     };
 }
@@ -125,18 +176,50 @@ pub(crate) fn set_host_window_visible(hwnd: isize, visible: bool) {
     let command = if visible { SW_SHOWNOACTIVATE } else { SW_HIDE };
     let _ = unsafe { ShowWindow(HWND(hwnd as *mut _), command) };
     if visible {
-        let _ = unsafe {
-            SetWindowPos(
-                HWND(hwnd as *mut _),
-                Some(HWND_TOP),
-                0,
-                0,
-                0,
-                0,
-                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-            )
-        };
+        raise_host_window(hwnd);
     }
+}
+
+/// Keep the primary host under every guest sibling.
+pub(crate) fn lower_host_window(hwnd: isize) {
+    if hwnd == 0 {
+        return;
+    }
+    let _ = unsafe {
+        SetWindowPos(
+            HWND(hwnd as *mut _),
+            Some(HWND_BOTTOM),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER,
+        )
+    };
+}
+
+/// Force a guest host above sibling WebView2 chrome widgets.
+pub(crate) fn raise_host_window(hwnd: isize) {
+    if hwnd == 0 {
+        return;
+    }
+    let _ = unsafe {
+        SetWindowPos(
+            HWND(hwnd as *mut _),
+            Some(HWND_TOP),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
+        )
+    };
+}
+
+/// Put `guest` above the primary host (and every other sibling).
+pub(crate) fn raise_guest_above_primary(guest: isize, primary: isize) {
+    lower_host_window(primary);
+    raise_host_window(guest);
 }
 
 pub(crate) fn create_environment(
@@ -254,32 +337,40 @@ fn send_failed() -> windows::core::Error {
     windows::core::Error::from(windows::core::HRESULT(0x80000004u32 as i32))
 }
 
-fn register_host_window_class() -> WebView2Result<&'static str> {
-    static REGISTERED: OnceLock<bool> = OnceLock::new();
-    let registered = REGISTERED.get_or_init(|| {
-        let module = unsafe { GetModuleHandleW(windows::core::PCWSTR::null()) };
-        let Ok(module) = module else {
-            return false;
-        };
-        let class_wide = bridge::wide_pwstr(GUEST_WINDOW_CLASS);
-        let class = WNDCLASSEXW {
-            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: CS_HREDRAW | CS_VREDRAW,
-            lpfnWndProc: Some(guest_window_proc),
-            hInstance: HINSTANCE::from(module),
-            lpszClassName: windows::core::PCWSTR(class_wide.as_ptr()),
-            ..Default::default()
-        };
-        let atom = unsafe { RegisterClassExW(&class) };
-        atom != 0
-    });
-    if *registered {
-        Ok(GUEST_WINDOW_CLASS)
+fn register_named_host_window_class(class_name: &'static str) -> WebView2Result<&'static str> {
+    static GUEST_REGISTERED: OnceLock<bool> = OnceLock::new();
+    static PRIMARY_REGISTERED: OnceLock<bool> = OnceLock::new();
+    let registered = if class_name == PRIMARY_WINDOW_CLASS {
+        &PRIMARY_REGISTERED
     } else {
-        Err(WebView2Error::Backend(
-            "RegisterClassExW for the guest host window failed".to_string(),
-        ))
+        &GUEST_REGISTERED
+    };
+    let ok = registered.get_or_init(|| register_class(class_name));
+    if *ok {
+        Ok(class_name)
+    } else {
+        Err(WebView2Error::Backend(format!(
+            "RegisterClassExW for {class_name} failed"
+        )))
     }
+}
+
+fn register_class(class_name: &str) -> bool {
+    let module = unsafe { GetModuleHandleW(windows::core::PCWSTR::null()) };
+    let Ok(module) = module else {
+        return false;
+    };
+    let class_wide = bridge::wide_pwstr(class_name);
+    let class = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(guest_window_proc),
+        hInstance: HINSTANCE::from(module),
+        lpszClassName: windows::core::PCWSTR(class_wide.as_ptr()),
+        ..Default::default()
+    };
+    let atom = unsafe { RegisterClassExW(&class) };
+    atom != 0
 }
 
 unsafe extern "system" fn guest_window_proc(

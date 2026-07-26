@@ -119,6 +119,12 @@
             reject(new Error("Fenestra bridge command timed out: " + name));
           }
         }, 60000);
+        try {
+          if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {
+            window.chrome.webview.postMessage(url);
+            return;
+          }
+        } catch (e) {}
         window.location.href = url;
       });
     },

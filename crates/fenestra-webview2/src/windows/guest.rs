@@ -335,6 +335,11 @@ impl GuestManager {
                 .SetIsVisible(options.visible)
                 .map_err(bridge::webview2_error)?;
         }
+        guest_host::raise_guest_above_primary(
+            hwnd,
+            inner.primary_host.load(Ordering::Relaxed),
+        );
+        guest_host::set_host_window_visible(hwnd, options.visible);
         if let Some(color) = options
             .background_color
             .as_deref()
@@ -420,10 +425,24 @@ impl GuestManager {
         guest_host::move_host_window(guest.hwnd, bounds);
         unsafe { guest.controller.SetBounds(client_rect(bounds)) }
             .map_err(bridge::webview2_error)?;
+        guest_host::raise_host_window(guest.hwnd);
         if let Ok(mut state) = guest.state.lock() {
             state.bounds = bounds;
         }
         Ok(())
+    }
+
+    pub(crate) fn raise_above_primary(&self, id: &str, primary_host: isize) -> WebView2Result<()> {
+        let guest = self.guest(id)?;
+        guest_host::raise_guest_above_primary(guest.hwnd, primary_host);
+        Ok(())
+    }
+
+    pub(crate) fn raise_all(&self, primary_host: isize) {
+        guest_host::lower_host_window(primary_host);
+        for guest in self.guests.values() {
+            guest_host::raise_host_window(guest.hwnd);
+        }
     }
 
     pub(crate) fn set_visible(&self, id: &str, visible: bool) -> WebView2Result<()> {
