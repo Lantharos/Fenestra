@@ -313,7 +313,7 @@ impl ApplicationHandler for LaunchApp {
                     .hwnd
                     .load(std::sync::atomic::Ordering::Relaxed);
                 let frameless = !self.state.config.chrome.uses_native_decorations();
-                let work_area_maximized = self.state.frameless_restore.is_some();
+                let work_area_maximized = false;
                 resize_controller(
                     &self.state.inner,
                     size.width,
@@ -323,15 +323,9 @@ impl ApplicationHandler for LaunchApp {
                     work_area_maximized,
                 );
                 if frameless {
-                    // Do not call winit set_decorations here — toggling decorations
-                    // after a work-area maximize resets the window size (flash then
-                    // undo). Styles are already applied at create / maximize time.
-                    if super::host_controls::is_zoomed(hwnd)
-                        && let Some(rect) =
-                            super::host_controls::suppress_system_maximize(hwnd)
-                    {
-                        self.state.frameless_restore = Some(rect);
-                    }
+                    // Keep DWM caption suppressed after native maximize/snap.
+                    // Never convert IsZoomed into a fake SetWindowPos fill.
+                    let _ = super::host_controls::suppress_system_maximize(hwnd);
                 }
                 if super::host_controls::wants_dwm_glass(&self.state.config) {
                     let _ = super::host_controls::apply_dwm_backdrop(hwnd, &self.state.config);
@@ -440,27 +434,10 @@ impl LaunchApp {
                 let _ = super::host_controls::minimize_window(hwnd);
             }
             WebView2UserEvent::Maximize => {
-                if !self.state.config.chrome.uses_native_decorations() {
-                    if let Some(rect) = self.state.frameless_restore.take() {
-                        let _ = super::host_controls::restore_frameless(hwnd, rect);
-                    } else if let Some(rect) = super::host_controls::maximize_frameless(hwnd) {
-                        self.state.frameless_restore = Some(rect);
-                    }
-                } else {
-                    let _ = super::host_controls::maximize_window(hwnd);
-                }
+                let _ = super::host_controls::toggle_maximize_window(hwnd);
             }
             WebView2UserEvent::Unmaximize => {
-                if !self.state.config.chrome.uses_native_decorations() {
-                    if let Some(rect) = self.state.frameless_restore.take() {
-                        let _ = super::host_controls::restore_frameless(hwnd, rect);
-                    } else {
-                        let _ = super::host_controls::unmaximize_window(hwnd);
-                        super::host_controls::apply_frameless_window(hwnd);
-                    }
-                } else {
-                    let _ = super::host_controls::unmaximize_window(hwnd);
-                }
+                let _ = super::host_controls::unmaximize_window(hwnd);
             }
             WebView2UserEvent::Exit => {
                 // Hide first so teardown does not flash a blank/white surface.

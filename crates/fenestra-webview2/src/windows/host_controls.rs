@@ -33,12 +33,12 @@ use windows::Win32::{
         WindowsAndMessaging::{
             BringWindowToTop, CallWindowProcW, GCLP_HBRBACKGROUND, GWLP_WNDPROC, GWL_EXSTYLE,
             GWL_STYLE, GetClientRect, GetWindowRect, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT,
-            HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, IsZoomed, SW_HIDE, SW_MAXIMIZE,
-            SW_MINIMIZE, SW_RESTORE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+            HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, IsZoomed, NCCALCSIZE_PARAMS, SC_MAXIMIZE,
+            SC_MINIMIZE, SC_RESTORE, SW_HIDE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
             SWP_NOSIZE, SWP_NOZORDER, SetClassLongPtrW, SetForegroundWindow, SetWindowLongPtrW,
-            SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WM_NCACTIVATE, WM_NCCALCSIZE,
-            WM_NCHITTEST, WM_NCPAINT, WNDPROC, WS_EX_LAYERED, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
-            WS_POPUP, WS_THICKFRAME,
+            SetWindowPos, ShowWindow, SendMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_NCACTIVATE,
+            WM_NCCALCSIZE, WM_NCHITTEST, WM_NCPAINT, WM_SYSCOMMAND, WNDPROC, WS_EX_LAYERED,
+            WS_MAXIMIZE, WS_MAXIMIZEBOX, WS_MINIMIZE, WS_MINIMIZEBOX, WS_POPUP, WS_THICKFRAME,
         },
     },
 };
@@ -112,29 +112,63 @@ pub(crate) fn focus_window(hwnd: isize) -> bool {
     unsafe { SetForegroundWindow(hwnd) }.as_bool()
 }
 
-/// Minimize the window. Equivalent to `ShowWindow(hwnd, SW_MINIMIZE)`.
+/// Minimize via the real system command so Windows plays the minimize animation.
 pub(crate) fn minimize_window(hwnd: isize) -> bool {
     if hwnd == 0 {
         return false;
     }
-    unsafe { ShowWindow(HWND(hwnd as *mut _), SW_MINIMIZE) }.as_bool()
+    unsafe {
+        SendMessageW(
+            HWND(hwnd as *mut _),
+            WM_SYSCOMMAND,
+            Some(WPARAM(SC_MINIMIZE as usize)),
+            Some(LPARAM(0)),
+        );
+    }
+    true
 }
 
-/// Maximize the window. Equivalent to `ShowWindow(hwnd, SW_MAXIMIZE)`.
+/// Maximize via the real system command so Windows plays the maximize animation.
 pub(crate) fn maximize_window(hwnd: isize) -> bool {
     if hwnd == 0 {
         return false;
     }
-    unsafe { ShowWindow(HWND(hwnd as *mut _), SW_MAXIMIZE) }.as_bool()
+    unsafe {
+        SendMessageW(
+            HWND(hwnd as *mut _),
+            WM_SYSCOMMAND,
+            Some(WPARAM(SC_MAXIMIZE as usize)),
+            Some(LPARAM(0)),
+        );
+    }
+    apply_frameless_dwm(HWND(hwnd as *mut _));
+    true
 }
 
-/// Restore a minimized or maximized window to its previous size.
-/// Equivalent to `ShowWindow(hwnd, SW_RESTORE)`.
+/// Restore via the real system command (unminimize / unmaximize).
 pub(crate) fn unmaximize_window(hwnd: isize) -> bool {
     if hwnd == 0 {
         return false;
     }
-    unsafe { ShowWindow(HWND(hwnd as *mut _), SW_RESTORE) }.as_bool()
+    unsafe {
+        SendMessageW(
+            HWND(hwnd as *mut _),
+            WM_SYSCOMMAND,
+            Some(WPARAM(SC_RESTORE as usize)),
+            Some(LPARAM(0)),
+        );
+    }
+    apply_frameless_dwm(HWND(hwnd as *mut _));
+    true
+}
+
+/// Toggle between maximized and restored using native system commands.
+pub(crate) fn toggle_maximize_window(hwnd: isize) -> bool {
+    if is_zoomed(hwnd) {
+        unmaximize_window(hwnd)
+    } else {
+        maximize_window(hwnd)
+    }
 }
 
 /// Whether Win32 currently considers the window maximized (`IsZoomed`).
@@ -147,10 +181,9 @@ pub(crate) fn is_zoomed(hwnd: isize) -> bool {
 
 /// Maximize a borderless window to the monitor work area.
 ///
-/// Do **not** use `SW_MAXIMIZE` here — on Win11 it reintroduces the
-/// default caption even with `WM_NCCALCSIZE` handling, and with a fully
-/// client-area frame it covers the taskbar. Returns the previous outer
-/// rect so the caller can restore it.
+/// Prefer [`maximize_window`] / [`toggle_maximize_window`] for button chrome —
+/// those use native `SC_MAXIMIZE` animations. This helper remains for callers
+/// that need an explicit work-area fill without `IsZoomed`.
 pub(crate) fn maximize_frameless(hwnd: isize) -> Option<RECT> {
     if hwnd == 0 {
         return None;
@@ -202,17 +235,14 @@ pub(crate) fn restore_frameless(hwnd: isize, rect: RECT) -> bool {
     ok
 }
 
-/// If Windows snapped/maximized the HWND (`IsZoomed`), convert it to a
-/// work-area fill so the system caption and taskbar-cover cannot stick.
+/// Re-assert frameless DWM chrome after Windows snaps/maximizes the HWND.
+/// Does **not** convert native maximize into a fake work-area fill.
 pub(crate) fn suppress_system_maximize(hwnd: isize) -> Option<RECT> {
     if hwnd == 0 {
         return None;
     }
-    if !is_zoomed(hwnd) {
-        apply_frameless_window(hwnd);
-        return None;
-    }
-    maximize_frameless(hwnd)
+    apply_frameless_dwm(HWND(hwnd as *mut _));
+    None
 }
 
 /// Whether this config should use DWM system backdrop glass.
@@ -259,18 +289,15 @@ pub(crate) fn force_frameless_styles(hwnd: isize) {
     let previous =
         unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWL_STYLE) };
     let style = WINDOW_STYLE(previous as u32);
-    // Keep visibility / clipping bits, drop every caption chrome flag
-    // (including WS_MAXIMIZE — work-area maximize must not look zoomed).
+    // Keep visibility / minimize / maximize bits. Clearing WS_MAXIMIZE here
+    // used to silently undo native SC_MAXIMIZE right after it ran.
     let preserved = style
         & (windows::Win32::UI::WindowsAndMessaging::WS_VISIBLE
             | windows::Win32::UI::WindowsAndMessaging::WS_CLIPSIBLINGS
             | windows::Win32::UI::WindowsAndMessaging::WS_CLIPCHILDREN
-            | windows::Win32::UI::WindowsAndMessaging::WS_MINIMIZE);
-    let next = preserved
-        | WS_POPUP
-        | WS_THICKFRAME
-        | WS_MINIMIZEBOX
-        | WS_MAXIMIZEBOX;
+            | WS_MINIMIZE
+            | WS_MAXIMIZE);
+    let next = preserved | WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
     unsafe {
         SetWindowLongPtrW(hwnd, GWL_STYLE, next.0 as isize);
         let _ = SetWindowPos(
@@ -366,7 +393,18 @@ unsafe extern "system" fn frameless_wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_NCCALCSIZE if wparam.0 != 0 => {
-            // Entire window is client area — no system caption strip.
+            // Frameless: no caption. When zoomed, clamp the client rect to the
+            // monitor work area so native SC_MAXIMIZE does not cover the taskbar.
+            if unsafe { IsZoomed(hwnd) }.as_bool()
+                && let Some(work) = monitor_work_area(hwnd)
+            {
+                let params = lparam.0 as *mut NCCALCSIZE_PARAMS;
+                if !params.is_null() {
+                    unsafe {
+                        (*params).rgrc[0] = work;
+                    }
+                }
+            }
             return LRESULT(0);
         }
         WM_NCPAINT => {
