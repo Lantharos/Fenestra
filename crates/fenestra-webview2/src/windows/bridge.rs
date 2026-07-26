@@ -25,8 +25,8 @@
 use std::sync::Arc;
 
 use fenestra_bridge::{
-    BridgeCommand, POPUP_CLOSE_COMMAND, POPUP_OPEN_COMMAND, WindowCommand, guest::is_guest_command,
-    parse_bridge_url,
+    BridgeCommand, BridgeResult, POPUP_CLOSE_COMMAND, POPUP_OPEN_COMMAND, WindowCommand,
+    guest::is_guest_command, parse_bridge_url,
 };
 use webview2_com::{
     AddScriptToExecuteOnDocumentCreatedCompletedHandler, ExecuteScriptCompletedHandler,
