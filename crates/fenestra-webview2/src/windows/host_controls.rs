@@ -33,12 +33,13 @@ use windows::Win32::{
         WindowsAndMessaging::{
             BringWindowToTop, CallWindowProcW, GCLP_HBRBACKGROUND, GWLP_WNDPROC, GWL_EXSTYLE,
             GWL_STYLE, GetClientRect, GetWindowRect, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT,
-            HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, IsZoomed, NCCALCSIZE_PARAMS, SC_MAXIMIZE,
-            SC_MINIMIZE, SC_RESTORE, SW_HIDE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-            SWP_NOSIZE, SWP_NOZORDER, SetClassLongPtrW, SetForegroundWindow, SetWindowLongPtrW,
-            SetWindowPos, ShowWindow, SendMessageW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_NCACTIVATE,
-            WM_NCCALCSIZE, WM_NCHITTEST, WM_NCPAINT, WM_SYSCOMMAND, WNDPROC, WS_EX_LAYERED,
-            WS_MAXIMIZE, WS_MAXIMIZEBOX, WS_MINIMIZE, WS_MINIMIZEBOX, WS_POPUP, WS_THICKFRAME,
+            HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, IsZoomed, NCCALCSIZE_PARAMS, PostMessageW,
+            SC_MAXIMIZE, SC_MINIMIZE, SC_RESTORE, SW_HIDE, SW_SHOW, SWP_FRAMECHANGED,
+            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetClassLongPtrW,
+            SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, WINDOW_EX_STYLE,
+            WINDOW_STYLE, WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCPAINT, WM_SYSCOMMAND,
+            WNDPROC, WS_CAPTION, WS_EX_LAYERED, WS_MAXIMIZE, WS_MAXIMIZEBOX, WS_MINIMIZE,
+            WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_THICKFRAME,
         },
     },
 };
@@ -112,54 +113,42 @@ pub(crate) fn focus_window(hwnd: isize) -> bool {
     unsafe { SetForegroundWindow(hwnd) }.as_bool()
 }
 
-/// Minimize via the real system command so Windows plays the minimize animation.
-pub(crate) fn minimize_window(hwnd: isize) -> bool {
+fn post_syscommand(hwnd: isize, command: usize) -> bool {
     if hwnd == 0 {
         return false;
     }
     unsafe {
-        SendMessageW(
-            HWND(hwnd as *mut _),
+        PostMessageW(
+            Some(HWND(hwnd as *mut _)),
             WM_SYSCOMMAND,
-            Some(WPARAM(SC_MINIMIZE as usize)),
-            Some(LPARAM(0)),
-        );
+            WPARAM(command),
+            LPARAM(0),
+        )
     }
-    true
+    .is_ok()
+}
+
+/// Minimize via the real system command so Windows plays the minimize animation.
+pub(crate) fn minimize_window(hwnd: isize) -> bool {
+    post_syscommand(hwnd, SC_MINIMIZE as usize)
 }
 
 /// Maximize via the real system command so Windows plays the maximize animation.
 pub(crate) fn maximize_window(hwnd: isize) -> bool {
-    if hwnd == 0 {
-        return false;
+    let ok = post_syscommand(hwnd, SC_MAXIMIZE as usize);
+    if ok {
+        apply_frameless_dwm(HWND(hwnd as *mut _));
     }
-    unsafe {
-        SendMessageW(
-            HWND(hwnd as *mut _),
-            WM_SYSCOMMAND,
-            Some(WPARAM(SC_MAXIMIZE as usize)),
-            Some(LPARAM(0)),
-        );
-    }
-    apply_frameless_dwm(HWND(hwnd as *mut _));
-    true
+    ok
 }
 
 /// Restore via the real system command (unminimize / unmaximize).
 pub(crate) fn unmaximize_window(hwnd: isize) -> bool {
-    if hwnd == 0 {
-        return false;
+    let ok = post_syscommand(hwnd, SC_RESTORE as usize);
+    if ok {
+        apply_frameless_dwm(HWND(hwnd as *mut _));
     }
-    unsafe {
-        SendMessageW(
-            HWND(hwnd as *mut _),
-            WM_SYSCOMMAND,
-            Some(WPARAM(SC_RESTORE as usize)),
-            Some(LPARAM(0)),
-        );
-    }
-    apply_frameless_dwm(HWND(hwnd as *mut _));
-    true
+    ok
 }
 
 /// Toggle between maximized and restored using native system commands.
@@ -277,10 +266,10 @@ pub(crate) fn disable_layered_window(hwnd: isize) {
     }
 }
 
-/// Force a true borderless Win32 frame. winit's `with_decorations(false)`
-/// is not always enough on Windows 11 — caption chrome can remain until
-/// the style is rewritten to a popup + thick-frame combination and the
-/// non-client frame is recalculated.
+/// Force a true borderless Win32 frame the way Electron does: keep
+/// `WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX` so native
+/// minimize/maximize animations work, then eat the caption visually with
+/// `WM_NCCALCSIZE`. Pure `WS_POPUP` skips those animations (instant hide).
 pub(crate) fn force_frameless_styles(hwnd: isize) {
     if hwnd == 0 {
         return;
@@ -289,15 +278,19 @@ pub(crate) fn force_frameless_styles(hwnd: isize) {
     let previous =
         unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(hwnd, GWL_STYLE) };
     let style = WINDOW_STYLE(previous as u32);
-    // Keep visibility / minimize / maximize bits. Clearing WS_MAXIMIZE here
-    // used to silently undo native SC_MAXIMIZE right after it ran.
     let preserved = style
         & (windows::Win32::UI::WindowsAndMessaging::WS_VISIBLE
             | windows::Win32::UI::WindowsAndMessaging::WS_CLIPSIBLINGS
             | windows::Win32::UI::WindowsAndMessaging::WS_CLIPCHILDREN
             | WS_MINIMIZE
             | WS_MAXIMIZE);
-    let next = preserved | WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+    let next = preserved
+        | WS_OVERLAPPED
+        | WS_CAPTION
+        | WS_THICKFRAME
+        | WS_MINIMIZEBOX
+        | WS_MAXIMIZEBOX
+        | WS_SYSMENU;
     unsafe {
         SetWindowLongPtrW(hwnd, GWL_STYLE, next.0 as isize);
         let _ = SetWindowPos(
