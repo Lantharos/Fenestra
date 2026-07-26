@@ -385,7 +385,8 @@ impl GuestManager {
 
     pub(crate) fn destroy(&mut self, id: &str) -> WebView2Result<()> {
         let Some(guest) = self.guests.remove(id) else {
-            return Err(missing_guest(id));
+            // Idempotent: cleanup/races often destroy twice (React StrictMode).
+            return Ok(());
         };
         if let Ok(mut downloads) = self.downloads.lock() {
             downloads.forget_guest(id);
