@@ -42,6 +42,7 @@
 //    handler or activity emitter running on a worker thread.
 
 use std::{
+    net::ToSocketAddrs,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -85,9 +86,8 @@ pub(crate) fn launch(
     let metrics = LaunchMetrics::new(metrics_label(&window.config));
     metrics.mark("launch.start");
 
-    // Set before CreateCoreWebView2Environment so the controller never
-    // paints the default opaque white underlay. Format is 0xAARRGGBB.
-    // (Earlier E_INVALIDARG failures were from bad file:// URLs, not this.)
+    // Avoid the default opaque white underlay before the controller applies
+    // SetDefaultBackgroundColor. Format is 0xAARRGGBB.
     if window.config.transparent
         || window
             .config
@@ -96,6 +96,10 @@ pub(crate) fn launch(
     {
         unsafe {
             std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0x00000000");
+        }
+    } else {
+        unsafe {
+            std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0xFF0A0A0A");
         }
     }
 
@@ -990,12 +994,12 @@ fn wait_for_dev_server(url: &str, _event_tx: &Sender<WebView2UserEvent>) {
         if dev_server_reachable(url) {
             return;
         }
-        std::thread::sleep(Duration::from_millis(150));
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
 fn dev_server_reachable(url: &str) -> bool {
-    let Some((scheme, rest)) = url.split_once("://") else {
+    let Some((_scheme, rest)) = url.split_once("://") else {
         return false;
     };
     let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
@@ -1004,9 +1008,9 @@ fn dev_server_reachable(url: &str) -> bool {
         .rsplit(':')
         .next()
         .and_then(|value| value.parse::<u16>().ok());
-    if port.is_none() {
+    let Some(port) = port else {
         return true;
-    }
+    };
     let host = authority
         .rsplit('@')
         .next()
@@ -1014,20 +1018,22 @@ fn dev_server_reachable(url: &str) -> bool {
         .rsplit(':')
         .next()
         .unwrap_or(authority);
-    let host = if matches!(host, "localhost" | "127.0.0.1" | "::1") {
-        "127.0.0.1"
+
+    let addrs: Vec<std::net::SocketAddr> = if matches!(host, "localhost" | "127.0.0.1" | "::1") {
+        vec![
+            std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port)),
+            std::net::SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, port)),
+        ]
     } else {
-        host
+        match format!("{host}:{port}").to_socket_addrs() {
+            Ok(addrs) => addrs.collect(),
+            Err(_) => return false,
+        }
     };
-    let _ = scheme;
-    std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::new(
-            host.parse().unwrap_or(std::net::Ipv4Addr::LOCALHOST.into()),
-            port.unwrap_or(0),
-        ),
-        Duration::from_millis(150),
-    )
-    .is_ok()
+
+    addrs.iter().any(|addr| {
+        std::net::TcpStream::connect_timeout(addr, Duration::from_millis(100)).is_ok()
+    })
 }
 
 /// User events that the winit event loop processes in addition to
