@@ -36,16 +36,24 @@ const KIND_POPUP_BATCH: u32 = 13;
 const KIND_MAIN_SHARED_BATCH: u32 = 14;
 const KIND_POPUP_SHARED_BATCH: u32 = 15;
 const KIND_FILE_DRAG_REQUESTED: u32 = 16;
+const KIND_GUEST_FRAME: u32 = 17;
+const KIND_GUEST_BATCH: u32 = 18;
+const KIND_GUEST_SHARED_BATCH: u32 = 19;
+const KIND_GUEST_HIDDEN: u32 = 20;
 const BATCH_ENTRY_LEN: usize = 28;
 
 pub(crate) const MAIN_TEXTURE_ID: &str = "__stuk_fenestra_main";
 pub(crate) const POPUP_TEXTURE_ID: &str = "__stuk_fenestra_popup";
+pub(crate) const POPUP_OVERLAY_ID: &str = "__fenestra_popup";
 
 #[derive(Debug)]
 pub(crate) enum OsrMessage {
     Frame(OsrFrame),
     PaintBatch(OsrPaintBatch),
+    /// Hide the legacy single popup overlay (`__fenestra_popup`).
     PopupHidden,
+    /// Hide a guest overlay by id.
+    GuestHidden(String),
     Cursor(String),
     CloseRequested,
     StartDragRequested,
@@ -85,10 +93,27 @@ pub(crate) struct OsrFrame {
     pub bytes: Vec<u8>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum OsrSurface {
     Main,
+    /// Legacy popup overlay (also addressable as guest id `__fenestra_popup`).
     Popup,
+    /// Named guest overlay composited above the main surface.
+    Guest(String),
+}
+
+impl OsrSurface {
+    pub(crate) fn overlay_id(&self) -> Option<&str> {
+        match self {
+            Self::Main => None,
+            Self::Popup => Some(POPUP_OVERLAY_ID),
+            Self::Guest(id) => Some(id.as_str()),
+        }
+    }
+
+    pub(crate) fn is_overlay(&self) -> bool {
+        !matches!(self, Self::Main)
+    }
 }
 
 pub(crate) fn read_message(reader: &mut UnixStream) -> io::Result<Option<OsrMessage>> {
@@ -130,18 +155,40 @@ pub(crate) fn read_message(reader: &mut UnixStream) -> io::Result<Option<OsrMess
                 bytes: payload,
             })
         }
+        KIND_GUEST_FRAME => {
+            close_optional_fd(fd);
+            let (guest_id, bytes) = split_guest_payload(&payload)?;
+            OsrMessage::Frame(OsrFrame {
+                surface: OsrSurface::Guest(guest_id),
+                width,
+                height,
+                x,
+                y,
+                bytes,
+            })
+        }
         KIND_MAIN_BATCH | KIND_POPUP_BATCH => {
             close_optional_fd(fd);
             OsrMessage::PaintBatch(parse_paint_batch(
                 kind, width, height, x, y, &payload, None,
             )?)
         }
-        KIND_MAIN_SHARED_BATCH | KIND_POPUP_SHARED_BATCH => {
+        KIND_GUEST_BATCH => {
+            close_optional_fd(fd);
+            OsrMessage::PaintBatch(parse_paint_batch(
+                kind, width, height, x, y, &payload, None,
+            )?)
+        }
+        KIND_MAIN_SHARED_BATCH | KIND_POPUP_SHARED_BATCH | KIND_GUEST_SHARED_BATCH => {
             OsrMessage::PaintBatch(parse_paint_batch(kind, width, height, x, y, &payload, fd)?)
         }
         KIND_POPUP_HIDDEN => {
             close_optional_fd(fd);
             OsrMessage::PopupHidden
+        }
+        KIND_GUEST_HIDDEN => {
+            close_optional_fd(fd);
+            OsrMessage::GuestHidden(String::from_utf8(payload).unwrap_or_default())
         }
         KIND_CURSOR => {
             close_optional_fd(fd);
@@ -272,11 +319,17 @@ fn parse_paint_batch(
     payload: &[u8],
     fd: Option<i32>,
 ) -> io::Result<OsrPaintBatch> {
-    let shared = matches!(kind, KIND_MAIN_SHARED_BATCH | KIND_POPUP_SHARED_BATCH);
-    let surface = if matches!(kind, KIND_MAIN_BATCH | KIND_MAIN_SHARED_BATCH) {
-        OsrSurface::Main
+    let shared = matches!(
+        kind,
+        KIND_MAIN_SHARED_BATCH | KIND_POPUP_SHARED_BATCH | KIND_GUEST_SHARED_BATCH
+    );
+    let (surface, batch_payload) = if matches!(kind, KIND_GUEST_BATCH | KIND_GUEST_SHARED_BATCH) {
+        let (guest_id, rest) = split_guest_payload(payload)?;
+        (OsrSurface::Guest(guest_id), rest)
+    } else if matches!(kind, KIND_MAIN_BATCH | KIND_MAIN_SHARED_BATCH) {
+        (OsrSurface::Main, payload.to_vec())
     } else {
-        OsrSurface::Popup
+        (OsrSurface::Popup, payload.to_vec())
     };
     let source_bytes;
     let source = if shared {
@@ -292,17 +345,17 @@ fn parse_paint_batch(
         source_bytes.as_slice()
     } else {
         close_optional_fd(fd);
-        let count = payload_count(payload)?;
+        let count = payload_count(&batch_payload)?;
         let blob_start = 4 + count * BATCH_ENTRY_LEN;
-        payload
-            .get(blob_start..)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid OSR paint batch"))?
+        batch_payload.get(blob_start..).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "invalid OSR paint batch")
+        })?
     };
-    let count = payload_count(payload)?;
+    let count = payload_count(&batch_payload)?;
     let entries_end = 4 + count * BATCH_ENTRY_LEN;
-    let entries = payload
-        .get(4..entries_end)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "truncated OSR paint batch"))?;
+    let entries = batch_payload.get(4..entries_end).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "truncated OSR paint batch")
+    })?;
     let mut frames = Vec::with_capacity(count);
     for entry in entries.chunks_exact(BATCH_ENTRY_LEN) {
         let rect_x = read_i32(&entry[0..4]);
@@ -325,7 +378,7 @@ fn parse_paint_batch(
             })?
             .to_vec();
         frames.push(OsrFrame {
-            surface,
+            surface: surface.clone(),
             width: rect_width,
             height: rect_height,
             x: rect_x,
@@ -341,6 +394,31 @@ fn parse_paint_batch(
         y,
         frames,
     })
+}
+
+fn split_guest_payload(payload: &[u8]) -> io::Result<(String, Vec<u8>)> {
+    if payload.len() < 2 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "guest OSR payload missing id length",
+        ));
+    }
+    let id_len = u16::from_le_bytes([payload[0], payload[1]]) as usize;
+    let id_end = 2 + id_len;
+    if payload.len() < id_end {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "guest OSR payload missing id bytes",
+        ));
+    }
+    let id = String::from_utf8_lossy(&payload[2..id_end]).into_owned();
+    if id.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "guest OSR payload has empty id",
+        ));
+    }
+    Ok((id, payload[id_end..].to_vec()))
 }
 
 fn parse_file_drag_request(payload: &[u8], x: i32, y: i32) -> Option<FileDragRequest> {

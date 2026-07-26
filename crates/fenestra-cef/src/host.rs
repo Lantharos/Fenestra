@@ -17,6 +17,10 @@ const HOST_HANDLER_H: &str = include_str!("../host/shared/handler.h");
 const HOST_HANDLER_CC: &str = include_str!("../host/shared/handler.cc");
 const HOST_OSR_HANDLER_H: &str = include_str!("../host/shared/osr_handler.h");
 const HOST_OSR_HANDLER_CC: &str = include_str!("../host/shared/osr_handler.cc");
+const HOST_GUEST_MANAGER_H: &str = include_str!("../host/shared/guest_manager.h");
+const HOST_GUEST_MANAGER_CC: &str = include_str!("../host/shared/guest_manager.cc");
+const HOST_JSON_UTIL_H: &str = include_str!("../host/shared/json_util.h");
+const HOST_JSON_UTIL_CC: &str = include_str!("../host/shared/json_util.cc");
 const HOST_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const HOST_BUILD_LOCK_STALE_AFTER: Duration = Duration::from_secs(30 * 60);
 
@@ -139,6 +143,10 @@ fn write_host_source(source_dir: &Path) -> Result<(), String> {
         ("handler.cc", HOST_HANDLER_CC),
         ("osr_handler.h", HOST_OSR_HANDLER_H),
         ("osr_handler.cc", HOST_OSR_HANDLER_CC),
+        ("guest_manager.h", HOST_GUEST_MANAGER_H),
+        ("guest_manager.cc", HOST_GUEST_MANAGER_CC),
+        ("json_util.h", HOST_JSON_UTIL_H),
+        ("json_util.cc", HOST_JSON_UTIL_CC),
     ] {
         std::fs::write(source_dir.join(name), body).map_err(|error| error.to_string())?;
     }
@@ -188,6 +196,10 @@ fn host_source_fingerprint() -> String {
         HOST_HANDLER_CC,
         HOST_OSR_HANDLER_H,
         HOST_OSR_HANDLER_CC,
+        HOST_GUEST_MANAGER_H,
+        HOST_GUEST_MANAGER_CC,
+        HOST_JSON_UTIL_H,
+        HOST_JSON_UTIL_CC,
         INSTALL_SCRIPT,
     ] {
         for byte in body.as_bytes() {

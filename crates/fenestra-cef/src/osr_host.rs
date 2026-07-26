@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     io::Write,
     os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
@@ -38,11 +38,28 @@ use crate::{
     osr_frame_buffer::FrameBuffer,
     osr_layer_host,
     osr_protocol::{
-        MAIN_TEXTURE_ID, OsrFrame, OsrMessage, OsrPaintBatch, OsrSurface, POPUP_TEXTURE_ID,
-        control_regions_from_json, encode_component, lifecycle_from_json, read_message,
-        rects_from_json, regions_from_json, shell_surface_from_json,
+        MAIN_TEXTURE_ID, OsrFrame, OsrMessage, OsrPaintBatch, OsrSurface, POPUP_OVERLAY_ID,
+        POPUP_TEXTURE_ID, control_regions_from_json, encode_component, lifecycle_from_json,
+        read_message, rects_from_json, regions_from_json, shell_surface_from_json,
     },
 };
+
+struct OverlayLayer {
+    frame: OsrFrame,
+    buffer: FrameBuffer,
+}
+
+fn overlay_texture_id(overlay_id: &str) -> String {
+    if overlay_id == POPUP_OVERLAY_ID {
+        POPUP_TEXTURE_ID.to_string()
+    } else {
+        format!("__fenestra_guest_{overlay_id}")
+    }
+}
+
+fn overlay_id_for_surface(surface: &OsrSurface) -> Option<String> {
+    surface.overlay_id().map(str::to_string)
+}
 
 const TITLEBAR_HEIGHT: f32 = 38.0;
 const CONTROL_SIZE: f32 = 24.0;
@@ -245,9 +262,8 @@ struct OsrNativeHost {
     socket: Option<Arc<Mutex<UnixStream>>>,
     surface_size: PhysicalSize<u32>,
     main_frame: Option<OsrFrame>,
-    popup_frame: Option<OsrFrame>,
     main_buffer: FrameBuffer,
-    popup_buffer: FrameBuffer,
+    overlays: BTreeMap<String, OverlayLayer>,
     hovered_control: Option<TitlebarControl>,
     pressed_control: Option<TitlebarControl>,
     cursor: CursorIcon,
@@ -386,9 +402,8 @@ impl OsrNativeHost {
             socket: None,
             surface_size,
             main_frame: None,
-            popup_frame: None,
             main_buffer: FrameBuffer::new(),
-            popup_buffer: FrameBuffer::new(),
+            overlays: BTreeMap::new(),
             hovered_control: None,
             pressed_control: None,
             cursor: CursorIcon::Default,
@@ -687,9 +702,8 @@ impl OsrNativeHost {
         }
         self.socket = None;
         self.main_frame = None;
-        self.popup_frame = None;
+        self.overlays.clear();
         self.main_buffer.release();
-        self.popup_buffer.release();
         self.hibernate_commit_deadline = None;
         self.lifecycle_state = LifecycleState::Hibernated;
         if self.config.visible
@@ -761,9 +775,14 @@ impl OsrNativeHost {
                     }
                 }
                 OsrHostEvent::Message(OsrMessage::PopupHidden) => {
-                    self.popup_frame = None;
-                    self.popup_buffer.release();
+                    self.clear_overlay(POPUP_OVERLAY_ID);
                     needs_redraw = true;
+                }
+                OsrHostEvent::Message(OsrMessage::GuestHidden(id)) => {
+                    if !id.is_empty() {
+                        self.clear_overlay(&id);
+                        needs_redraw = true;
+                    }
                 }
                 OsrHostEvent::Message(OsrMessage::Cursor(cursor)) => {
                     self.set_content_cursor(cursor_for_cef(&cursor));
@@ -880,8 +899,7 @@ impl OsrNativeHost {
     fn hide_window(&mut self, reason: &str) {
         self.config.visible = false;
         self.focused = false;
-        self.popup_frame = None;
-        self.popup_buffer.release();
+        self.overlays.clear();
         self.send_control("focus\t0\n");
         if let Some(window) = &self.window {
             window.set_visible(false);
@@ -919,13 +937,17 @@ impl OsrNativeHost {
     }
 
     fn update_frame_texture(&mut self, frame: OsrFrame) -> bool {
-        let (width, height, _) = self.content_size_for_cef();
-        let Some(renderer) = self.renderer.as_mut() else {
+        if self.renderer.is_none() {
             return false;
-        };
+        }
+        let (width, height, _) = self.content_size_for_cef();
         match frame.surface {
             OsrSurface::Main => {
                 let Some(damage) = self.main_buffer.compose(width, height, &frame) else {
+                    return false;
+                };
+                let bytes = self.main_buffer.bytes().to_vec();
+                let Some(renderer) = self.renderer.as_mut() else {
                     return false;
                 };
                 if renderer
@@ -937,7 +959,7 @@ impl OsrNativeHost {
                         damage.y,
                         damage.width,
                         damage.height,
-                        self.main_buffer.bytes(),
+                        &bytes,
                     )
                     .is_err()
                 {
@@ -954,40 +976,61 @@ impl OsrNativeHost {
                 self.clear_pending_resize_paint();
                 self.update_effect_regions();
             }
-            OsrSurface::Popup => {
-                let Some(damage) = self.popup_buffer.compose(
-                    frame.width,
-                    frame.height,
-                    &popup_local_frame(&frame),
-                ) else {
+            OsrSurface::Popup | OsrSurface::Guest(_) => {
+                let Some(overlay_id) = overlay_id_for_surface(&frame.surface) else {
+                    return false;
+                };
+                let texture_id = overlay_texture_id(&overlay_id);
+                let local = overlay_local_frame(&frame);
+                let (damage, bytes) = {
+                    let overlay = self.overlays.entry(overlay_id.clone()).or_insert_with(|| {
+                        OverlayLayer {
+                            frame: local.clone(),
+                            buffer: FrameBuffer::new(),
+                        }
+                    });
+                    let Some(damage) =
+                        overlay.buffer.compose(frame.width, frame.height, &local)
+                    else {
+                        return false;
+                    };
+                    (damage, overlay.buffer.bytes().to_vec())
+                };
+                let Some(renderer) = self.renderer.as_mut() else {
                     return false;
                 };
                 if renderer
                     .update_dynamic_bgra_image_region(
-                        POPUP_TEXTURE_ID,
+                        &texture_id,
                         frame.width,
                         frame.height,
                         damage.x,
                         damage.y,
                         damage.width,
                         damage.height,
-                        self.popup_buffer.bytes(),
+                        &bytes,
                     )
                     .is_err()
                 {
                     return false;
                 }
-                self.popup_frame = Some(OsrFrame {
-                    surface: OsrSurface::Popup,
-                    width: frame.width,
-                    height: frame.height,
-                    x: frame.x,
-                    y: frame.y,
-                    bytes: Vec::new(),
-                });
+                if let Some(overlay) = self.overlays.get_mut(&overlay_id) {
+                    overlay.frame = OsrFrame {
+                        surface: frame.surface.clone(),
+                        width: frame.width,
+                        height: frame.height,
+                        x: frame.x,
+                        y: frame.y,
+                        bytes: Vec::new(),
+                    };
+                }
             }
         }
         true
+    }
+
+    fn clear_overlay(&mut self, overlay_id: &str) {
+        self.overlays.remove(overlay_id);
     }
 
     fn update_paint_batch(&mut self, batch: OsrPaintBatch) -> bool {
@@ -1039,39 +1082,62 @@ impl OsrNativeHost {
                 }
                 self.update_effect_regions();
             }
-            OsrSurface::Popup => {
-                let Some(renderer) = self.renderer.as_mut() else {
+            OsrSurface::Popup | OsrSurface::Guest(_) => {
+                let Some(overlay_id) = overlay_id_for_surface(&batch.surface) else {
                     return false;
                 };
-                let Some(damage) =
-                    self.popup_buffer
-                        .compose_batch(batch.width, batch.height, &batch.frames)
-                else {
+                let texture_id = overlay_texture_id(&overlay_id);
+                let (damage, bytes) = {
+                    let overlay = self.overlays.entry(overlay_id.clone()).or_insert_with(|| {
+                        OverlayLayer {
+                            frame: OsrFrame {
+                                surface: batch.surface.clone(),
+                                width: batch.width,
+                                height: batch.height,
+                                x: batch.x,
+                                y: batch.y,
+                                bytes: Vec::new(),
+                            },
+                            buffer: FrameBuffer::new(),
+                        }
+                    });
+                    let Some(damage) = overlay.buffer.compose_batch(
+                        batch.width,
+                        batch.height,
+                        &batch.frames,
+                    ) else {
+                        return false;
+                    };
+                    (damage, overlay.buffer.bytes().to_vec())
+                };
+                let Some(renderer) = self.renderer.as_mut() else {
                     return false;
                 };
                 if renderer
                     .update_dynamic_bgra_image_region(
-                        POPUP_TEXTURE_ID,
+                        &texture_id,
                         batch.width,
                         batch.height,
                         damage.x,
                         damage.y,
                         damage.width,
                         damage.height,
-                        self.popup_buffer.bytes(),
+                        &bytes,
                     )
                     .is_err()
                 {
                     return false;
                 }
-                self.popup_frame = Some(OsrFrame {
-                    surface: OsrSurface::Popup,
-                    width: batch.width,
-                    height: batch.height,
-                    x: batch.x,
-                    y: batch.y,
-                    bytes: Vec::new(),
-                });
+                if let Some(overlay) = self.overlays.get_mut(&overlay_id) {
+                    overlay.frame = OsrFrame {
+                        surface: batch.surface.clone(),
+                        width: batch.width,
+                        height: batch.height,
+                        x: batch.x,
+                        y: batch.y,
+                        bytes: Vec::new(),
+                    };
+                }
             }
         }
         true
@@ -1159,13 +1225,13 @@ impl OsrNativeHost {
                 opacity: 1.0,
             });
         }
-        if let Some(popup) = &self.popup_frame {
+        for (overlay_id, overlay) in &self.overlays {
             list.push(ImageCommand {
-                id: POPUP_TEXTURE_ID.to_string(),
-                x: popup.x as f32,
-                y: y + popup.y as f32,
-                width: popup.width as f32,
-                height: popup.height as f32,
+                id: overlay_texture_id(overlay_id),
+                x: overlay.frame.x as f32,
+                y: y + overlay.frame.y as f32,
+                width: overlay.frame.width as f32,
+                height: overlay.frame.height as f32,
                 opacity: 1.0,
             });
         }
@@ -1386,10 +1452,9 @@ impl OsrNativeHost {
     fn drop_hidden_window(&mut self) {
         self.drop_presented_window();
         self.main_frame = None;
-        self.popup_frame = None;
+        self.overlays.clear();
         self.pending_resize_paint = None;
         self.main_buffer.release();
-        self.popup_buffer.release();
     }
 
     fn drop_presented_window(&mut self) {
@@ -1417,10 +1482,19 @@ impl OsrNativeHost {
             .main_frame
             .as_ref()
             .map(|frame| (frame.width, frame.height));
-        let popup_frame = self
-            .popup_frame
-            .as_ref()
-            .map(|frame| (frame.width, frame.height));
+        let overlays: Vec<(String, u32, u32, Vec<u8>)> = self
+            .overlays
+            .iter()
+            .map(|(id, overlay)| {
+                (
+                    overlay_texture_id(id),
+                    overlay.frame.width,
+                    overlay.frame.height,
+                    overlay.buffer.bytes().to_vec(),
+                )
+            })
+            .collect();
+        let main_bytes = self.main_buffer.bytes().to_vec();
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
@@ -1433,19 +1507,19 @@ impl OsrNativeHost {
                 0,
                 width,
                 height,
-                self.main_buffer.bytes(),
+                &main_bytes,
             );
         }
-        if let Some((width, height)) = popup_frame {
+        for (texture_id, width, height, bytes) in overlays {
             let _ = renderer.update_dynamic_bgra_image_region(
-                POPUP_TEXTURE_ID,
+                &texture_id,
                 width,
                 height,
                 0,
                 0,
                 width,
                 height,
-                self.popup_buffer.bytes(),
+                &bytes,
             );
         }
     }
@@ -2033,9 +2107,9 @@ fn osr_socket_path() -> PathBuf {
     std::env::temp_dir().join(format!("fenestra-osr-{}-{nanos}.sock", std::process::id()))
 }
 
-fn popup_local_frame(frame: &OsrFrame) -> OsrFrame {
+fn overlay_local_frame(frame: &OsrFrame) -> OsrFrame {
     OsrFrame {
-        surface: OsrSurface::Popup,
+        surface: frame.surface.clone(),
         width: frame.width,
         height: frame.height,
         x: 0,

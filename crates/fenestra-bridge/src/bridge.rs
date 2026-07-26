@@ -31,6 +31,14 @@ impl BridgeError {
     }
 }
 
+impl std::fmt::Display for BridgeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for BridgeError {}
+
 pub type BridgeResult = std::result::Result<BridgeResponse, BridgeError>;
 type BridgeHandler = Arc<dyn Fn(BridgeCommand) -> BridgeResult + Send + Sync>;
 

@@ -44,10 +44,9 @@ pub(crate) fn run(config: OsrHostConfig) -> Result<(), String> {
         .shell_surface
         .clone()
         .ok_or_else(|| "missing Fenestra shell surface options".to_string())?;
-    if shell_surface
-        .size
-        .is_none_or(|(width, height)| height == 0 || (width == 0 && !shell_surface.anchor.left && !shell_surface.anchor.right))
-    {
+    if shell_surface.size.is_none_or(|(width, height)| {
+        height == 0 || (width == 0 && !shell_surface.anchor.left && !shell_surface.anchor.right)
+    }) {
         let (width, height) = shell_surface.size.unwrap_or((0, 0));
         shell_surface.size = Some((
             if width == 0 && shell_surface.anchor.left && shell_surface.anchor.right {
@@ -58,7 +57,9 @@ pub(crate) fn run(config: OsrHostConfig) -> Result<(), String> {
             height.max(config.height.max(1)),
         ));
     }
-    let layer_size = shell_surface.size.unwrap_or((config.width.max(1), config.height.max(1)));
+    let layer_size = shell_surface
+        .size
+        .unwrap_or((config.width.max(1), config.height.max(1)));
     let mut window_state = WindowState::new(&shell_surface.namespace)
         .with_size(layer_size)
         .with_layer(layer_for_shell(shell_surface.layer))
@@ -387,7 +388,7 @@ impl OsrLayerHost {
                             self.main_frame_surface_size = Some(frame_size);
                             self.main_frame = Some(frame);
                         }
-                        OsrSurface::Popup => {
+                        OsrSurface::Popup | OsrSurface::Guest(_) => {
                             if let Some(return_data) = self.update_popup_frame(frame, state, id) {
                                 return return_data;
                             }
@@ -410,6 +411,11 @@ impl OsrLayerHost {
                 }
             }
             LayerHostEvent::Message(OsrMessage::PopupHidden) => {
+                self.close_popup(state);
+            }
+            LayerHostEvent::Message(OsrMessage::GuestHidden(_id)) => {
+                // Wayland shell-surface host currently composites a single overlay
+                // slot (shared with fenestra.popup). GuestHidden clears that slot.
                 self.close_popup(state);
             }
             LayerHostEvent::Message(OsrMessage::Cursor(cursor)) => {
@@ -804,7 +810,7 @@ impl OsrLayerHost {
             self.hide_surface(state);
             return None;
         }
-        if batch.surface == OsrSurface::Popup {
+        if matches!(batch.surface, OsrSurface::Popup | OsrSurface::Guest(_)) {
             return self.update_popup_batch(batch, state, id);
         }
         let Some(file) = &self.buffer_file else {
@@ -831,7 +837,7 @@ impl OsrLayerHost {
                 self.main_frame = batch.frames.last().cloned();
                 self.main_frame_surface_size = Some((batch.width, batch.height));
             }
-            OsrSurface::Popup => {}
+            OsrSurface::Popup | OsrSurface::Guest(_) => {}
         }
         if !self.main_frame_ready() {
             return None;
@@ -1125,9 +1131,7 @@ impl OsrLayerHost {
     fn layer_commit_size(&self) -> (u32, u32) {
         if let Some(shell_surface) = &self.config.shell_surface {
             if let Some((width, height)) = shell_surface.size {
-                let width = if width == 0
-                    && shell_surface.anchor.left
-                    && shell_surface.anchor.right
+                let width = if width == 0 && shell_surface.anchor.left && shell_surface.anchor.right
                 {
                     0
                 } else {
@@ -1136,10 +1140,7 @@ impl OsrLayerHost {
                 return (width, height.max(1));
             }
         }
-        (
-            self.surface_size.0.max(1),
-            self.surface_size.1.max(1),
-        )
+        (self.surface_size.0.max(1), self.surface_size.1.max(1))
     }
 }
 

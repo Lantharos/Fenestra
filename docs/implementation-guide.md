@@ -237,6 +237,89 @@ Keep privileged work in Rust and expose small command surfaces to the web page. 
 access to the filesystem, credentials, notifications, native messaging, or global shortcuts, it
 should be a Rust command with validation rather than browser-side logic.
 
+## Guest WebViews
+
+Guest webviews are secondary Chromium views hosted inside one Fenestra window.
+Use them for embedded browsing (bookmarks, docs, media sites) without giving
+those pages the privileged `window.fenestra.bridge` surface.
+
+### Create from the app UI
+
+```js
+const guest = await window.fenestra.guest.create({
+  id: "browser-1",
+  url: "https://example.com",
+  x: 280,
+  y: 48,
+  width: 1000,
+  height: 720,
+  partition: "persist:bookmarks",
+  popupPolicy: "deny",
+  allowDownloads: true,
+  allowBridge: false,
+});
+
+window.fenestra.bridge.listen("guest.navigated", (event) => {
+  console.log(event.id, event.url, event.title);
+});
+
+window.fenestra.bridge.listen("guest.download", async (event) => {
+  if (event.state !== "requested") return;
+  await window.fenestra.guest.downloadAction(event.downloadId, "accept", {
+    savePath: `/tmp/${event.filename}`,
+  });
+});
+```
+
+### Commands
+
+| Command | Purpose |
+| --- | --- |
+| `fenestra.guest.create` | Create a guest (`url` or `html`, bounds, partition, policies) |
+| `fenestra.guest.destroy` | Close a guest |
+| `fenestra.guest.navigate` | Load a URL |
+| `fenestra.guest.setBounds` | Move/resize relative to the host client area |
+| `fenestra.guest.setVisible` | Show or hide |
+| `fenestra.guest.focus` | Focus the guest |
+| `fenestra.guest.reload` / `goBack` / `goForward` | Navigation |
+| `fenestra.guest.setZoom` | Zoom factor |
+| `fenestra.guest.executeJavaScript` | Run script in the guest (still no privileged bridge) |
+| `fenestra.guest.downloadAction` | `accept` / `cancel` / `pause` / `resume` a download |
+| `fenestra.guest.list` / `get` | Snapshot guests |
+
+### Events
+
+`guest.created`, `guest.destroyed`, `guest.navigated`, `guest.loading`,
+`guest.title`, `guest.newWindow`, `guest.download`.
+
+### Popup policy
+
+`popupPolicy` controls `window.open` / `target=_blank` inside a guest:
+
+| Value | Behavior |
+| --- | --- |
+| `deny` (default) | Cancel and emit `guest.newWindow` |
+| `allow` | Let Chromium open a native popup |
+| `navigateSame` | Navigate the same guest |
+| `openGuest` | Spawn another guest with the same partition |
+
+### Security
+
+- Guests do **not** get `window.fenestra` unless `allowBridge: true`.
+- Partitions isolate cookies and cache (`guest:<id>` by default).
+- Prefer keeping privileged work on the primary page + Rust bridge commands.
+
+### Platform notes
+
+| Platform | Backend | Guest compositing |
+| --- | --- | --- |
+| Windows | WebView2 | Child HWND + extra `ICoreWebView2Controller` per guest |
+| Linux (OSR / frameless) | CEF windowless | Named overlay textures in the OSR host |
+| Linux (windowed) / macOS | CEF Alloy | Child browsers via `SetAsChild` when the host window is available; OSR is preferred for multi-guest overlays |
+
+`fenestra.popup.open` / `close` remain supported and map to the reserved guest id
+`__fenestra_popup`.
+
 ## Activity Leases
 
 Hidden UI can be throttled or hibernated, but Fenestra must not hibernate while active work is in
@@ -359,7 +442,7 @@ change between platforms.
 | Platform | Backend | Status |
 | --- | --- | --- |
 | Linux | CEF with OSR native host (Wayland-first) | Full transparency, blur, glass, shell surfaces |
-| Windows | WebView2 (Evergreen) via winit + `webview2-com 0.36` | System chrome, frameless, glass (DWM backdrop), dev workflow; structurally complete, awaiting Windows host validation |
+| Windows | WebView2 (Evergreen) via winit + `webview2-com 0.36` | System chrome, frameless drag/control regions, DWM Acrylic/Mica/MicaAlt glass, bridge, resize sync, stable profiles |
 | macOS  | CEF windowed | System chrome, frameless, dev workflow, runtime install |
 
 On Windows, `FenestraWindow` is a type alias to `fenestra_webview2::WebView2Window`. App code on
@@ -368,12 +451,13 @@ the right backend for the host target. The WebView2 backend uses the same `fenes
 protocol as the CEF backend: `add_NavigationStarting` cancels `fenestra://bridge/...` and
 `fenestra://window/...` URLs, the bridge install script is registered once via
 `ICoreWebView2::AddScriptToExecuteOnDocumentCreated`, and bridge responses / activity emits are
-posted to the page via `ICoreWebView2::ExecuteScript`.
+posted to the page via `ICoreWebView2::ExecuteScript`. Glass windows set
+`WEBVIEW2_DEFAULT_BACKGROUND_COLOR=0`, clear the host brush, extend the DWM frame, and apply
+Acrylic / Mica / MicaAlt system backdrops so the page composites over the desktop material.
 
-OSR features (frameless transparent windows, blur regions, shell surfaces, layer-shell palettes)
-currently use the Linux Wayland host. On Windows the WebView2 backend covers transparency through
-DWM system backdrops (Mica / Acrylic / Tabbed on Windows 11 22H2+) and frameless windows; the
-shell-surface path is Linux-only. macOS uses the windowed CEF host with native decorations.
+Desktop services (tray, global shortcuts, autostart, deep links, native messaging, single-instance)
+are wired on Linux, Windows, and macOS. Shell surfaces / Wayland compositor regions remain
+Linux-only.
 
 `fenestra-cef` keeps Linux-only crates (`layershellev`, `ksni`, `ashpd`, `wayland-client`, `x11rb`)
 behind `cfg(target_os = "linux")` so a downstream app can build for Windows and macOS without

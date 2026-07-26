@@ -33,7 +33,18 @@ webview2-com-sys = "0.36"
 # `ICoreWebView2` call.
 windows = { version = "0.60", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_System_Com",
+    "Win32_UI_Controls",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Dwm",
+    "Win32_UI_Shell",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_Security",
 ] }
+tray-icon = "0.24"
+global-hotkey = "0.8"
+image = { version = "0.25", default-features = false, features = ["png"] }
+window-vibrancy = "0.6"

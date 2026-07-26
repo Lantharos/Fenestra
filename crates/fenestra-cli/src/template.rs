@@ -123,15 +123,15 @@ fn main() {
         .drag_region(WindowRegionRect::new(0, 0, i32::MAX, APP_TITLEBAR_HEIGHT))
         .control_region(
             FenestraWindowControlAction::Minimize,
-            WindowRegionRect::new(-100, 7, 24, 24),
+            WindowRegionRect::new(-138, 0, 46, APP_TITLEBAR_HEIGHT),
         )
         .control_region(
             FenestraWindowControlAction::Maximize,
-            WindowRegionRect::new(-68, 7, 24, 24),
+            WindowRegionRect::new(-92, 0, 46, APP_TITLEBAR_HEIGHT),
         )
         .control_region(
             FenestraWindowControlAction::Close,
-            WindowRegionRect::new(-36, 7, 24, 24),
+            WindowRegionRect::new(-46, 0, 46, APP_TITLEBAR_HEIGHT),
         )
         .runtime(runtime)
         .bridge_descriptor_handler(
@@ -302,59 +302,70 @@ textarea {
 
 .window-controls {
   position: absolute;
-  top: 7px;
-  right: 12px;
+  top: 0;
+  right: 0;
   display: flex;
-  gap: 8px;
+  height: var(--titlebar-height);
 }
 
 .window-control {
   position: relative;
-  width: 24px;
-  min-width: 24px;
-  height: 24px;
-  min-height: 24px;
+  width: 46px;
+  min-width: 46px;
+  height: 100%;
+  min-height: 0;
   padding: 0;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 12%);
+  border-radius: 0;
+  background: transparent;
   color: rgb(245 245 245);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
-.window-control:hover {
-  background: rgb(255 255 255 / 18%);
+.window-control:hover,
+.window-control.is-hover {
+  background: rgb(255 255 255 / 8%);
+}
+
+.window-control.close:hover,
+.window-control.close.is-hover {
+  background: #c42b1c;
+  color: #fff;
 }
 
 .window-control::before,
 .window-control::after {
   position: absolute;
   content: "";
+  left: 50%;
+  top: 50%;
   background: currentColor;
 }
 
 .window-control.minimize::before {
-  left: 7px;
-  top: 11px;
   width: 10px;
-  height: 2px;
-  border-radius: 999px;
+  height: 1px;
+  margin: -0.5px 0 0 -5px;
+  border-radius: 0;
 }
 
 .window-control.maximize::before {
-  left: 7px;
-  top: 7px;
   width: 10px;
   height: 10px;
-  border: 1.5px solid currentColor;
+  margin: -5px 0 0 -5px;
+  box-sizing: border-box;
+  border: 0;
   background: transparent;
+  box-shadow: inset 0 0 0 1px currentColor;
+  border-radius: 0;
 }
 
 .window-control.close::before,
 .window-control.close::after {
-  left: 7px;
-  top: 11px;
   width: 10px;
-  height: 2px;
-  border-radius: 999px;
+  height: 1px;
+  margin: -0.5px 0 0 -5px;
+  border-radius: 0;
 }
 
 .window-control.close::before {

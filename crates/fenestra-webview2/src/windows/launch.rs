@@ -65,14 +65,17 @@ use webview2_com::{
     CoreWebView2EnvironmentOptions, CreateCoreWebView2ControllerCompletedHandler,
     CreateCoreWebView2EnvironmentCompletedHandler,
     Microsoft::Web::WebView2::Win32::{
-        ICoreWebView2Controller, ICoreWebView2Environment, ICoreWebView2EnvironmentOptions,
+        COREWEBVIEW2_COLOR, ICoreWebView2Controller, ICoreWebView2Controller2,
+        ICoreWebView2Environment, ICoreWebView2EnvironmentOptions,
     },
 };
 use webview2_com_sys::Microsoft::Web::WebView2::Win32 as SysWin32;
+use windows::core::Interface;
 
 use crate::{
     WebView2Config, WebView2Error, WebView2Process, WebView2ProcessInner, WebView2Result,
-    WebView2Window, windows::bridge,
+    WebView2Window,
+    windows::{bridge, desktop_services, guest::GuestManager, guest_commands, regions},
 };
 
 pub(crate) fn launch(
@@ -81,6 +84,20 @@ pub(crate) fn launch(
 ) -> WebView2Result<WebView2Process> {
     let metrics = LaunchMetrics::new(metrics_label(&window.config));
     metrics.mark("launch.start");
+
+    // Set before CreateCoreWebView2Environment so the controller never
+    // paints the default opaque white underlay. Format is 0xAARRGGBB.
+    // (Earlier E_INVALIDARG failures were from bad file:// URLs, not this.)
+    if window.config.transparent
+        || window
+            .config
+            .effective_background_effect()
+            .requires_transparency()
+    {
+        unsafe {
+            std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0x00000000");
+        }
+    }
 
     let url = entry_url(&window.config)?;
     metrics.mark("entry_url.ready");
@@ -98,9 +115,14 @@ pub(crate) fn launch(
     );
     metrics.mark("bridge_runtime.ready");
 
+    let sidecar = spawn_dev_command(window.config.dev_command.as_deref());
+    if sidecar.is_some() {
+        metrics.mark("dev_command.started");
+    }
+
     let activity = fenestra_bridge::ActivityRegistry::default();
     let command_allowlist =
-        fenestra_bridge::bridge_commands_with_internal(window.config.bridge.commands());
+        fenestra_bridge::bridge_commands_with_all_internal(window.config.bridge.commands());
 
     let emitter = Arc::new(crate::WebView2ActivityEmitter {
         sender: event_tx.clone(),
@@ -121,8 +143,28 @@ pub(crate) fn launch(
             runtime: runtime.clone(),
             background_frame_rate: window.config.lifecycle.background_frame_rate,
             command_allowlist: command_allowlist.clone(),
+            hide_on_blur: std::sync::atomic::AtomicBool::new(window.config.hide_on_blur),
+            desktop_services: Mutex::new(None),
+            guests: Mutex::new(GuestManager::new(
+                guest_user_data_root(&window.config),
+                event_tx.clone(),
+                command_allowlist.clone(),
+            )),
         })
     };
+
+    let desktop = desktop_services::apply_windows_desktop_services(
+        window.config.desktop_services.tray_icon.as_ref(),
+        &window.config.desktop_services.autostart,
+        &window.config.desktop_services.global_shortcuts,
+        &window.config.desktop_services.deep_links,
+        &window.config.desktop_services.native_messaging_hosts,
+        window.config.desktop_services.single_instance_id.as_deref(),
+        window.config.desktop_services.single_instance_policy,
+    )
+    .map_err(WebView2Error::Backend)?;
+    *inner.desktop_services.lock().unwrap() = Some(desktop);
+    metrics.mark("desktop_services.ready");
 
     let state = LaunchState {
         config: window.config,
@@ -130,6 +172,8 @@ pub(crate) fn launch(
         inner: inner.clone(),
         event_rx,
         window: None,
+        sidecar,
+        frameless_restore: None,
     };
     let app = LaunchApp { state };
     event_loop
@@ -146,6 +190,10 @@ struct LaunchState {
     inner: Arc<WebView2ProcessInner>,
     event_rx: Receiver<WebView2UserEvent>,
     window: Option<Box<dyn Window>>,
+    sidecar: Option<std::process::Child>,
+    /// Previous outer rect while a borderless window is filled to the
+    /// monitor work area (not Win32 `SW_MAXIMIZE`).
+    frameless_restore: Option<windows::Win32::Foundation::RECT>,
 }
 
 struct LaunchApp {
@@ -163,6 +211,8 @@ impl ApplicationHandler for LaunchApp {
         {
             return;
         }
+        let dwm_glass = super::host_controls::wants_dwm_glass(&self.state.config);
+        let winit_transparent = self.state.config.transparent && !dwm_glass;
         let mut attributes = WindowAttributes::default()
             .with_title(self.state.config.title.clone())
             .with_surface_size(PhysicalSize::new(
@@ -176,7 +226,7 @@ impl ApplicationHandler for LaunchApp {
                 self.state.config.min_height.max(1) as f64,
             ))
             .with_decorations(self.state.config.chrome.uses_native_decorations())
-            .with_transparent(self.state.config.transparent);
+            .with_transparent(winit_transparent);
         if self.state.config.always_on_top {
             attributes = attributes.with_window_level(WindowLevel::AlwaysOnTop);
         }
@@ -208,9 +258,16 @@ impl ApplicationHandler for LaunchApp {
             .hwnd
             .store(hwnd, std::sync::atomic::Ordering::Relaxed);
         self.state.inner.metrics.mark("hwnd.ready");
+        // Keep the winit window alive before we pump COM messages.
+        self.state.window = Some(window);
 
-        let _ = super::host_controls::apply_dwm_backdrop(hwnd, &self.state.config);
+        if !self.state.config.chrome.uses_native_decorations() {
+            super::host_controls::apply_frameless_window(hwnd);
+        }
 
+        // Do NOT apply DWM glass / window-vibrancy before the WebView2
+        // controller exists — that returns E_INVALIDARG (0x80070057) from
+        // CreateCoreWebView2Controller on current WebView2 runtimes.
         match create_webview2(
             hwnd,
             &self.state.config,
@@ -225,7 +282,12 @@ impl ApplicationHandler for LaunchApp {
             }
         }
 
-        self.state.window = Some(window);
+        // WebView2 can restore caption chrome; re-assert frameless after.
+        if !self.state.config.chrome.uses_native_decorations() {
+            super::host_controls::apply_frameless_window(hwnd);
+        }
+        let _ = super::host_controls::apply_dwm_backdrop(hwnd, &self.state.config);
+        let _ = super::host_controls::apply_window_vibrancy(hwnd, &self.state.config);
     }
 
     fn window_event(
@@ -234,12 +296,77 @@ impl ApplicationHandler for LaunchApp {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        if let WindowEvent::CloseRequested = event {
-            let _ = self.state.inner.event_sender.send(WebView2UserEvent::Exit);
+        match event {
+            WindowEvent::CloseRequested => {
+                let _ = self.state.inner.event_sender.send(WebView2UserEvent::Exit);
+            }
+            WindowEvent::SurfaceResized(size) => {
+                let hwnd = self
+                    .state
+                    .inner
+                    .hwnd
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                let frameless = !self.state.config.chrome.uses_native_decorations();
+                let work_area_maximized = self.state.frameless_restore.is_some();
+                resize_controller(
+                    &self.state.inner,
+                    size.width,
+                    size.height,
+                    frameless,
+                    hwnd,
+                    work_area_maximized,
+                );
+                if frameless {
+                    if let Some(window) = self.state.window.as_ref() {
+                        window.set_decorations(false);
+                    }
+                    super::host_controls::apply_frameless_window(hwnd);
+                    // Snap-maximize sets IsZoomed and brings back caption;
+                    // convert to a work-area fill instead.
+                    if super::host_controls::is_zoomed(hwnd)
+                        && let Some(rect) =
+                            super::host_controls::suppress_system_maximize(hwnd)
+                    {
+                        self.state.frameless_restore = Some(rect);
+                    }
+                }
+                if super::host_controls::wants_dwm_glass(&self.state.config) {
+                    let _ = super::host_controls::apply_dwm_backdrop(hwnd, &self.state.config);
+                }
+            }
+            WindowEvent::Focused(false)
+                if self
+                    .state
+                    .inner
+                    .hide_on_blur
+                    .load(std::sync::atomic::Ordering::Relaxed) =>
+            {
+                let hwnd = self
+                    .state
+                    .inner
+                    .hwnd
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                let _ = super::host_controls::hide_window(hwnd);
+            }
+            _ => {}
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+        let platform_events = match self.state.inner.desktop_services.lock() {
+            Ok(guard) => {
+                if let Some(services) = guard.as_ref() {
+                    services.poll_native_events();
+                    services.take_events()
+                } else {
+                    Vec::new()
+                }
+            }
+            Err(_) => Vec::new(),
+        };
+        for event in platform_events {
+            self.dispatch_platform_event(event);
+        }
         loop {
             match self.state.event_rx.try_recv() {
                 Ok(event) => self.handle_user_event(event_loop, event),
@@ -254,6 +381,24 @@ impl ApplicationHandler for LaunchApp {
 }
 
 impl LaunchApp {
+    fn dispatch_platform_event(&mut self, event: fenestra_platform::PlatformEvent) {
+        if let fenestra_platform::PlatformEvent::SingleInstance(activation) = &event
+            && activation.policy == fenestra_platform::SingleInstancePolicy::FocusExisting
+        {
+            let hwnd = self
+                .state
+                .inner
+                .hwnd
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let _ = super::host_controls::show_window(hwnd);
+            let _ = super::host_controls::focus_window(hwnd);
+        }
+        let (name, payload) = platform_event_payload(event);
+        if let Some(webview) = self.state.inner.webview.lock().unwrap().clone() {
+            bridge::execute_bridge_emit(&webview, name, &payload);
+        }
+    }
+
     fn handle_user_event(&mut self, event_loop: &dyn ActiveEventLoop, event: WebView2UserEvent) {
         let hwnd = self
             .state
@@ -268,6 +413,9 @@ impl LaunchApp {
             }
             WebView2UserEvent::Activity { update } => {
                 emit_activity_event(self.state.inner.clone(), update);
+            }
+            WebView2UserEvent::GuestOpenRequested { parent, url } => {
+                guest_commands::open_requested_guest(&self.state.inner, &parent, &url);
             }
             WebView2UserEvent::SetVisible(visible) => {
                 if visible {
@@ -289,14 +437,79 @@ impl LaunchApp {
                 let _ = super::host_controls::minimize_window(hwnd);
             }
             WebView2UserEvent::Maximize => {
-                let _ = super::host_controls::maximize_window(hwnd);
+                if !self.state.config.chrome.uses_native_decorations() {
+                    if let Some(rect) = self.state.frameless_restore.take() {
+                        let _ = super::host_controls::restore_frameless(hwnd, rect);
+                    } else if let Some(rect) = super::host_controls::maximize_frameless(hwnd) {
+                        self.state.frameless_restore = Some(rect);
+                    }
+                    if let Some(window) = self.state.window.as_ref() {
+                        window.set_decorations(false);
+                    }
+                } else {
+                    let _ = super::host_controls::maximize_window(hwnd);
+                }
             }
             WebView2UserEvent::Unmaximize => {
-                let _ = super::host_controls::unmaximize_window(hwnd);
+                if !self.state.config.chrome.uses_native_decorations() {
+                    if let Some(rect) = self.state.frameless_restore.take() {
+                        let _ = super::host_controls::restore_frameless(hwnd, rect);
+                    } else {
+                        let _ = super::host_controls::unmaximize_window(hwnd);
+                        super::host_controls::apply_frameless_window(hwnd);
+                    }
+                    if let Some(window) = self.state.window.as_ref() {
+                        window.set_decorations(false);
+                    }
+                } else {
+                    let _ = super::host_controls::unmaximize_window(hwnd);
+                }
             }
-            WebView2UserEvent::Exit => event_loop.exit(),
+            WebView2UserEvent::Exit => {
+                if let Some(mut child) = self.state.sidecar.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                if let Ok(mut guests) = self.state.inner.guests.lock() {
+                    guests.shutdown();
+                }
+                {
+                    let mut webview = self.state.inner.webview.lock().unwrap();
+                    *webview = None;
+                }
+                {
+                    let mut controller = self.state.inner.controller.lock().unwrap();
+                    if let Some(controller) = controller.take() {
+                        let _ = unsafe { controller.Close() };
+                    }
+                }
+                self.state.window = None;
+                event_loop.exit();
+            }
         }
     }
+}
+
+fn resize_controller(
+    inner: &Arc<WebView2ProcessInner>,
+    width: u32,
+    height: u32,
+    frameless: bool,
+    hwnd: isize,
+    work_area_maximized: bool,
+) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    let Ok(guard) = inner.controller.lock() else {
+        return;
+    };
+    let Some(controller) = guard.as_ref() else {
+        return;
+    };
+    let size =
+        controller_bounds_for_size(width, height, frameless, hwnd, work_area_maximized);
+    let _ = unsafe { controller.SetBounds(size) };
 }
 
 fn create_webview2(
@@ -305,9 +518,14 @@ fn create_webview2(
     url: &str,
     inner: Arc<WebView2ProcessInner>,
 ) -> WebView2Result<()> {
+    if hwnd == 0 {
+        return Err(WebView2Error::Backend(
+            "invalid parent HWND for WebView2 controller: null".into(),
+        ));
+    }
     let parent = windows::Win32::Foundation::HWND(hwnd as *mut _);
 
-    let user_data_dir = webview_user_data_dir(&config.title, url);
+    let user_data_dir = webview_user_data_dir(config);
     std::fs::create_dir_all(&user_data_dir).map_err(WebView2Error::Io)?;
     let user_data_dir_str = user_data_dir
         .to_str()
@@ -338,11 +556,18 @@ fn create_webview2(
                 windows::core::PCWSTR(user_data_ptr),
                 &env_options,
                 &handler,
-            )?;
+            )
+            .map_err(|error| {
+                WebView2Error::Backend(format!("CreateCoreWebView2EnvironmentWithOptions: {error}"))
+            })?;
         }
         match webview2_com::wait_with_pump(rx) {
             Ok(Ok(env)) => env,
-            Ok(Err(error)) => return Err(bridge::webview2_error(error)),
+            Ok(Err(error)) => {
+                return Err(WebView2Error::Backend(format!(
+                    "CreateCoreWebView2Environment callback: {error}"
+                )));
+            }
             Err(error) => {
                 return Err(WebView2Error::Backend(format!(
                     "env wait_with_pump: {error}"
@@ -368,11 +593,18 @@ fn create_webview2(
             },
         ));
         unsafe {
-            env.CreateCoreWebView2Controller(parent, &handler)?;
+            env.CreateCoreWebView2Controller(parent, &handler)
+                .map_err(|error| {
+                    WebView2Error::Backend(format!("CreateCoreWebView2Controller: {error}"))
+                })?;
         }
         match webview2_com::wait_with_pump(rx) {
             Ok(Ok(controller)) => controller,
-            Ok(Err(error)) => return Err(bridge::webview2_error(error)),
+            Ok(Err(error)) => {
+                return Err(WebView2Error::Backend(format!(
+                    "CreateCoreWebView2Controller callback: {error}"
+                )));
+            }
             Err(error) => {
                 return Err(WebView2Error::Backend(format!(
                     "controller wait_with_pump: {error}"
@@ -382,20 +614,30 @@ fn create_webview2(
     };
     inner.metrics.mark("controller.env.ready");
 
-    let size = windows::Win32::Foundation::RECT {
-        left: 0,
-        top: 0,
-        right: config.width as i32,
-        bottom: config.height as i32,
-    };
+    // GetClientRect can return an empty rect before the first layout
+    // pass; WebView2 SetBounds rejects 0×0 with E_INVALIDARG.
+    let size = controller_bounds(hwnd, config);
     unsafe {
-        controller.SetBounds(size).map_err(bridge::webview2_error)?;
-        controller
-            .SetIsVisible(config.visible)
-            .map_err(bridge::webview2_error)?;
+        controller.SetBounds(size).map_err(|error| {
+            WebView2Error::Backend(format!(
+                "SetBounds({:?}): {error}",
+                (size.left, size.top, size.right, size.bottom)
+            ))
+        })?;
+        controller.SetIsVisible(config.visible).map_err(|error| {
+            WebView2Error::Backend(format!("SetIsVisible: {error}"))
+        })?;
     }
 
-    let webview = unsafe { controller.CoreWebView2() }.map_err(bridge::webview2_error)?;
+    let needs_clear_bg =
+        config.transparent || config.effective_background_effect().requires_transparency();
+    if needs_clear_bg {
+        set_webview_transparent_background(&controller);
+    }
+
+    let webview = unsafe { controller.CoreWebView2() }.map_err(|error| {
+        WebView2Error::Backend(format!("CoreWebView2: {error}"))
+    })?;
     inner.metrics.mark("webview.ready");
 
     if let Ok(settings) = unsafe { webview.Settings() } {
@@ -403,7 +645,19 @@ fn create_webview2(
         let _ = unsafe { settings.SetAreDevToolsEnabled(true) };
     }
 
+    if config.frameless || !config.drag_regions.is_empty() || !config.control_regions.is_empty() {
+        regions::enable_non_client_region_support(&webview).map_err(|error| {
+            WebView2Error::Backend(format!("non-client region support: {error}"))
+        })?;
+    }
+
+    if needs_clear_bg {
+        install_transparent_document_script(&webview)?;
+        register_transparent_background_on_navigation(&webview, controller.clone())?;
+    }
+
     bridge::install_bridge_script(&webview, &inner)?;
+    regions::install_region_script(&webview, config)?;
     bridge::register_navigation_starting(&webview, inner.clone())?;
     bridge::register_web_message_received(&webview, inner.clone())?;
 
@@ -413,7 +667,7 @@ fn create_webview2(
     unsafe {
         webview
             .Navigate(windows::core::PCWSTR(url_wide.as_ptr()))
-            .map_err(bridge::webview2_error)?;
+            .map_err(|error| WebView2Error::Backend(format!("Navigate({url}): {error}")))?;
     }
     inner.metrics.mark("navigate.ready");
 
@@ -421,6 +675,52 @@ fn create_webview2(
     *inner.webview.lock().unwrap() = Some(webview);
 
     Ok(())
+}
+
+fn controller_bounds(
+    hwnd: isize,
+    config: &WebView2Config,
+) -> windows::Win32::Foundation::RECT {
+    let frameless = config.frameless || !config.chrome.uses_native_decorations();
+    if let Some(rect) = super::host_controls::client_rect(hwnd) {
+        let width = rect.right.saturating_sub(rect.left);
+        let height = rect.bottom.saturating_sub(rect.top);
+        if width > 0 && height > 0 {
+            return controller_bounds_for_size(width as u32, height as u32, frameless, hwnd, false);
+        }
+    }
+    controller_bounds_for_size(
+        config.width.max(1),
+        config.height.max(1),
+        frameless,
+        hwnd,
+        false,
+    )
+}
+
+fn controller_bounds_for_size(
+    width: u32,
+    height: u32,
+    frameless: bool,
+    hwnd: isize,
+    work_area_maximized: bool,
+) -> windows::Win32::Foundation::RECT {
+    let inset = if frameless
+        && !work_area_maximized
+        && !super::host_controls::is_zoomed(hwnd)
+    {
+        super::host_controls::FRAMELESS_RESIZE_BORDER
+    } else {
+        0
+    };
+    let right = (width as i32).saturating_sub(inset);
+    let bottom = (height as i32).saturating_sub(inset);
+    windows::Win32::Foundation::RECT {
+        left: inset,
+        top: inset,
+        right: right.max(inset + 1),
+        bottom: bottom.max(inset + 1),
+    }
 }
 
 fn emit_activity_event(inner: Arc<WebView2ProcessInner>, update: ActivityHostUpdate) {
@@ -434,13 +734,146 @@ fn emit_activity_event(inner: Arc<WebView2ProcessInner>, update: ActivityHostUpd
     }
 }
 
-fn webview_user_data_dir(title: &str, url: &str) -> PathBuf {
+fn platform_event_payload(
+    event: fenestra_platform::PlatformEvent,
+) -> (&'static str, serde_json::Value) {
+    match event {
+        fenestra_platform::PlatformEvent::Tray(activation) => (
+            "tray.activate",
+            serde_json::json!({
+                "trayId": activation.tray_id,
+                "itemId": activation.item_id,
+                "action": activation.action,
+            }),
+        ),
+        fenestra_platform::PlatformEvent::GlobalShortcut(activation) => (
+            "globalShortcut.activate",
+            serde_json::json!({
+                "id": activation.id,
+                "action": activation.action,
+                "activationToken": activation.activation_token,
+            }),
+        ),
+        fenestra_platform::PlatformEvent::SingleInstance(activation) => (
+            "singleInstance.activate",
+            serde_json::json!({
+                "policy": format!("{:?}", activation.policy),
+                "arguments": activation.arguments,
+                "workingDirectory": activation.working_directory,
+                "activationToken": activation.activation_token,
+            }),
+        ),
+    }
+}
+
+fn set_webview_transparent_background(
+    controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,
+) {
+    match controller.cast::<ICoreWebView2Controller2>() {
+        Ok(controller2) => {
+            let color = COREWEBVIEW2_COLOR {
+                A: 0,
+                R: 0,
+                G: 0,
+                B: 0,
+            };
+            if let Err(error) = unsafe { controller2.SetDefaultBackgroundColor(color) } {
+                eprintln!("fenestra: WebView2 transparent background failed: {error}");
+                return;
+            }
+            let mut got = COREWEBVIEW2_COLOR::default();
+            if unsafe { controller2.DefaultBackgroundColor(&mut got) }.is_ok() && got.A != 0 {
+                eprintln!(
+                    "fenestra: WebView2 DefaultBackgroundColor stayed opaque (A={})",
+                    got.A
+                );
+            }
+        }
+        Err(error) => {
+            eprintln!("fenestra: ICoreWebView2Controller2 unavailable: {error}");
+        }
+    }
+}
+
+fn register_transparent_background_on_navigation(
+    webview: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2,
+    controller: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,
+) -> WebView2Result<()> {
+    use webview2_com::NavigationCompletedEventHandler;
+    let handler = NavigationCompletedEventHandler::create(Box::new(move |_sender, _args| {
+        set_webview_transparent_background(&controller);
+        Ok(())
+    }));
+    let mut token = 0i64;
+    unsafe {
+        webview
+            .add_NavigationCompleted(&handler, &mut token)
+            .map_err(bridge::webview2_error)?;
+    }
+    Ok(())
+}
+
+fn install_transparent_document_script(
+    webview: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2,
+) -> WebView2Result<()> {
+    let script = r#"(function(){
+  var css = 'html,body{background:transparent!important;}';
+  var style = document.createElement('style');
+  style.setAttribute('data-fenestra-transparent', '1');
+  style.textContent = css;
+  (document.head || document.documentElement).appendChild(style);
+  if (document.documentElement) document.documentElement.style.background = 'transparent';
+  if (document.body) document.body.style.background = 'transparent';
+})();"#;
+    let wide = bridge::wide_pwstr(script);
+    let completed = webview2_com::AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(
+        Box::new(|_error, _id| Ok(())),
+    );
+    unsafe {
+        webview
+            .AddScriptToExecuteOnDocumentCreated(windows::core::PCWSTR(wide.as_ptr()), &completed)
+    }
+    .map_err(bridge::webview2_error)?;
+    Ok(())
+}
+
+fn webview_user_data_dir(config: &WebView2Config) -> PathBuf {
+    profile_root(config).join("profile")
+}
+
+/// Guest partitions live next to the primary profile. Each partition
+/// gets its own folder below this root so cookies and cache stay
+/// separate.
+fn guest_user_data_root(config: &WebView2Config) -> PathBuf {
+    profile_root(config).join("guests")
+}
+
+fn profile_root(config: &WebView2Config) -> PathBuf {
+    let profile_key = config
+        .app_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(config.title.as_str());
     user_cache_home()
         .join("fenestra")
         .join("webviews")
-        .join(format!("{:016x}", stable_hash(&[title, url])))
-        .join("instances")
-        .join(instance_key())
+        .join(format!("{:016x}", stable_hash(&[profile_key])))
+}
+
+fn spawn_dev_command(command: Option<&str>) -> Option<std::process::Child> {
+    let command = command?.trim();
+    if command.is_empty() {
+        return None;
+    }
+    let mut process = std::process::Command::new("cmd");
+    process.arg("/C").arg(command);
+    process
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()
 }
 
 fn user_cache_home() -> PathBuf {
@@ -456,22 +889,7 @@ fn user_cache_home() -> PathBuf {
     std::env::temp_dir()
 }
 
-fn instance_key() -> String {
-    let counter = std::sync::atomic::AtomicU64::fetch_add(
-        &INSTANCE_COUNTER,
-        1,
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    format!("{}-{counter}-{timestamp}", std::process::id())
-}
-
-static INSTANCE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
-fn stable_hash(parts: &[&str]) -> u64 {
+pub(crate) fn stable_hash(parts: &[&str]) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     for part in parts {
         for byte in part.as_bytes() {
@@ -496,12 +914,57 @@ fn entry_url(config: &WebView2Config) -> WebView2Result<String> {
             "WebView2 window has no entry, URL, or dev URL".to_string(),
         ));
     };
-    let path = std::path::PathBuf::from(entry);
+    let (entry_path, suffix) = split_entry_suffix(entry);
+    let path = std::path::PathBuf::from(entry_path);
     let canonical = path.canonicalize().unwrap_or(path);
-    Ok(format!(
-        "file:///{}",
-        canonical.display().to_string().replace('\\', "/")
-    ))
+    Ok(format!("{}{}", path_to_file_url(&canonical), suffix))
+}
+
+fn split_entry_suffix(entry: &str) -> (&str, &str) {
+    let split = [entry.find('?'), entry.find('#')]
+        .into_iter()
+        .flatten()
+        .min();
+    match split {
+        Some(index) => (&entry[..index], &entry[index..]),
+        None => (entry, ""),
+    }
+}
+
+fn path_to_file_url(path: &std::path::Path) -> String {
+    let mut text = path.to_string_lossy().replace('\\', "/");
+    // `canonicalize()` on Windows prefixes paths with `\\?\` / `\\?\UNC\`.
+    // Those are not valid in file URLs and WebView2 rejects them with
+    // E_INVALIDARG from Navigate.
+    if let Some(stripped) = text.strip_prefix("//?/UNC/") {
+        return format!("file://{stripped}");
+    }
+    if let Some(stripped) = text.strip_prefix("//?/") {
+        text = stripped.to_string();
+    }
+    if text.starts_with('/') {
+        format!("file://{text}")
+    } else {
+        format!("file:///{text}")
+    }
+}
+
+#[cfg(test)]
+mod entry_url_tests {
+    use super::path_to_file_url;
+    use std::path::Path;
+
+    #[test]
+    fn strips_windows_verbatim_prefix() {
+        let url = path_to_file_url(Path::new(r"\\?\C:\Users\test\app\index.html"));
+        assert_eq!(url, "file:///C:/Users/test/app/index.html");
+    }
+
+    #[test]
+    fn strips_windows_verbatim_unc_prefix() {
+        let url = path_to_file_url(Path::new(r"\\?\UNC\server\share\index.html"));
+        assert_eq!(url, "file://server/share/index.html");
+    }
 }
 
 fn metrics_label(config: &WebView2Config) -> String {
@@ -575,6 +1038,11 @@ pub enum WebView2UserEvent {
     },
     Activity {
         update: ActivityHostUpdate,
+    },
+    /// A guest's popup policy asked for the URL to open in a new guest.
+    GuestOpenRequested {
+        parent: String,
+        url: String,
     },
     SetVisible(bool),
     Show,

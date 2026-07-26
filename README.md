@@ -169,19 +169,19 @@ JS body, no C++ copy to keep in sync.
 - **Windows** — WebView2 backend in `fenestra-webview2`. The launch flow
   uses `winit 0.31` for the event loop and HWND, then
   `CreateCoreWebView2EnvironmentWithOptions` +
-  `CreateCoreWebView2ControllerWithOptions` to mount the webview in-process.
+  `CreateCoreWebView2Controller` to mount the webview in-process.
   Bridge dispatch goes through `add_NavigationStarting` (cancels the
   `fenestra://bridge/...` navigation, parses with
   `fenestra_bridge::parse_bridge_url`, dispatches through
   `fenestra_bridge::BridgeRuntime`, then posts the response via
   `webview.ExecuteScript("window.__fenestraBridgeResolve(id, ok, payload)")`).
-  Bridge install uses `add_DocumentStateChanged` to call
+  Bridge install uses `AddScriptToExecuteOnDocumentCreated` to call
   `fenestra_bridge::install_script(&commands)` on every main-frame
-  document. Frameless / drag regions / DWM glass are stubbed pending a
-  Windows-host CI run; the load-bearing shapes
-  (`apply_dwm_backdrop`, `NonClientRegionChanged`, the controller event
-  surface) are in place and the `Windows` build of `fenestra-webview2`
-  compiles cleanly.
+  document. Frameless drag / control regions use WebView2 non-client
+  region support (`IsNonClientRegionSupportEnabled`) plus injected
+  app-region overlays from the builder API. Glass uses DWM system
+  backdrops (Acrylic / Mica / MicaAlt) with a transparent WebView2
+  default background on Windows 11 22H2+.
 - **Linux** — two internal CEF host modes:
   - **OSR (off-screen rendering) host** — used for frameless, transparent,
     and glass windows, and for everything that needs to draw into a
@@ -205,6 +205,15 @@ JS body, no C++ copy to keep in sync.
   - Tray, global-shortcut, and second-instance events are forwarded into
     the web bridge as
     `window.fenestra.bridge.listen("tray.activate" | "globalShortcut.activate" | "singleInstance.activate", ...)`.
+- **Windows desktop services** — tray (`tray-icon`), global hotkeys
+  (`global-hotkey`), Run-key autostart, `HKCU\Software\Classes` URL
+  protocols, Chromium/Edge/Firefox native-messaging manifests, and
+  single-instance via a named mutex + localhost port file. Same bridge
+  event names as Linux.
+- **macOS desktop services** — tray + hotkeys, LaunchAgent autostart,
+  deep-link metadata under Application Support, native-messaging
+  manifests for Chrome/Edge/Firefox/Brave, and single-instance via a
+  lock file + Unix socket. Same bridge event names as Linux.
 - **macOS** — windowed CEF host, Xcode command-line tools.
   `DYLD_FALLBACK_LIBRARY_PATH` points at the CEF `Release` dir. As on
   Linux, desktop services are currently gated to Linux.
@@ -257,6 +266,21 @@ default; the direct CEF top-level path remains available for opaque system-decor
 windows. Windows and macOS use the windowed CEF host with the same `FenestraWindow` API; see
 [`docs/implementation-guide.md`](docs/implementation-guide.md#platform-notes) for what each backend
 currently supports.
+
+## Guest WebViews
+
+Embedded Chromium guests for in-app browsing live behind `window.fenestra.guest.*`. Guests are
+untrusted by default (no bridge), support partitions, downloads, and popup policies, and work on
+WebView2 (Windows) and CEF OSR (Linux frameless). See
+[`docs/implementation-guide.md`](docs/implementation-guide.md#guest-webviews).
+
+```js
+const guest = await window.fenestra.guest.create({
+  url: "https://example.com",
+  x: 280, y: 48, width: 1000, height: 720,
+  partition: "persist:browser",
+});
+```
 
 Run the modes:
 

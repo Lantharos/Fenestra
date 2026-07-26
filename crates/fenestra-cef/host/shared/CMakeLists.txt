@@ -20,8 +20,12 @@ set(FENESTRA_HOST_SOURCES
   main.cc
   app.cc
   app.h
+  guest_manager.cc
+  guest_manager.h
   handler.cc
   handler.h
+  json_util.cc
+  json_util.h
   osr_handler.cc
   osr_handler.h
 )

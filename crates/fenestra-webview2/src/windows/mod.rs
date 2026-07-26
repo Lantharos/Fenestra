@@ -15,6 +15,11 @@
 #![cfg(target_os = "windows")]
 
 mod bridge;
+mod desktop_services;
+mod guest;
+mod guest_commands;
+mod guest_events;
+mod guest_host;
 mod host_controls;
 mod launch;
 mod regions;
@@ -51,6 +56,12 @@ pub type WebView2GlobalShortcutRegistration = GlobalShortcutRegistration;
 pub type WebView2NativeMessagingHost = NativeMessagingHost;
 pub type WebView2SingleInstancePolicy = SingleInstancePolicy;
 pub type WebView2TrayIcon = TrayIcon;
+/// Guest webview types, re-exported so apps can describe guests without
+/// depending on `fenestra-bridge` directly.
+pub use fenestra_bridge::guest::{
+    GuestBounds, GuestCreateOptions, GuestDownloadAction, GuestDownloadEvent, GuestDownloadState,
+    GuestInfo, GuestPopupPolicy, POPUP_GUEST_ID,
+};
 pub use fenestra_platform::{
     ShellSurfaceAnchor as WebView2ShellSurfaceAnchor,
     ShellSurfaceKeyboardInteractivity as WebView2ShellSurfaceKeyboardInteractivity,
@@ -313,7 +324,7 @@ pub struct WebView2Window {
 ///
 /// | OS      | Effect      | Notes                                         |
 /// | ------- | ----------- | --------------------------------------------- |
-/// | Windows | `Acrylic`   | DWM Acrylic system backdrop                   |
+/// | Windows | `Mica`      | DWM main-window Mica system backdrop          |
 /// | macOS   | `Vibrancy`  | NSVisualEffectView, the most transparent blur |
 /// | Linux   | `Blur`      | Wayland `ext_background_effect_v1` blur       |
 /// | Asher   | (no default) | Asher is not implemented yet                 |
@@ -349,10 +360,10 @@ impl GlassSpec {
         self
     }
 
-    pub(crate) fn resolve(self) -> WindowBackgroundEffect {
+    pub fn resolve(self) -> WindowBackgroundEffect {
         match fenestra_platform::current_desktop_os() {
             fenestra_platform::PlatformOs::Windows => {
-                self.windows.unwrap_or(WindowBackgroundEffect::Acrylic)
+                self.windows.unwrap_or(WindowBackgroundEffect::Mica)
             }
             fenestra_platform::PlatformOs::Macos => {
                 self.macos.unwrap_or(WindowBackgroundEffect::Vibrancy)
@@ -385,6 +396,14 @@ impl WebView2Window {
         self
     }
 
+    pub fn remote_url(self, url: impl Into<String>) -> Self {
+        self.url(url)
+    }
+
+    pub fn bundled_url(self, url: impl Into<String>) -> Self {
+        self.url(url)
+    }
+
     pub fn dev_url(mut self, url: impl Into<String>) -> Self {
         let url = url.into();
         allow_dev_origins(&mut self.config.security, &url);
@@ -392,8 +411,37 @@ impl WebView2Window {
         self
     }
 
+    pub fn dev_server(self, url: impl Into<String>) -> Self {
+        self.dev_url(url)
+    }
+
+    pub fn vite_dev_server(self, port: u16) -> Self {
+        self.dev_url(format!("http://localhost:{port}"))
+            .dev_command(format!("bun run dev -- --port {port} --strictPort"))
+    }
+
+    pub fn vite_dev_server_with_query(self, port: u16, query: impl AsRef<str>) -> Self {
+        let query = query.as_ref().trim_start_matches('?');
+        self.dev_url(format!("http://localhost:{port}?{query}"))
+            .dev_command(format!("bun run dev -- --port {port} --strictPort"))
+    }
+
     pub fn dev_command(mut self, command: impl Into<String>) -> Self {
         self.config.dev_command = Some(command.into());
+        self
+    }
+
+    /// Enables Chromium DevTools for the WebView2 instance.
+    ///
+    /// WebView2 does not expose a CEF-style remote debugging port; this
+    /// still opens the in-webview DevTools UI. The port argument is
+    /// accepted for builder API parity with the CEF backend.
+    pub fn debug(self, _port: u16) -> Self {
+        self
+    }
+
+    /// Accepted for builder API parity with the CEF backend.
+    pub fn without_debug(self) -> Self {
         self
     }
 
@@ -436,14 +484,30 @@ impl WebView2Window {
     pub fn visible(mut self, visible: bool) -> Self {
         self.config.visible = visible;
         if !visible {
-            self.config.lifecycle.suspend_on_blur = true;
-            self.config.lifecycle.background_frame_rate = 1;
+            self.apply_hidden_lifecycle_defaults();
         }
+        self
+    }
+
+    pub fn shell_surface_alpha(self, _alpha: f32) -> Self {
         self
     }
 
     pub fn hidden(self) -> Self {
         self.visible(false)
+    }
+
+    pub fn active(mut self, active: bool) -> Self {
+        self.config.active = active;
+        self
+    }
+
+    pub fn hide_on_blur(mut self, enabled: bool) -> Self {
+        self.config.hide_on_blur = enabled;
+        if enabled {
+            self.apply_hidden_lifecycle_defaults();
+        }
+        self
     }
 
     pub fn always_on_top(mut self, always_on_top: bool) -> Self {
@@ -455,6 +519,7 @@ impl WebView2Window {
         self.config.transparent = transparent;
         if !transparent {
             self.config.background_effect = WindowBackgroundEffect::None;
+            self.config.low_power_background_effect = None;
         }
         self
     }
@@ -471,6 +536,16 @@ impl WebView2Window {
         self
     }
 
+    pub fn with_frameless(mut self, frameless: bool) -> Self {
+        self.config.frameless = frameless;
+        self.config.chrome = if frameless {
+            WebView2WindowChrome::Frameless
+        } else {
+            WebView2WindowChrome::System
+        };
+        self
+    }
+
     pub fn no_chrome(mut self) -> Self {
         self.config.frameless = true;
         self.config.chrome = WebView2WindowChrome::None;
@@ -483,9 +558,16 @@ impl WebView2Window {
         self
     }
 
+    pub fn chrome(mut self, chrome: WebView2WindowChrome) -> Self {
+        self.config.frameless = !chrome.uses_native_decorations();
+        self.config.chrome = chrome;
+        self
+    }
+
     pub fn opaque(mut self) -> Self {
         self.config.transparent = false;
         self.config.background_effect = WindowBackgroundEffect::None;
+        self.config.low_power_background_effect = None;
         self
     }
 
@@ -509,6 +591,31 @@ impl WebView2Window {
         self.glass_effect(effect)
     }
 
+    pub fn glass_low_power_effect(mut self, effect: WindowBackgroundEffect) -> Self {
+        self.config.low_power_background_effect.replace(effect);
+        self
+    }
+
+    pub fn glass_low_power_material(self, effect: WindowBackgroundEffect) -> Self {
+        self.glass_low_power_effect(effect)
+    }
+
+    pub fn background_effect(mut self, effect: WindowBackgroundEffect) -> Self {
+        self.config.background_effect = effect;
+        if effect.requires_transparency() {
+            self.config.transparent = true;
+        }
+        self
+    }
+
+    pub fn shell_surface(mut self, shell_surface: ShellSurfaceOptions) -> Self {
+        self.config.shell_surface = Some(shell_surface);
+        self.config.frameless = true;
+        self.config.chrome = WebView2WindowChrome::None;
+        self.config.transparent = true;
+        self
+    }
+
     pub fn drag_region(mut self, rect: WindowRegionRect) -> Self {
         self.config.drag_regions.push(rect);
         self
@@ -517,6 +624,10 @@ impl WebView2Window {
     pub fn drag_exclusion_region(mut self, rect: WindowRegionRect) -> Self {
         self.config.drag_exclusion_regions.push(rect);
         self
+    }
+
+    pub fn titlebar_drag_region(self, height: i32) -> Self {
+        self.drag_region(WindowRegionRect::new(0, 0, i32::MAX, height))
     }
 
     pub fn regions(mut self, regions: WebView2Regions) -> Self {
@@ -560,9 +671,91 @@ impl WebView2Window {
         self
     }
 
+    pub fn global_shortcut(mut self, registration: GlobalShortcutRegistration) -> Self {
+        self.config
+            .desktop_services
+            .global_shortcuts
+            .push(registration);
+        self
+    }
+
+    pub fn deep_link(mut self, registration: DeepLinkRegistration) -> Self {
+        self.config.desktop_services.deep_links.push(registration);
+        self
+    }
+
+    pub fn native_messaging_host(mut self, host: NativeMessagingHost) -> Self {
+        self.config
+            .desktop_services
+            .native_messaging_hosts
+            .push(host);
+        self
+    }
+
+    pub fn single_instance(mut self, policy: SingleInstancePolicy) -> Self {
+        self.config.desktop_services.single_instance_policy = Some(policy);
+        self
+    }
+
+    pub fn single_instance_id(mut self, id: impl Into<String>) -> Self {
+        self.config.desktop_services.single_instance_id = Some(id.into());
+        self
+    }
+
     pub fn lifecycle_policy(mut self, lifecycle: WebView2LifecyclePolicy) -> Self {
         self.config.lifecycle = lifecycle;
         self
+    }
+
+    pub fn active_frame_rate(mut self, frame_rate: u32) -> Self {
+        self.config.lifecycle.active_frame_rate = frame_rate;
+        self
+    }
+
+    pub fn background_frame_rate(mut self, frame_rate: u32) -> Self {
+        self.config.lifecycle.background_frame_rate = frame_rate.max(1);
+        self
+    }
+
+    pub fn suspend_on_minimize(mut self, enabled: bool) -> Self {
+        self.config.lifecycle.suspend_on_minimize = enabled;
+        self
+    }
+
+    pub fn suspend_on_occluded(mut self, enabled: bool) -> Self {
+        self.config.lifecycle.suspend_on_occluded = enabled;
+        self
+    }
+
+    pub fn suspend_on_blur(mut self, enabled: bool) -> Self {
+        self.config.lifecycle.suspend_on_blur = enabled;
+        self
+    }
+
+    pub fn hibernate_after(mut self, duration: Duration) -> Self {
+        self.config.lifecycle.hibernate_after = Some(duration);
+        self
+    }
+
+    pub fn disable_hibernation(mut self) -> Self {
+        self.config.lifecycle.hibernate_after = None;
+        self
+    }
+
+    pub fn retain_hidden_frame(mut self, enabled: bool) -> Self {
+        self.config.lifecycle.retain_hidden_frame = enabled;
+        self
+    }
+
+    fn apply_hidden_lifecycle_defaults(&mut self) {
+        self.config.lifecycle.suspend_on_blur = true;
+        self.config.lifecycle.background_frame_rate = 1;
+        self.config.lifecycle.retain_hidden_frame = true;
+        self.config.lifecycle.hibernate_grace = self
+            .config
+            .lifecycle
+            .hibernate_grace
+            .min(Duration::from_millis(150));
     }
 
     pub fn runtime(mut self, runtime: fenestra_runtime::RuntimeConfig) -> Self {
@@ -578,6 +771,10 @@ impl WebView2Window {
     pub fn allowed_origin(mut self, origin: impl Into<String>) -> Self {
         allow_origin(&mut self.config.security, origin.into());
         self
+    }
+
+    pub fn allowed_bridge_origin(self, origin: impl Into<String>) -> Self {
+        self.allowed_origin(origin)
     }
 
     pub fn bridge_command_descriptor(mut self, descriptor: BridgeCommandDescriptor) -> Self {
@@ -606,6 +803,38 @@ impl WebView2Window {
         let name = descriptor.name.clone();
         self.config.bridge.register_descriptor(descriptor);
         self.bridge_handlers.register(name, handler);
+        self
+    }
+
+    pub fn bridge_handler_async<F, Fut>(
+        mut self,
+        command_name: impl Into<String>,
+        handler: F,
+    ) -> Self
+    where
+        F: Fn(BridgeCommand) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = BridgeResult> + Send + 'static,
+    {
+        let name = command_name.into();
+        self.config.bridge.register(name.clone());
+        self.bridge_handlers
+            .register(name, move |command| pollster::block_on(handler(command)));
+        self
+    }
+
+    pub fn bridge_descriptor_handler_async<F, Fut>(
+        mut self,
+        descriptor: BridgeCommandDescriptor,
+        handler: F,
+    ) -> Self
+    where
+        F: Fn(BridgeCommand) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = BridgeResult> + Send + 'static,
+    {
+        let name = descriptor.name.clone();
+        self.config.bridge.register_descriptor(descriptor);
+        self.bridge_handlers
+            .register(name, move |command| pollster::block_on(handler(command)));
         self
     }
 
@@ -650,6 +879,9 @@ pub(crate) struct WebView2ProcessInner {
     pub(crate) runtime: RuntimeInfo,
     pub(crate) background_frame_rate: u32,
     pub(crate) command_allowlist: Vec<String>,
+    pub(crate) hide_on_blur: std::sync::atomic::AtomicBool,
+    pub(crate) desktop_services: Mutex<Option<desktop_services::WindowsDesktopServiceState>>,
+    pub(crate) guests: Mutex<guest::GuestManager>,
 }
 
 impl WebView2Process {
@@ -721,8 +953,27 @@ impl WebView2Process {
         self.inner.metrics.snapshot()
     }
 
+    /// Snapshot of the guest webviews this window currently hosts.
+    ///
+    /// Guests are created and controlled from the page through
+    /// `window.fenestra.guest.*`; WebView2 objects are bound to the UI
+    /// thread, so the Rust surface stays read-only.
+    pub fn guests(&self) -> Vec<GuestInfo> {
+        self.inner
+            .guests
+            .lock()
+            .map(|manager| manager.list())
+            .unwrap_or_default()
+    }
+
     pub fn take_desktop_events(&self) -> Vec<fenestra_platform::PlatformEvent> {
-        Vec::new()
+        let Ok(guard) = self.inner.desktop_services.lock() else {
+            return Vec::new();
+        };
+        guard
+            .as_ref()
+            .map(desktop_services::WindowsDesktopServiceState::take_events)
+            .unwrap_or_default()
     }
 }
 

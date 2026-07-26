@@ -21,6 +21,11 @@ const INTERNAL_COMMANDS: [&str; 5] = [
     POPUP_CLOSE_COMMAND,
 ];
 
+/// Activity + popup + guest internal bridge commands.
+pub fn bridge_commands_with_all_internal(commands: Vec<String>) -> Vec<String> {
+    crate::guest::bridge_commands_with_guest(bridge_commands_with_internal(commands))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivityOptions {
     pub name: String,

@@ -36,7 +36,8 @@ use webview2_com::{
 use windows::core::{PCWSTR, PWSTR};
 
 use crate::{
-    WebView2Error, WebView2ProcessInner, WebView2Result, windows::launch::WebView2UserEvent,
+    WebView2Error, WebView2ProcessInner, WebView2Result,
+    windows::{guest_commands, launch::WebView2UserEvent},
 };
 
 pub(crate) fn register_navigation_starting(
@@ -73,16 +74,24 @@ pub(crate) fn install_bridge_script(
     webview: &ICoreWebView2,
     inner: &Arc<WebView2ProcessInner>,
 ) -> WebView2Result<()> {
-    let commands = inner.command_allowlist.clone();
+    install_bridge_script_for(webview, &inner.command_allowlist)?;
+    inner.metrics.mark("install_script.ready");
+    Ok(())
+}
+
+/// Install `window.fenestra` with an explicit allow-list. Guests only
+/// get this when the host opted them in with `allowBridge`.
+pub(crate) fn install_bridge_script_for(
+    webview: &ICoreWebView2,
+    commands: &[String],
+) -> WebView2Result<()> {
     let script =
         fenestra_bridge::install_script(&commands.iter().map(String::as_str).collect::<Vec<_>>());
     let wide = wide_pwstr(&script);
     let completed =
         AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(|_error, _id| Ok(())));
     unsafe { webview.AddScriptToExecuteOnDocumentCreated(PCWSTR(wide.as_ptr()), &completed) }
-        .map_err(webview2_error)?;
-    inner.metrics.mark("install_script.ready");
-    Ok(())
+        .map_err(webview2_error)
 }
 
 fn handle_navigation_starting(
@@ -117,6 +126,12 @@ fn handle_navigation_starting(
             false,
             "{\"message\":\"bridge command not allowed\"}",
         );
+        return;
+    }
+    // Guest and popup commands are host-owned; the app's registry never
+    // sees them.
+    if let Some(response) = guest_commands::dispatch(&inner, &request.command) {
+        emit_bridge_response(&webview, &request.id, response);
         return;
     }
     let runtime = inner.bridge_runtime.lock().unwrap().clone();
@@ -235,7 +250,9 @@ pub(crate) fn webview2_error(error: windows::core::Error) -> WebView2Error {
     WebView2Error::Backend(format!("WebView2: {error}"))
 }
 
-fn read_pwstr<F: FnOnce(*mut PWSTR) -> windows::core::Result<()>>(read: F) -> Option<String> {
+pub(crate) fn read_pwstr<F: FnOnce(*mut PWSTR) -> windows::core::Result<()>>(
+    read: F,
+) -> Option<String> {
     let mut raw = PWSTR(std::ptr::null_mut());
     read(&mut raw).ok()?;
     if raw.0.is_null() {

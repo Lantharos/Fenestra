@@ -1271,6 +1271,9 @@ mod tests {
     #[test]
     fn runtime_config_has_sane_defaults() {
         let config = RuntimeConfig::default();
+        #[cfg(target_os = "windows")]
+        assert_eq!(config.engine, RuntimeEngine::WebView2);
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(config.engine, RuntimeEngine::Cef);
         assert_eq!(config.mode, RuntimeMode::SharedPreferred);
         assert_eq!(config.package, RuntimePackage::Standard);

@@ -58,11 +58,11 @@ fn main() {
     );
     match window.launch_or_install() {
         Ok(process) => {
-            println!("launched CEF process {}", process.id());
+            println!("launched Fenestra process {}", process.id());
             let _ = process.wait();
         }
         Err(error) => {
-            eprintln!("failed to launch CEF window: {error}");
+            eprintln!("failed to launch Fenestra window: {error}");
             std::process::exit(1);
         }
     }
@@ -93,10 +93,10 @@ impl ExampleChromeMode {
 
     fn label(self) -> &'static str {
         match self {
-            Self::System => "system CEF window",
-            Self::FenestraChrome => "Fenestra chrome OSR window",
-            Self::Frameless => "app-drawn frameless OSR window",
-            Self::Glass => "app-drawn glass OSR window",
+            Self::System => "system window",
+            Self::FenestraChrome => "Fenestra chrome window",
+            Self::Frameless => "app-drawn frameless window",
+            Self::Glass => "native chrome glass window",
         }
     }
 
@@ -111,20 +111,17 @@ impl ExampleChromeMode {
     }
 
     fn uses_app_chrome(self) -> bool {
-        matches!(self, Self::Frameless | Self::Glass)
+        matches!(self, Self::Frameless | Self::FenestraChrome)
     }
 
     fn apply(self, window: FenestraWindow) -> FenestraWindow {
         match self {
             Self::System => window.system_chrome().opaque(),
-            Self::FenestraChrome => window.fenestra_chrome().opaque(),
+            Self::FenestraChrome => app_chrome(window.fenestra_chrome().opaque()),
+            // Same DWM Mica underlay as --glass, but with the app-drawn
+            // titlebar. Plain `transparent(true)` without a backdrop is
+            // what produced the washed-out white sidebar.
             Self::Frameless => app_chrome(
-                window
-                    .frameless()
-                    .transparent(true)
-                    .input_region(WindowRegion::adaptive_rounded_rect(14)),
-            ),
-            Self::Glass => app_chrome(
                 window
                     .frameless()
                     .glass()
@@ -139,6 +136,16 @@ impl ExampleChromeMode {
                     ))
                     .input_region(WindowRegion::adaptive_rounded_rect(14)),
             ),
+            // Native Win32 titlebar + DWM Mica. Custom HTML titlebars
+            // belong to --frameless / --fenestra-chrome only.
+            Self::Glass => window
+                .system_chrome()
+                .glass()
+                .blur_region(WindowRegion::adaptive_titlebar_sidebar(SIDEBAR_WIDTH, 0, 0))
+                .opaque_region(WindowRegion::adaptive_content_after_sidebar(
+                    SIDEBAR_WIDTH,
+                    0,
+                )),
         }
     }
 }
@@ -148,14 +155,14 @@ fn app_chrome(window: FenestraWindow) -> FenestraWindow {
         .drag_region(WindowRegionRect::new(0, 0, i32::MAX, APP_TITLEBAR_HEIGHT))
         .control_region(
             FenestraWindowControlAction::Minimize,
-            WindowRegionRect::new(-100, 7, 24, 24),
+            WindowRegionRect::new(-138, 0, 46, APP_TITLEBAR_HEIGHT),
         )
         .control_region(
             FenestraWindowControlAction::Maximize,
-            WindowRegionRect::new(-68, 7, 24, 24),
+            WindowRegionRect::new(-92, 0, 46, APP_TITLEBAR_HEIGHT),
         )
         .control_region(
             FenestraWindowControlAction::Close,
-            WindowRegionRect::new(-36, 7, 24, 24),
+            WindowRegionRect::new(-46, 0, 46, APP_TITLEBAR_HEIGHT),
         )
 }

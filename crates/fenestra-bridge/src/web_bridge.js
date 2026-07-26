@@ -150,4 +150,107 @@
       },
     });
   }
+
+  if (commands.has("fenestra.guest.create")) {
+    const guestBounds = function (options) {
+      const bounds = options.bounds || options;
+      return {
+        x: Math.round(Number(bounds.x) || 0),
+        y: Math.round(Number(bounds.y) || 0),
+        width: Math.max(1, Math.round(Number(bounds.width) || 1)),
+        height: Math.max(1, Math.round(Number(bounds.height) || 1)),
+      };
+    };
+
+    window.fenestra.guest = Object.assign(window.fenestra.guest || {}, {
+      create(options = {}) {
+        const bounds = guestBounds(options);
+        return window.fenestra.bridge.invoke("fenestra.guest.create", {
+          id: options.id ? String(options.id) : undefined,
+          url: options.url ? String(options.url) : undefined,
+          html: options.html ? String(options.html) : undefined,
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+          bounds,
+          partition: options.partition ? String(options.partition) : undefined,
+          allowBridge: Boolean(options.allowBridge),
+          visible: options.visible === undefined ? true : Boolean(options.visible),
+          popupPolicy: String(options.popupPolicy || "deny"),
+          allowDownloads:
+            options.allowDownloads === undefined ? true : Boolean(options.allowDownloads),
+          backgroundColor: options.backgroundColor
+            ? String(options.backgroundColor)
+            : undefined,
+        });
+      },
+      destroy(id) {
+        return window.fenestra.bridge.invoke("fenestra.guest.destroy", { id: String(id) });
+      },
+      navigate(id, url) {
+        return window.fenestra.bridge.invoke("fenestra.guest.navigate", {
+          id: String(id),
+          url: String(url),
+        });
+      },
+      setBounds(id, bounds) {
+        const next = guestBounds(bounds || {});
+        return window.fenestra.bridge.invoke("fenestra.guest.setBounds", {
+          id: String(id),
+          x: next.x,
+          y: next.y,
+          width: next.width,
+          height: next.height,
+          bounds: next,
+        });
+      },
+      setVisible(id, visible) {
+        return window.fenestra.bridge.invoke("fenestra.guest.setVisible", {
+          id: String(id),
+          visible: Boolean(visible),
+        });
+      },
+      focus(id) {
+        return window.fenestra.bridge.invoke("fenestra.guest.focus", { id: String(id) });
+      },
+      reload(id, options = {}) {
+        return window.fenestra.bridge.invoke("fenestra.guest.reload", {
+          id: String(id),
+          ignoreCache: Boolean(options.ignoreCache),
+        });
+      },
+      goBack(id) {
+        return window.fenestra.bridge.invoke("fenestra.guest.goBack", { id: String(id) });
+      },
+      goForward(id) {
+        return window.fenestra.bridge.invoke("fenestra.guest.goForward", { id: String(id) });
+      },
+      setZoom(id, factor) {
+        return window.fenestra.bridge.invoke("fenestra.guest.setZoom", {
+          id: String(id),
+          factor: Number(factor) || 1,
+        });
+      },
+      executeJavaScript(id, code) {
+        return window.fenestra.bridge.invoke("fenestra.guest.executeJavaScript", {
+          id: String(id),
+          code: String(code),
+        });
+      },
+      downloadAction(downloadId, action, options = {}) {
+        return window.fenestra.bridge.invoke("fenestra.guest.downloadAction", {
+          downloadId: String(downloadId),
+          action: String(action),
+          savePath: options.savePath ? String(options.savePath) : undefined,
+        });
+      },
+      list() {
+        return window.fenestra.bridge.invoke("fenestra.guest.list");
+      },
+      get(id) {
+        return window.fenestra.bridge.invoke("fenestra.guest.get", { id: String(id) });
+      },
+    });
+  }
 })();

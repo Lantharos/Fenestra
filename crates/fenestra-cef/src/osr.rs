@@ -61,7 +61,7 @@ pub(crate) fn launch_process(
         "shell_surface": crate::osr_protocol::shell_surface_to_json(config.shell_surface.as_ref()),
         "background_effect": config.effective_background_effect().as_str(),
         "chrome": config.chrome.as_str(),
-        "bridge_commands": fenestra_bridge::bridge_commands_with_internal(config.bridge.commands()),
+        "bridge_commands": fenestra_bridge::bridge_commands_with_all_internal(config.bridge.commands()),
         "regions": crate::osr_protocol::regions_to_json(&config.regions),
         "drag_regions": crate::osr_protocol::rects_to_json(&config.drag_regions),
         "drag_exclusion_regions": crate::osr_protocol::rects_to_json(&config.drag_exclusion_regions),

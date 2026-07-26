@@ -7,6 +7,8 @@ mod style;
 
 #[cfg(target_os = "linux")]
 mod desktop_services;
+#[cfg(target_os = "macos")]
+mod desktop_services_macos;
 #[cfg(target_os = "linux")]
 mod osr;
 #[cfg(target_os = "linux")]
@@ -18,11 +20,13 @@ mod osr_layer_host;
 #[cfg(target_os = "linux")]
 mod osr_protocol;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 mod desktop_services_stub;
 #[cfg(not(target_os = "linux"))]
 mod osr_stub;
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+use desktop_services_macos as desktop_services;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 use desktop_services_stub as desktop_services;
 #[cfg(not(target_os = "linux"))]
 use osr_stub as osr;
@@ -53,11 +57,17 @@ pub use fenestra_bridge::{
 };
 pub use fenestra_bridge::{
     BridgeCommand, BridgeCommandDescriptor, BridgeError, BridgeHandlers, BridgeRegistry,
-    BridgeResponse, BridgeResult, WebViewSecurity, bridge_commands_with_internal,
+    BridgeResponse, BridgeResult, WebViewSecurity, bridge_commands_with_all_internal,
     current_bridge_targets, host_update_json,
 };
 pub use fenestra_bridge::{
     FENESTRA_TRACE_ENV, FenestraLaunchMetric, FenestraLaunchMetricsSnapshot,
+};
+pub use fenestra_bridge::{
+    GUEST_CREATE_COMMAND, GuestBounds, GuestCreateOptions, GuestDownloadAction,
+    GuestDownloadEvent, GuestDownloadState, GuestHostControl, GuestInfo, GuestPopupPolicy,
+    POPUP_GUEST_ID, bridge_commands_with_guest, default_partition_for, is_guest_command,
+    normalize_guest_id,
 };
 pub use fenestra_platform::{
     AutostartEntry, DeepLinkRegistration, GlobalShortcutRegistration, NativeMessagingHost,
@@ -133,19 +143,25 @@ pub(crate) fn apply_cef_launch_args(
     options: &CefLaunchOptions,
     dev_mode: bool,
 ) {
-    let mut enabled_features: Vec<&str> = Vec::new();
-    #[cfg(target_os = "linux")]
-    {
-        command.arg("--ozone-platform=wayland");
-        enabled_features.push("UseOzonePlatform");
-        if options.vaapi_hardware_decode {
-            enabled_features.extend([
-                "VaapiVideoDecoder",
-                "VaapiIgnoreDriverChecks",
-                "VaapiOnNvidiaGPUs",
-            ]);
+    let enabled_features: Vec<&str> = {
+        #[cfg(target_os = "linux")]
+        {
+            let mut features = vec!["UseOzonePlatform"];
+            command.arg("--ozone-platform=wayland");
+            if options.vaapi_hardware_decode {
+                features.extend([
+                    "VaapiVideoDecoder",
+                    "VaapiIgnoreDriverChecks",
+                    "VaapiOnNvidiaGPUs",
+                ]);
+            }
+            features
         }
-    }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Vec::new()
+        }
+    };
     if !enabled_features.is_empty() {
         command.arg(format!("--enable-features={}", enabled_features.join(",")));
     }
@@ -479,10 +495,11 @@ pub struct CefWindow {
 ///
 /// | OS      | Effect      | Notes                                         |
 /// | ------- | ----------- | --------------------------------------------- |
-/// | Windows | `Acrylic`   | DWM Acrylic system backdrop                   |
+/// | Windows | `Mica`      | DWM main-window Mica system backdrop          |
 /// | macOS   | `Vibrancy`  | NSVisualEffectView, the most transparent blur |
 /// | Linux   | `Blur`      | Wayland `ext_background_effect_v1` blur       |
 /// | Asher   | (no default) | Asher is not implemented yet                 |
+#[cfg(not(target_os = "windows"))]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GlassSpec {
     windows: Option<WindowBackgroundEffect>,
@@ -490,6 +507,7 @@ pub struct GlassSpec {
     linux: Option<WindowBackgroundEffect>,
 }
 
+#[cfg(not(target_os = "windows"))]
 impl GlassSpec {
     /// Empty spec; resolving it falls back to the per-platform
     /// defaults listed in [`GlassSpec`].
@@ -515,10 +533,10 @@ impl GlassSpec {
         self
     }
 
-    pub(crate) fn resolve(self) -> WindowBackgroundEffect {
+    pub fn resolve(self) -> WindowBackgroundEffect {
         match fenestra_platform::current_desktop_os() {
             fenestra_platform::PlatformOs::Windows => {
-                self.windows.unwrap_or(WindowBackgroundEffect::Acrylic)
+                self.windows.unwrap_or(WindowBackgroundEffect::Mica)
             }
             fenestra_platform::PlatformOs::Macos => {
                 self.macos.unwrap_or(WindowBackgroundEffect::Vibrancy)
@@ -552,7 +570,7 @@ pub type FenestraWindow = CefWindow;
 // working on every host without per-platform `cfg` gates.
 #[cfg(target_os = "windows")]
 pub use fenestra_webview2::{
-    WebView2LifecyclePolicy as FenestraLifecyclePolicy,
+    GlassSpec, WebView2LifecyclePolicy as FenestraLifecyclePolicy,
     WebView2WindowChrome as FenestraWindowChrome,
     WebView2WindowControlAction as FenestraWindowControlAction,
     WebView2WindowControlRegion as FenestraWindowControlRegion,
@@ -594,6 +612,14 @@ impl FenestraProcess {
         self.bridge_emitter
             .as_ref()
             .is_some_and(|emitter| emitter.emit(name, payload))
+    }
+
+    /// Drive a guest webview from Rust via host control. See
+    /// [`BridgeEventEmitter::guest_control`].
+    pub fn guest_control(&self, control: &fenestra_bridge::GuestHostControl) -> bool {
+        self.bridge_emitter
+            .as_ref()
+            .is_some_and(|emitter| emitter.guest_control(control))
     }
 
     pub fn set_shell_surface_visible(&self, visible: bool) -> bool {
@@ -769,6 +795,17 @@ impl BridgeEventEmitter {
                 .map(str::trim)
                 .filter(|token| !token.is_empty())
                 .unwrap_or("1"),
+        )
+    }
+
+    /// Drive a guest webview from Rust. The payload is forwarded to the CEF
+    /// host as `FENESTRA_HOST_CONTROL\tguest.<op>\t{json}`. Prefer the page
+    /// `fenestra.guest.*` bridge for UI-driven work; use this for host-owned
+    /// guests (for example restoring a session before the page loads).
+    pub fn guest_control(&self, control: &fenestra_bridge::GuestHostControl) -> bool {
+        self.emit_host_control(
+            control.command_name(),
+            &control.to_host_value().to_string(),
         )
     }
 
@@ -1333,7 +1370,7 @@ impl CefWindow {
         {
             let metrics = LaunchMetrics::new(metrics_label(&self.config));
             metrics.mark("launch.start");
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             let desktop_services = Some(
                 apply_linux_desktop_services(
                     self.config.desktop_services.tray_icon.as_ref(),
@@ -1346,7 +1383,7 @@ impl CefWindow {
                 )
                 .map_err(|message| FenestraError::CreationFailed { message })?,
             );
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             let desktop_services = None;
             metrics.mark("desktop_services.ready");
             self.ensure_default_bridge_handlers();
@@ -1628,7 +1665,7 @@ fn cef_window_command(
         .arg(format!("--fenestra-height={}", config.height.max(1)))
         .arg(format!(
             "--fenestra-bridge-commands={}",
-            bridge_commands_with_internal(config.bridge.commands()).join(",")
+            bridge_commands_with_all_internal(config.bridge.commands()).join(",")
         ))
         .arg(format!("--root-cache-path={}", cache_dir.display()))
         .arg(format!(
@@ -2105,7 +2142,7 @@ mod tests {
         let window = FenestraWindow::new().glass();
         assert!(window.config.transparent);
         let expected = match fenestra_platform::current_desktop_os() {
-            fenestra_platform::PlatformOs::Windows => WindowBackgroundEffect::Acrylic,
+            fenestra_platform::PlatformOs::Windows => WindowBackgroundEffect::Mica,
             fenestra_platform::PlatformOs::Macos => WindowBackgroundEffect::Vibrancy,
             fenestra_platform::PlatformOs::Linux => WindowBackgroundEffect::Blur,
             _ => WindowBackgroundEffect::None,
@@ -2133,7 +2170,7 @@ mod tests {
     fn glass_spec_drops_unknown_effect_names() {
         let window = FenestraWindow::new().glass_spec(GlassSpec::new().windows("sparkles"));
         let expected = match fenestra_platform::current_desktop_os() {
-            fenestra_platform::PlatformOs::Windows => WindowBackgroundEffect::Acrylic,
+            fenestra_platform::PlatformOs::Windows => WindowBackgroundEffect::Mica,
             fenestra_platform::PlatformOs::Macos => WindowBackgroundEffect::Vibrancy,
             fenestra_platform::PlatformOs::Linux => WindowBackgroundEffect::Blur,
             _ => WindowBackgroundEffect::None,

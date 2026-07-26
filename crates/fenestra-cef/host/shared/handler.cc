@@ -10,12 +10,14 @@
 #include <vector>
 
 #include "fenestra_bridge_js.h"
+#include "guest_manager.h"
 #include "include/cef_app.h"
 #include "include/cef_parser.h"
 #include "include/cef_task.h"
 #include "include/views/cef_browser_view.h"
 #include "include/views/cef_window.h"
 #include "include/wrapper/cef_helpers.h"
+#include "json_util.h"
 
 namespace {
 FenestraHandler* g_instance = nullptr;
@@ -33,12 +35,6 @@ class QuitMessageLoopTask : public CefTask {
 
 void ScheduleQuitMessageLoopFallback() {
   CefPostDelayedTask(TID_UI, new QuitMessageLoopTask, 150);
-}
-
-std::string DataUri(const std::string& body) {
-  return "data:text/html;base64," +
-         CefURIEncode(CefBase64Encode(body.data(), body.size()), false)
-             .ToString();
 }
 
 CefRefPtr<CefWindow> WindowForBrowser(CefRefPtr<CefBrowser> browser) {
@@ -111,48 +107,6 @@ std::string BridgeRequestId(const std::string& url) {
   const size_t end = url.find_first_of("?#", start);
   return DecodeUriComponent(
       url.substr(start, end == std::string::npos ? std::string::npos : end - start));
-}
-
-std::string JsString(const std::string& value) {
-  std::string output = "\"";
-  for (char c : value) {
-    switch (c) {
-      case '\\':
-        output += "\\\\";
-        break;
-      case '"':
-        output += "\\\"";
-        break;
-      case '\n':
-        output += "\\n";
-        break;
-      case '\r':
-        output += "\\r";
-        break;
-      case '\t':
-        output += "\\t";
-        break;
-      default:
-        output += c;
-        break;
-    }
-  }
-  output += "\"";
-  return output;
-}
-
-std::string JsArray(const std::set<std::string>& values) {
-  std::string output = "[";
-  bool first = true;
-  for (const auto& value : values) {
-    if (!first) {
-      output += ",";
-    }
-    output += JsString(value);
-    first = false;
-  }
-  output += "]";
-  return output;
 }
 
 std::string BridgeInstallScript(const std::set<std::string>& commands) {
@@ -471,7 +425,7 @@ void FenestraHandler::OnLoadError(CefRefPtr<CefBrowser> browser,
           "font:14px system-ui;background:#111;color:#eee;padding:24px\">"
        << "<h2>Failed to load</h2><p>" << std::string(failedUrl) << "</p><p>"
        << std::string(errorText) << "</p></body>";
-  frame->LoadURL(DataUri(body.str()));
+  frame->LoadURL(HtmlDataUri(body.str()));
 }
 
 void FenestraHandler::OnLoadStart(CefRefPtr<CefBrowser> browser,
@@ -520,6 +474,18 @@ bool FenestraHandler::HandleBridgeCommand(CefRefPtr<CefBrowser> browser,
   if (request_id.empty() || command.empty()) {
     ResolveBridgeResponse(browser_id, request_id, false,
                           "{\"message\":\"Malformed Fenestra bridge request\"}");
+    return true;
+  }
+  if (IsGuestBridgeCommand(command)) {
+    if (GuestOperationName(command, kGuestBridgePrefix) == "list") {
+      ResolveBridgeResponse(browser_id, request_id, true, "{\"guests\":[]}");
+    } else {
+      ResolveBridgeResponse(
+          browser_id, request_id, false,
+          JsonMessage(
+              "Guest views on the windowed CEF host are not available yet; "
+              "use the OSR/frameless backend (Linux) or WebView2 (Windows)"));
+    }
     return true;
   }
   if (!bridge_commands_.contains(command)) {

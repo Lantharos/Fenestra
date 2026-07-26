@@ -259,11 +259,32 @@ void FenestraApp::OnContextInitialized() {
   CreateFenestraBrowserWindow(command_line);
 }
 
+void FenestraApp::OnBrowserCreated(CefRefPtr<CefBrowser> browser,
+                                   CefRefPtr<CefDictionaryValue> extra_info) {
+  CEF_REQUIRE_RENDERER_THREAD();
+  if (!browser || !extra_info || !extra_info->HasKey("fenestraAllowBridge")) {
+    return;
+  }
+  if (!extra_info->GetBool("fenestraAllowBridge")) {
+    unprivileged_browsers_.insert(browser->GetIdentifier());
+  }
+}
+
+void FenestraApp::OnBrowserDestroyed(CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_RENDERER_THREAD();
+  if (browser) {
+    unprivileged_browsers_.erase(browser->GetIdentifier());
+  }
+}
+
 void FenestraApp::OnContextCreated(CefRefPtr<CefBrowser> browser,
                                CefRefPtr<CefFrame> frame,
                                CefRefPtr<CefV8Context> context) {
   CEF_REQUIRE_RENDERER_THREAD();
   if (!frame->IsMain()) {
+    return;
+  }
+  if (browser && unprivileged_browsers_.contains(browser->GetIdentifier())) {
     return;
   }
   CefRefPtr<CefCommandLine> command_line =
