@@ -83,6 +83,10 @@ impl GuestPopupPolicy {
 }
 
 /// Pixel bounds of a guest relative to the host window client area.
+///
+/// Values are in **CSS pixels / DIPs** (what `getBoundingClientRect()`
+/// returns). The WebView2 host converts them to physical pixels using the
+/// window DPI before calling `SetWindowPos` / `SetBounds`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuestBounds {

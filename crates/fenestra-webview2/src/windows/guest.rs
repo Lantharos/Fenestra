@@ -299,8 +299,10 @@ impl GuestManager {
             .filter(|partition| !partition.trim().is_empty())
             .unwrap_or_else(|| default_partition_for(&id));
 
+        let parent = inner.hwnd.load(Ordering::Relaxed);
+        let bounds = guest_host::physical_bounds(parent, bounds);
         let hwnd =
-            guest_host::create_host_window(inner.hwnd.load(Ordering::Relaxed), bounds, options.visible)?;
+            guest_host::create_host_window(parent, bounds, options.visible)?;
         let guest = match self.build_guest(inner, &id, hwnd, &partition, &options, bounds) {
             Ok(guest) => guest,
             Err(error) => {
@@ -420,8 +422,10 @@ impl GuestManager {
     }
 
     pub(crate) fn set_bounds(&self, id: &str, bounds: GuestBounds) -> WebView2Result<()> {
-        let bounds = bounds.normalized();
         let guest = self.guest(id)?;
+        // Bounds from JS are DIPs; Win32/WebView2 want physical pixels.
+        // Use the guest HWND for DPI (same monitor as the host).
+        let bounds = guest_host::physical_bounds(guest.hwnd, bounds.normalized());
         guest_host::move_host_window(guest.hwnd, bounds);
         unsafe { guest.controller.SetBounds(client_rect(bounds)) }
             .map_err(bridge::webview2_error)?;

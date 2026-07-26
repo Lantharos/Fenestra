@@ -34,13 +34,16 @@ use webview2_com_sys::Microsoft::Web::WebView2::Win32 as SysWin32;
 use windows::Win32::{
     Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
     System::LibraryLoader::GetModuleHandleW,
-    UI::WindowsAndMessaging::{
-        CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-        GetClientRect, HWND_BOTTOM, HWND_TOP, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage,
-        RegisterClassExW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE,
-        SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW, SetWindowPos, ShowWindow, TranslateMessage,
-        WINDOW_EX_STYLE, WM_QUIT, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
-        WS_VISIBLE,
+    UI::{
+        HiDpi::GetDpiForWindow,
+        WindowsAndMessaging::{
+            CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+            GetClientRect, HWND_BOTTOM, HWND_TOP, MSG, PM_REMOVE, PeekMessageW, PostQuitMessage,
+            RegisterClassExW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE,
+            SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_SHOWWINDOW, SetWindowPos, ShowWindow, TranslateMessage,
+            WINDOW_EX_STYLE, WM_QUIT, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+            WS_VISIBLE,
+        },
     },
 };
 
@@ -149,6 +152,31 @@ pub(crate) fn destroy_host_window(hwnd: isize) {
         return;
     }
     let _ = unsafe { DestroyWindow(HWND(hwnd as *mut _)) };
+}
+
+/// Convert CSS-pixel / DIP guest bounds into physical pixels for Win32 /
+/// WebView2. `dpi_hwnd` should be the top-level window (or any HWND in the
+/// same DPI context).
+pub(crate) fn physical_bounds(dpi_hwnd: isize, bounds: GuestBounds) -> GuestBounds {
+    let scale = dpi_scale(dpi_hwnd);
+    GuestBounds {
+        x: ((bounds.x as f64) * scale).round() as i32,
+        y: ((bounds.y as f64) * scale).round() as i32,
+        width: ((bounds.width as f64) * scale).round().max(1.0) as u32,
+        height: ((bounds.height as f64) * scale).round().max(1.0) as u32,
+    }
+}
+
+fn dpi_scale(hwnd: isize) -> f64 {
+    if hwnd == 0 {
+        return 1.0;
+    }
+    let dpi = unsafe { GetDpiForWindow(HWND(hwnd as *mut _)) };
+    if dpi == 0 {
+        1.0
+    } else {
+        f64::from(dpi) / 96.0
+    }
 }
 
 /// Move a guest host window and keep it above the primary webview.
