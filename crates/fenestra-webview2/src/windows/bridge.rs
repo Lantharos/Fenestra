@@ -168,24 +168,12 @@ pub(crate) fn complete_guest_bridge(
     request_id: &str,
     command: BridgeCommand,
 ) {
-    eprintln!(
-        "fenestra: guest bridge `{}` (request {request_id})",
-        command.name
-    );
     let response = guest_commands::dispatch(inner, &command).unwrap_or_else(|| {
         Err(fenestra_bridge::BridgeError::new(format!(
             "unhandled guest command: {}",
             command.name
         )))
     });
-    if let Err(error) = &response {
-        eprintln!(
-            "fenestra: guest bridge `{}` failed: {}",
-            command.name, error.message
-        );
-    } else {
-        eprintln!("fenestra: guest bridge `{}` ok", command.name);
-    }
     let webview = inner
         .webview
         .lock()
