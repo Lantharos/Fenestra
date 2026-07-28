@@ -521,6 +521,7 @@ fn resize_controller(
     let size =
         controller_bounds_for_size(width, height, frameless, hwnd, work_area_maximized);
     let _ = unsafe { controller.SetBounds(size) };
+    let _ = unsafe { controller.NotifyParentWindowPositionChanged() };
     drop(guard);
     if let Ok(manager) = inner.guests.try_lock() {
         manager.raise_all(primary_host);
@@ -615,6 +616,7 @@ fn create_webview2(
                     match composition::create_composition_controller(
                         hwnd,
                         &env,
+                        dcomp,
                         &dcomp.primary_visual,
                     ) {
                         Ok(pair) => Some(pair),

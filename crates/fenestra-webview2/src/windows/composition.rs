@@ -64,9 +64,10 @@ impl DCompRoot {
             let device: IDCompositionDevice = DCompositionCreateDevice2(None).map_err(|error| {
                 WebView2Error::Backend(format!("DCompositionCreateDevice2: {error}"))
             })?;
-            // Non-topmost is fine when there is no full-bleed child HWND on top.
+            // Topmost matches the WebView2 visual-hosting sample: the tree must
+            // sit above the HWND (and any child HWNDs) or it never paints.
             let target = device
-                .CreateTargetForHwnd(hwnd, false)
+                .CreateTargetForHwnd(hwnd, true)
                 .map_err(|error| WebView2Error::Backend(format!("CreateTargetForHwnd: {error}")))?;
             let root = device
                 .CreateVisual()
@@ -156,6 +157,7 @@ pub(crate) fn remove_guest_visual(
 pub(crate) fn create_composition_controller(
     top_level_hwnd: isize,
     environment: &ICoreWebView2Environment,
+    dcomp: &DCompRoot,
     visual: &IDCompositionVisual,
 ) -> WebView2Result<(ICoreWebView2CompositionController, ICoreWebView2Controller)> {
     let env3: ICoreWebView2Environment3 = environment
@@ -194,6 +196,9 @@ pub(crate) fn create_composition_controller(
             .SetRootVisualTarget(visual)
             .map_err(|error| WebView2Error::Backend(format!("SetRootVisualTarget: {error}")))?;
     }
+    // Required: WebView2 attaches its tree in SetRootVisualTarget; without
+    // Commit the visual never appears (MS sample does the same).
+    dcomp.commit()?;
     let controller: ICoreWebView2Controller = composition
         .cast()
         .map_err(|error| WebView2Error::Backend(format!("composition as controller: {error}")))?;

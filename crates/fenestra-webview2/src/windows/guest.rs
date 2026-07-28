@@ -421,7 +421,7 @@ impl GuestManager {
         let mut dcomp = inner.dcomp.lock().unwrap();
         if let Some(root) = dcomp.as_mut() {
             let visual = composition::create_guest_visual(root, bounds)?;
-            match composition::create_composition_controller(parent, environment, &visual) {
+            match composition::create_composition_controller(parent, environment, root, &visual) {
                 Ok((composition_controller, controller)) => {
                     return Ok((
                         controller,
