@@ -680,6 +680,68 @@ impl GuestManager {
         Ok(())
     }
 
+    /// Snapshot the guest's current pixels as a `data:image/png;base64,...` URL.
+    /// Call this before `setCovered(true)` so HTML overlays can dim over the page.
+    pub(crate) fn capture_preview(&self, id: &str) -> WebView2Result<String> {
+        use webview2_com::{
+            CapturePreviewCompletedHandler,
+            Microsoft::Web::WebView2::Win32::COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
+        };
+        use windows::Win32::System::{
+            Com::StructuredStorage::{CreateStreamOnHGlobal, GetHGlobalFromStream},
+            Memory::{GlobalLock, GlobalSize, GlobalUnlock},
+        };
+
+        let guest = self.guest(id)?;
+        let stream = unsafe {
+            CreateStreamOnHGlobal(windows::Win32::Foundation::HGLOBAL::default(), true)
+        }
+        .map_err(|error| WebView2Error::Backend(format!("CreateStreamOnHGlobal: {error}")))?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handler = CapturePreviewCompletedHandler::create(Box::new(move |status| {
+            let _ = tx.send(status);
+            Ok(())
+        }));
+        unsafe {
+            guest
+                .webview
+                .CapturePreview(
+                    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
+                    &stream,
+                    &handler,
+                )
+        }
+        .map_err(bridge::webview2_error)?;
+        guest_host::wait_bounded(rx, "guest capturePreview", guest_host::SCRIPT_TIMEOUT)?
+            .map_err(|error| {
+                WebView2Error::Backend(format!("guest capturePreview failed: {error}"))
+            })?;
+
+        let hglobal = unsafe { GetHGlobalFromStream(&stream) }.map_err(|error| {
+            WebView2Error::Backend(format!("GetHGlobalFromStream: {error}"))
+        })?;
+        let size = unsafe { GlobalSize(hglobal) };
+        if size == 0 {
+            return Err(WebView2Error::Backend(
+                "guest capturePreview produced an empty image".into(),
+            ));
+        }
+        let ptr = unsafe { GlobalLock(hglobal) };
+        if ptr.is_null() {
+            return Err(WebView2Error::Backend(
+                "guest capturePreview GlobalLock failed".into(),
+            ));
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, size) }.to_vec();
+        unsafe {
+            let _ = GlobalUnlock(hglobal);
+        }
+        Ok(format!(
+            "data:image/png;base64,{}",
+            encode_base64(&bytes)
+        ))
+    }
+
     pub(crate) fn execute_javascript(&self, id: &str, code: &str) -> WebView2Result<Value> {
         let guest = self.guest(id)?;
         let (tx, rx) = std::sync::mpsc::channel();
@@ -823,6 +885,30 @@ fn parse_background_color(value: &str) -> Option<COREWEBVIEW2_COLOR> {
 
 fn missing_guest(id: &str) -> WebView2Error {
     WebView2Error::Backend(format!("unknown guest: {id}"))
+}
+
+fn encode_base64(data: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[((triple >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((triple >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(triple & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }
 
 #[cfg(test)]

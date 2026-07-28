@@ -50,6 +50,23 @@ pub(crate) fn dispatch(
             ok_empty()
         }));
     }
+    if command.name == "fenestra.guest.capturePreview" {
+        let id = command
+            .params
+            .get("id")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string();
+        if id.is_empty() {
+            return Some(Err(BridgeError::new(
+                "fenestra.guest.capturePreview requires `id`",
+            )));
+        }
+        return Some(with_manager(inner, |manager| {
+            let data_url = manager.capture_preview(&id).map_err(bridge_error)?;
+            Ok(BridgeResponse::json(json!({ "dataUrl": data_url })))
+        }));
+    }
     if !is_guest_command(&command.name) {
         return None;
     }

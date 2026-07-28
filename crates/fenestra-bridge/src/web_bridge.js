@@ -229,6 +229,11 @@
           covered: Boolean(covered),
         });
       },
+      capturePreview(id) {
+        return window.fenestra.bridge.invoke("fenestra.guest.capturePreview", {
+          id: String(id),
+        });
+      },
       focus(id) {
         return window.fenestra.bridge.invoke("fenestra.guest.focus", { id: String(id) });
       },
