@@ -1215,6 +1215,21 @@ impl OsrNativeHost {
         }
         self.draw_titlebar(&mut list, width);
         let y = self.titlebar_height();
+        // Guests under the primary so HTML overlays (dialogs) can alpha-blend
+        // over live guest content. Legacy popup stays above the primary.
+        for (overlay_id, overlay) in &self.overlays {
+            if overlay_id.as_str() == POPUP_OVERLAY_ID {
+                continue;
+            }
+            list.push(ImageCommand {
+                id: overlay_texture_id(overlay_id),
+                x: overlay.frame.x as f32,
+                y: y + overlay.frame.y as f32,
+                width: overlay.frame.width as f32,
+                height: overlay.frame.height as f32,
+                opacity: 1.0,
+            });
+        }
         if let Some(frame) = &self.main_frame {
             list.push(ImageCommand {
                 id: MAIN_TEXTURE_ID.to_string(),
@@ -1225,9 +1240,9 @@ impl OsrNativeHost {
                 opacity: 1.0,
             });
         }
-        for (overlay_id, overlay) in &self.overlays {
+        if let Some(overlay) = self.overlays.get(POPUP_OVERLAY_ID) {
             list.push(ImageCommand {
-                id: overlay_texture_id(overlay_id),
+                id: overlay_texture_id(POPUP_OVERLAY_ID),
                 x: overlay.frame.x as f32,
                 y: y + overlay.frame.y as f32,
                 width: overlay.frame.width as f32,

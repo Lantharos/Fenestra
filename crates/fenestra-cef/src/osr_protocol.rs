@@ -98,7 +98,8 @@ pub(crate) enum OsrSurface {
     Main,
     /// Legacy popup overlay (also addressable as guest id `__fenestra_popup`).
     Popup,
-    /// Named guest overlay composited above the main surface.
+    /// Named guest overlay composited under the main surface (primary HTML
+    /// alpha-blends on top for dialogs). Legacy popup stays above main.
     Guest(String),
 }
 

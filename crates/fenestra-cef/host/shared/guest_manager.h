@@ -129,10 +129,13 @@ class GuestRegistry {
   std::vector<GuestView*> InZOrder();
   std::vector<const GuestView*> InZOrder() const;
   bool Empty() const { return guests_.empty(); }
+  void SetCovered(bool covered) { covered_ = covered; }
+  bool Covered() const { return covered_; }
 
  private:
   std::map<std::string, GuestView> guests_;
   std::vector<std::string> z_order_;
+  bool covered_ = false;
 };
 
 #endif

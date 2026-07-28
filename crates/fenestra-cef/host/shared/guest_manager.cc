@@ -20,7 +20,7 @@ namespace {
 
 const char* const kGuestOperations[] = {
     "create",   "destroy", "navigate",         "setBounds",
-    "setVisible", "focus", "reload",           "goBack",
+    "setVisible", "setCovered", "focus", "reload", "goBack",
     "goForward", "list",   "get",              "setZoom",
     "executeJavaScript",   "downloadAction",
 };
@@ -381,6 +381,9 @@ void GuestRegistry::Raise(const std::string& id) {
 }
 
 GuestView* GuestRegistry::TopmostAt(int x, int y) {
+  if (covered_) {
+    return nullptr;
+  }
   for (auto id = z_order_.rbegin(); id != z_order_.rend(); ++id) {
     GuestView* guest = Find(*id);
     if (!guest || !guest->visible) {

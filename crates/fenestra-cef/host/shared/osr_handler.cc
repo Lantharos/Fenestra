@@ -1770,6 +1770,14 @@ bool FenestraOsrHandler::RunGuestOperation(const std::string& operation,
     *response = GuestListJson(registry.InZOrder());
     return true;
   }
+  if (operation == "setCovered") {
+    const bool covered = JsonBoolValue(payload, "covered", false);
+    guests_.SetCovered(covered);
+    if (covered) {
+      FocusGuest(std::string());
+    }
+    return true;
+  }
   if (operation == "downloadAction") {
     return RunGuestDownloadAction(payload, error);
   }
