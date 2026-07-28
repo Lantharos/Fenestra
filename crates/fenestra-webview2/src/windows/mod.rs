@@ -887,9 +887,15 @@ pub(crate) struct WebView2ProcessInner {
     pub(crate) desktop_services: Mutex<Option<desktop_services::WindowsDesktopServiceState>>,
     pub(crate) guests: Mutex<guest::GuestManager>,
     pub(crate) wake: Mutex<Option<winit::event_loop::EventLoopProxy>>,
-    /// DirectComposition root for visual-hosted guests (under the primary HWND).
+    /// DirectComposition root: guests under primary in one visual tree.
     pub(crate) dcomp: Mutex<Option<composition::DCompRoot>>,
-    /// When true, primary host has no guest holes so HTML overlays receive input.
+    /// Composition-hosted primary (above guests). When set, no HWND holes.
+    pub(crate) primary_composition: Mutex<
+        Option<
+            webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2CompositionController,
+        >,
+    >,
+    /// When true, mouse input goes to the primary (overlays), not guests.
     pub(crate) guests_covered: std::sync::atomic::AtomicBool,
 }
 

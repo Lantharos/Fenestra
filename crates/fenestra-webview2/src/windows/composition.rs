@@ -1,9 +1,10 @@
-//! DirectComposition (visual) hosting for guest WebView2s.
+//! DirectComposition (visual) hosting for WebView2.
 //!
-//! Guests render into a non-topmost DComp tree on the top-level HWND, which
-//! sits *under* the primary WebView2 child HWND. A `SetWindowRgn` hole in
-//! the primary host lets the guest show through and receive hit-testing;
-//! HTML dialogs in the primary UI stay on top by clearing those holes.
+//! Both the primary UI and guests live in one DComp tree on the top-level
+//! HWND: guests underneath, primary on top with a transparent background so
+//! HTML overlays (dialogs) can alpha-blend over live guest content. Mouse
+//! input is forwarded from a top-level subclass — to a guest when the click
+//! is in its bounds and overlays are not covering, otherwise to the primary.
 
 #![cfg(target_os = "windows")]
 
@@ -53,6 +54,7 @@ pub(crate) struct DCompRoot {
     pub device: IDCompositionDevice,
     pub _target: IDCompositionTarget,
     pub guest_layer: IDCompositionVisual,
+    pub primary_visual: IDCompositionVisual,
 }
 
 impl DCompRoot {
@@ -62,7 +64,7 @@ impl DCompRoot {
             let device: IDCompositionDevice = DCompositionCreateDevice2(None).map_err(|error| {
                 WebView2Error::Backend(format!("DCompositionCreateDevice2: {error}"))
             })?;
-            // Non-topmost → behind every WS_CHILD (including the primary host).
+            // Non-topmost is fine when there is no full-bleed child HWND on top.
             let target = device
                 .CreateTargetForHwnd(hwnd, false)
                 .map_err(|error| WebView2Error::Backend(format!("CreateTargetForHwnd: {error}")))?;
@@ -75,8 +77,15 @@ impl DCompRoot {
             let guest_layer = device.CreateVisual().map_err(|error| {
                 WebView2Error::Backend(format!("CreateVisual(guest_layer): {error}"))
             })?;
+            let primary_visual = device.CreateVisual().map_err(|error| {
+                WebView2Error::Backend(format!("CreateVisual(primary): {error}"))
+            })?;
+            // Guests first (bottom), primary last (top) so HTML can blend over them.
             root.AddVisual(&guest_layer, true, None).map_err(|error| {
                 WebView2Error::Backend(format!("AddVisual(guest_layer): {error}"))
+            })?;
+            root.AddVisual(&primary_visual, true, None).map_err(|error| {
+                WebView2Error::Backend(format!("AddVisual(primary): {error}"))
             })?;
             device
                 .Commit()
@@ -85,6 +94,7 @@ impl DCompRoot {
                 device,
                 _target: target,
                 guest_layer,
+                primary_visual,
             })
         }
     }
@@ -173,11 +183,11 @@ pub(crate) fn create_composition_controller(
     }
     let composition = guest_host::wait_bounded(
         rx,
-        "guest composition controller",
+        "composition controller",
         guest_host::CONTROLLER_CREATE_TIMEOUT,
     )?
     .map_err(|error| {
-        WebView2Error::Backend(format!("guest composition controller callback: {error}"))
+        WebView2Error::Backend(format!("composition controller callback: {error}"))
     })?;
     unsafe {
         composition
@@ -190,8 +200,7 @@ pub(crate) fn create_composition_controller(
     Ok((composition, controller))
 }
 
-/// Punch guest rectangles out of the primary host so DComp guests show
-/// through and receive mouse hit-testing.
+/// Legacy hole punch for windowed primary + composition guests.
 pub(crate) fn set_primary_holes(primary_host: isize, holes: &[GuestBounds]) {
     if primary_host == 0 {
         return;
@@ -221,7 +230,6 @@ pub(crate) fn set_primary_holes(primary_host: isize, holes: &[GuestBounds]) {
                 );
             }
         }
-        // SetWindowRgn takes ownership of the region.
         let _ = SetWindowRgn(hwnd, Some(region), true);
     }
 }
@@ -287,7 +295,7 @@ unsafe extern "system" fn subclass_proc(
     let state = unsafe { &mut *(ref_data as *mut SubclassState) };
     if is_mouse_message(msg) {
         if let Some(inner) = state.inner.upgrade() {
-            if forward_mouse(&inner, state, hwnd, msg, wparam, lparam) {
+            if forward_mouse(&inner, hwnd, msg, wparam, lparam) {
                 return LRESULT(0);
             }
         }
@@ -320,40 +328,75 @@ fn is_mouse_message(msg: u32) -> bool {
 
 fn forward_mouse(
     inner: &Arc<WebView2ProcessInner>,
-    _state: &mut SubclassState,
-    _hwnd: HWND,
+    hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> bool {
-    if inner
+    let point = client_point(lparam);
+    let covered = inner
         .guests_covered
-        .load(std::sync::atomic::Ordering::Relaxed)
-    {
-        return false;
-    }
-    let Ok(manager) = inner.guests.try_lock() else {
-        return false;
-    };
-    let Some(target) = manager.composition_hit_test(client_point(lparam)) else {
-        return false;
-    };
+        .load(std::sync::atomic::Ordering::Relaxed);
 
+    // Prefer guest only when overlays are not covering and the click is in bounds.
+    if !covered {
+        if let Ok(manager) = inner.guests.try_lock() {
+            if let Some(target) = manager.composition_hit_test(point) {
+                return send_mouse(
+                    &target.composition,
+                    &target.controller,
+                    msg,
+                    wparam,
+                    POINT {
+                        x: point.0 - target.bounds.x,
+                        y: point.1 - target.bounds.y,
+                    },
+                );
+            }
+        }
+    }
+
+    // Composition-hosted primary receives the rest (including covered overlays).
+    let Ok(primary) = inner.primary_composition.lock() else {
+        return false;
+    };
+    let Some(composition) = primary.as_ref() else {
+        return false;
+    };
+    let Ok(controller_guard) = inner.controller.lock() else {
+        return false;
+    };
+    let Some(controller) = controller_guard.as_ref() else {
+        return false;
+    };
+    let mut client = RECT::default();
+    let _ = unsafe { GetClientRect(hwnd, &mut client) };
+    let _ = client;
+    send_mouse(
+        composition,
+        controller,
+        msg,
+        wparam,
+        POINT {
+            x: point.0,
+            y: point.1,
+        },
+    )
+}
+
+fn send_mouse(
+    composition: &ICoreWebView2CompositionController,
+    controller: &ICoreWebView2Controller,
+    msg: u32,
+    wparam: WPARAM,
+    point: POINT,
+) -> bool {
     if matches!(
         msg,
         WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
     ) {
-        let _ = unsafe {
-            target
-                .controller
-                .MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC)
-        };
+        let _ = unsafe { controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC) };
     }
-
-    let point = POINT {
-        x: client_point(lparam).0 - target.bounds.x,
-        y: client_point(lparam).1 - target.bounds.y,
-    };
     let kind = COREWEBVIEW2_MOUSE_EVENT_KIND(msg as i32);
     let keys = COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS(wparam.0 as i32);
     let mouse_data = if msg == WM_MOUSEWHEEL {
@@ -361,10 +404,9 @@ fn forward_mouse(
     } else {
         0
     };
-    let _ = unsafe { target.composition.SendMouseInput(kind, keys, mouse_data, point) };
-
+    let _ = unsafe { composition.SendMouseInput(kind, keys, mouse_data, point) };
     let mut cursor = windows::Win32::UI::WindowsAndMessaging::HCURSOR::default();
-    if unsafe { target.composition.Cursor(&mut cursor) }.is_ok() && !cursor.is_invalid() {
+    if unsafe { composition.Cursor(&mut cursor) }.is_ok() && !cursor.is_invalid() {
         let _ = unsafe { SetCursor(Some(cursor)) };
     }
     true

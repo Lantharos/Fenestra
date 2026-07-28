@@ -581,6 +581,16 @@ impl GuestManager {
     }
 
     pub(crate) fn sync_primary_holes(&self, inner: &Arc<WebView2ProcessInner>) {
+        // Dual composition: primary sits above guests with a transparent
+        // background — no HWND region holes. Covered only redirects input.
+        if inner
+            .primary_composition
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false)
+        {
+            return;
+        }
         let primary = inner.primary_host.load(Ordering::Relaxed);
         if primary == 0 {
             return;
