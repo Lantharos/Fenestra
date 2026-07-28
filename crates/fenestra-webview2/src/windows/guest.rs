@@ -418,26 +418,35 @@ impl GuestManager {
         parent: isize,
         bounds: GuestBounds,
     ) -> WebView2Result<(ICoreWebView2Controller, GuestSurface)> {
-        let mut dcomp = inner.dcomp.lock().unwrap();
-        if let Some(root) = dcomp.as_mut() {
-            let visual = composition::create_guest_visual(root, bounds)?;
-            match composition::create_composition_controller(parent, environment, root, &visual) {
-                Ok((composition_controller, controller)) => {
-                    return Ok((
+        let composed = {
+            let mut dcomp = inner.dcomp.lock().unwrap();
+            if let Some(root) = dcomp.as_mut() {
+                let visual = composition::create_guest_visual(root, bounds)?;
+                match composition::create_composition_controller(parent, environment, root, &visual)
+                {
+                    Ok((composition_controller, controller)) => Some((
                         controller,
                         GuestSurface::Composition {
                             visual,
                             composition: composition_controller,
                         },
-                    ));
+                    )),
+                    Err(error) => {
+                        let _ = composition::remove_guest_visual(root, &visual);
+                        eprintln!(
+                            "fenestra: composition guest failed, falling back to windowed: {error}"
+                        );
+                        None
+                    }
                 }
-                Err(error) => {
-                    let _ = composition::remove_guest_visual(root, &visual);
-                    eprintln!(
-                        "fenestra: composition guest failed, falling back to windowed: {error}"
-                    );
-                }
+            } else {
+                None
             }
+        };
+        if let Some(surface) = composed {
+            // Guest attach can reorder WebView2 visuals above the primary UI.
+            let _ = composition::reassert_primary_above_guests(inner);
+            return Ok(surface);
         }
         let hwnd = guest_host::create_host_window(parent, bounds, true)?;
         match guest_host::create_controller(environment, hwnd) {
@@ -577,6 +586,9 @@ impl GuestManager {
         inner
             .guests_covered
             .store(covered, Ordering::Relaxed);
+        if covered {
+            let _ = composition::reassert_primary_above_guests(inner);
+        }
         self.sync_primary_holes(inner);
     }
 

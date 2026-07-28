@@ -53,6 +53,7 @@ const SUBCLASS_ID: usize = 0xFE_5E_57_2A;
 pub(crate) struct DCompRoot {
     pub device: IDCompositionDevice,
     pub _target: IDCompositionTarget,
+    pub root: IDCompositionVisual,
     pub guest_layer: IDCompositionVisual,
     pub primary_visual: IDCompositionVisual,
 }
@@ -81,19 +82,21 @@ impl DCompRoot {
             let primary_visual = device.CreateVisual().map_err(|error| {
                 WebView2Error::Backend(format!("CreateVisual(primary): {error}"))
             })?;
-            // Guests first (bottom), primary last (top) so HTML can blend over them.
-            root.AddVisual(&guest_layer, true, None).map_err(|error| {
-                WebView2Error::Backend(format!("AddVisual(guest_layer): {error}"))
-            })?;
+            // Primary on top; guests explicitly below it so HTML overlays win.
             root.AddVisual(&primary_visual, true, None).map_err(|error| {
                 WebView2Error::Backend(format!("AddVisual(primary): {error}"))
             })?;
+            root.AddVisual(&guest_layer, false, Some(&primary_visual))
+                .map_err(|error| {
+                    WebView2Error::Backend(format!("AddVisual(guest_layer): {error}"))
+                })?;
             device
                 .Commit()
                 .map_err(|error| WebView2Error::Backend(format!("DComp Commit: {error}")))?;
             Ok(Self {
                 device,
                 _target: target,
+                root,
                 guest_layer,
                 primary_visual,
             })
@@ -103,6 +106,18 @@ impl DCompRoot {
     pub(crate) fn commit(&self) -> WebView2Result<()> {
         unsafe { self.device.Commit() }
             .map_err(|error| WebView2Error::Backend(format!("DComp Commit: {error}")))
+    }
+
+    /// Keep the primary WebView above every guest. WebView2's SetRootVisualTarget
+    /// can reshuffle siblings; re-assert after guest attach / overlay open.
+    pub(crate) fn raise_primary(&self) -> WebView2Result<()> {
+        unsafe {
+            let _ = self.root.RemoveVisual(&self.primary_visual);
+            self.root
+                .AddVisual(&self.primary_visual, true, None)
+                .map_err(|error| WebView2Error::Backend(format!("AddVisual(primary raise): {error}")))?;
+        }
+        self.commit()
     }
 }
 
@@ -203,6 +218,32 @@ pub(crate) fn create_composition_controller(
         .cast()
         .map_err(|error| WebView2Error::Backend(format!("composition as controller: {error}")))?;
     Ok((composition, controller))
+}
+
+/// Put the primary WebView2 back above guests after a guest attaches or an
+/// overlay opens. Re-binding RootVisualTarget forces WebView2's cross-device
+/// content to follow our DComp sibling order again.
+pub(crate) fn reassert_primary_above_guests(
+    inner: &Arc<WebView2ProcessInner>,
+) -> WebView2Result<()> {
+    let dcomp_guard = inner.dcomp.lock().map_err(|_| {
+        WebView2Error::Backend("dcomp lock poisoned".into())
+    })?;
+    let Some(dcomp) = dcomp_guard.as_ref() else {
+        return Ok(());
+    };
+    if let Ok(primary_guard) = inner.primary_composition.lock()
+        && let Some(primary) = primary_guard.as_ref()
+    {
+        unsafe {
+            primary
+                .SetRootVisualTarget(&dcomp.primary_visual)
+                .map_err(|error| {
+                    WebView2Error::Backend(format!("rebind primary RootVisualTarget: {error}"))
+                })?;
+        }
+    }
+    dcomp.raise_primary()
 }
 
 /// Legacy hole punch for windowed primary + composition guests.
