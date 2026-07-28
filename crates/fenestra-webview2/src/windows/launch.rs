@@ -76,7 +76,10 @@ use windows::core::Interface;
 use crate::{
     WebView2Config, WebView2Error, WebView2Process, WebView2ProcessInner, WebView2Result,
     WebView2Window,
-    windows::{bridge, desktop_services, guest::GuestManager, guest_commands, guest_host, regions},
+    windows::{
+        bridge, composition, desktop_services, guest::GuestManager, guest_commands, guest_host,
+        regions,
+    },
 };
 
 pub(crate) fn launch(
@@ -156,6 +159,8 @@ pub(crate) fn launch(
                 command_allowlist.clone(),
             )),
             wake: Mutex::new(None),
+            dcomp: Mutex::new(None),
+            guests_covered: std::sync::atomic::AtomicBool::new(false),
         })
     };
 
@@ -467,8 +472,10 @@ impl LaunchApp {
                     let _ = child.wait();
                 }
                 if let Ok(mut guests) = self.state.inner.guests.lock() {
-                    guests.shutdown();
+                    guests.shutdown(&self.state.inner);
                 }
+                composition::detach_input_subclass(hwnd);
+                *self.state.inner.dcomp.lock().unwrap() = None;
                 {
                     let mut webview = self.state.inner.webview.lock().unwrap();
                     *webview = None;
@@ -515,6 +522,7 @@ fn resize_controller(
     drop(guard);
     if let Ok(manager) = inner.guests.try_lock() {
         manager.raise_all(primary_host);
+        manager.sync_primary_holes(inner);
     }
 }
 
@@ -537,6 +545,15 @@ fn create_webview2(
     inner
         .primary_host
         .store(primary_host, std::sync::atomic::Ordering::Relaxed);
+    match composition::DCompRoot::create(hwnd) {
+        Ok(dcomp) => {
+            *inner.dcomp.lock().unwrap() = Some(dcomp);
+            composition::attach_input_subclass(hwnd, inner.clone());
+        }
+        Err(error) => {
+            eprintln!("fenestra: DirectComposition unavailable, guests stay windowed: {error}");
+        }
+    }
     let parent = windows::Win32::Foundation::HWND(primary_host as *mut _);
 
     let user_data_dir = webview_user_data_dir(config);

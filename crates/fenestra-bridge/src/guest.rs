@@ -16,6 +16,7 @@ pub const DESTROY_COMMAND: &str = "fenestra.guest.destroy";
 pub const NAVIGATE_COMMAND: &str = "fenestra.guest.navigate";
 pub const SET_BOUNDS_COMMAND: &str = "fenestra.guest.setBounds";
 pub const SET_VISIBLE_COMMAND: &str = "fenestra.guest.setVisible";
+pub const SET_COVERED_COMMAND: &str = "fenestra.guest.setCovered";
 pub const FOCUS_COMMAND: &str = "fenestra.guest.focus";
 pub const RELOAD_COMMAND: &str = "fenestra.guest.reload";
 pub const GO_BACK_COMMAND: &str = "fenestra.guest.goBack";
@@ -29,12 +30,13 @@ pub const DOWNLOAD_ACTION_COMMAND: &str = "fenestra.guest.downloadAction";
 /// Reserved guest id used by the legacy `fenestra.popup` surface.
 pub const POPUP_GUEST_ID: &str = "__fenestra_popup";
 
-const INTERNAL_COMMANDS: [&str; 14] = [
+const INTERNAL_COMMANDS: [&str; 15] = [
     CREATE_COMMAND,
     DESTROY_COMMAND,
     NAVIGATE_COMMAND,
     SET_BOUNDS_COMMAND,
     SET_VISIBLE_COMMAND,
+    SET_COVERED_COMMAND,
     FOCUS_COMMAND,
     RELOAD_COMMAND,
     GO_BACK_COMMAND,

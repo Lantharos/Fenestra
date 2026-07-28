@@ -34,6 +34,7 @@ webview2-com-sys = "0.36"
 windows = { version = "0.60", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Graphics_DirectComposition",
     "Win32_System_Com",
     "Win32_UI_Controls",
     "Win32_UI_HiDpi",

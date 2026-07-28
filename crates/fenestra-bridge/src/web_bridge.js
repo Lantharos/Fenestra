@@ -224,6 +224,11 @@
           visible: Boolean(visible),
         });
       },
+      setCovered(covered) {
+        return window.fenestra.bridge.invoke("fenestra.guest.setCovered", {
+          covered: Boolean(covered),
+        });
+      },
       focus(id) {
         return window.fenestra.bridge.invoke("fenestra.guest.focus", { id: String(id) });
       },

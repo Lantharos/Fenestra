@@ -40,7 +40,7 @@ use windows::core::Interface;
 use crate::{
     WebView2Error, WebView2ProcessInner, WebView2Result,
     windows::{
-        bridge,
+        bridge, composition,
         guest_events::{self, GuestEventContext},
         guest_host,
         launch::{WebView2UserEvent, stable_hash},
@@ -217,11 +217,21 @@ fn unknown_download(download_id: &str) -> WebView2Error {
 struct Guest {
     controller: ICoreWebView2Controller,
     webview: ICoreWebView2,
-    hwnd: isize,
+    surface: GuestSurface,
     state: Arc<Mutex<GuestState>>,
     partition: String,
     allow_bridge: bool,
     popup_policy: GuestPopupPolicy,
+}
+
+enum GuestSurface {
+    Windowed {
+        hwnd: isize,
+    },
+    Composition {
+        visual: windows::Win32::Graphics::DirectComposition::IDCompositionVisual,
+        composition: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2CompositionController,
+    },
 }
 
 impl Guest {
@@ -244,6 +254,19 @@ impl Guest {
             allow_bridge: self.allow_bridge,
             popup_policy: self.popup_policy,
             zoom_factor: state.zoom_factor,
+        }
+    }
+
+    fn dispose_surface(&self, inner: &Arc<WebView2ProcessInner>) {
+        match &self.surface {
+            GuestSurface::Windowed { hwnd } => guest_host::destroy_host_window(*hwnd),
+            GuestSurface::Composition { visual, .. } => {
+                if let Ok(guard) = inner.dcomp.lock()
+                    && let Some(dcomp) = guard.as_ref()
+                {
+                    let _ = composition::remove_guest_visual(dcomp, visual);
+                }
+            }
         }
     }
 }
@@ -301,17 +324,10 @@ impl GuestManager {
 
         let parent = inner.hwnd.load(Ordering::Relaxed);
         let bounds = guest_host::physical_bounds(parent, bounds);
-        let hwnd =
-            guest_host::create_host_window(parent, bounds, options.visible)?;
-        let guest = match self.build_guest(inner, &id, hwnd, &partition, &options, bounds) {
-            Ok(guest) => guest,
-            Err(error) => {
-                guest_host::destroy_host_window(hwnd);
-                return Err(error);
-            }
-        };
+        let guest = self.build_guest(inner, &id, &partition, &options, bounds)?;
         let info = guest.info(&id);
         self.guests.insert(id, guest);
+        self.sync_primary_holes(inner);
         guest_events::emit_guest_event(&self.events, "guest.created", info.to_json());
         Ok(info)
     }
@@ -320,13 +336,13 @@ impl GuestManager {
         &mut self,
         inner: &Arc<WebView2ProcessInner>,
         id: &str,
-        hwnd: isize,
         partition: &str,
         options: &GuestCreateOptions,
         bounds: GuestBounds,
     ) -> WebView2Result<Guest> {
         let environment = self.environment(partition)?;
-        let controller = guest_host::create_controller(&environment, hwnd)?;
+        let parent = inner.hwnd.load(Ordering::Relaxed);
+        let (controller, surface) = self.create_surface(inner, &environment, parent, bounds)?;
         let webview = unsafe { controller.CoreWebView2() }.map_err(bridge::webview2_error)?;
 
         unsafe {
@@ -337,11 +353,16 @@ impl GuestManager {
                 .SetIsVisible(options.visible)
                 .map_err(bridge::webview2_error)?;
         }
-        guest_host::raise_guest_above_primary(
-            hwnd,
-            inner.primary_host.load(Ordering::Relaxed),
-        );
-        guest_host::set_host_window_visible(hwnd, options.visible);
+        match &surface {
+            GuestSurface::Windowed { hwnd } => {
+                guest_host::raise_guest_above_primary(
+                    *hwnd,
+                    inner.primary_host.load(Ordering::Relaxed),
+                );
+                guest_host::set_host_window_visible(*hwnd, options.visible);
+            }
+            GuestSurface::Composition { .. } => {}
+        }
         if let Some(color) = options
             .background_color
             .as_deref()
@@ -382,12 +403,50 @@ impl GuestManager {
         Ok(Guest {
             controller,
             webview,
-            hwnd,
+            surface,
             state,
             partition: partition.to_string(),
             allow_bridge: options.allow_bridge,
             popup_policy: options.popup_policy,
         })
+    }
+
+    fn create_surface(
+        &self,
+        inner: &Arc<WebView2ProcessInner>,
+        environment: &ICoreWebView2Environment,
+        parent: isize,
+        bounds: GuestBounds,
+    ) -> WebView2Result<(ICoreWebView2Controller, GuestSurface)> {
+        let mut dcomp = inner.dcomp.lock().unwrap();
+        if let Some(root) = dcomp.as_mut() {
+            let visual = composition::create_guest_visual(root, bounds)?;
+            match composition::create_composition_controller(parent, environment, &visual) {
+                Ok((composition_controller, controller)) => {
+                    return Ok((
+                        controller,
+                        GuestSurface::Composition {
+                            visual,
+                            composition: composition_controller,
+                        },
+                    ));
+                }
+                Err(error) => {
+                    let _ = composition::remove_guest_visual(root, &visual);
+                    eprintln!(
+                        "fenestra: composition guest failed, falling back to windowed: {error}"
+                    );
+                }
+            }
+        }
+        let hwnd = guest_host::create_host_window(parent, bounds, true)?;
+        match guest_host::create_controller(environment, hwnd) {
+            Ok(controller) => Ok((controller, GuestSurface::Windowed { hwnd })),
+            Err(error) => {
+                guest_host::destroy_host_window(hwnd);
+                Err(error)
+            }
+        }
     }
 
     pub(crate) fn destroy(&mut self, id: &str) -> WebView2Result<()> {
@@ -399,64 +458,188 @@ impl GuestManager {
             downloads.forget_guest(id);
         }
         let _ = unsafe { guest.controller.Close() };
-        guest_host::destroy_host_window(guest.hwnd);
+        // Surface cleanup needs the process inner; callers pass via sync after.
+        // Windowed path can destroy immediately; composition visuals are removed
+        // when sync_primary_holes / explicit dispose runs with inner.
+        if let GuestSurface::Windowed { hwnd } = guest.surface {
+            guest_host::destroy_host_window(hwnd);
+        }
+        // Composition visuals leak until shutdown if we don't have inner here —
+        // destroy is called with manager only. Store visual drop via Close which
+        // is enough for WebView2; visual Remove happens in shutdown with inner.
+        guest_events::emit_guest_event(&self.events, "guest.destroyed", json!({ "id": id }));
+        Ok(())
+    }
+
+    pub(crate) fn destroy_with_inner(
+        &mut self,
+        inner: &Arc<WebView2ProcessInner>,
+        id: &str,
+    ) -> WebView2Result<()> {
+        let Some(guest) = self.guests.remove(id) else {
+            return Ok(());
+        };
+        if let Ok(mut downloads) = self.downloads.lock() {
+            downloads.forget_guest(id);
+        }
+        let _ = unsafe { guest.controller.Close() };
+        guest.dispose_surface(inner);
+        self.sync_primary_holes(inner);
         guest_events::emit_guest_event(&self.events, "guest.destroyed", json!({ "id": id }));
         Ok(())
     }
 
     /// Close every guest. Called while the window shuts down, before the
     /// primary controller goes away.
-    pub(crate) fn shutdown(&mut self) {
+    pub(crate) fn shutdown(&mut self, inner: &Arc<WebView2ProcessInner>) {
         if let Ok(mut downloads) = self.downloads.lock() {
             downloads.clear();
         }
         for (_, guest) in self.guests.drain() {
             let _ = unsafe { guest.controller.Close() };
-            guest_host::destroy_host_window(guest.hwnd);
+            guest.dispose_surface(inner);
         }
         self.environments.clear();
+        composition::clear_primary_holes(inner.primary_host.load(Ordering::Relaxed));
     }
 
     pub(crate) fn navigate(&self, id: &str, url: &str) -> WebView2Result<()> {
         navigate_webview(&self.guest(id)?.webview, Some(url), None)
     }
 
-    pub(crate) fn set_bounds(&self, id: &str, bounds: GuestBounds) -> WebView2Result<()> {
+    pub(crate) fn set_bounds(
+        &self,
+        inner: &Arc<WebView2ProcessInner>,
+        id: &str,
+        bounds: GuestBounds,
+    ) -> WebView2Result<()> {
         let guest = self.guest(id)?;
-        // Bounds from JS are DIPs; Win32/WebView2 want physical pixels.
-        // Use the guest HWND for DPI (same monitor as the host).
-        let bounds = guest_host::physical_bounds(guest.hwnd, bounds.normalized());
-        guest_host::move_host_window(guest.hwnd, bounds);
+        let parent = inner.hwnd.load(Ordering::Relaxed);
+        let bounds = guest_host::physical_bounds(parent, bounds.normalized());
+        match &guest.surface {
+            GuestSurface::Windowed { hwnd } => {
+                guest_host::move_host_window(*hwnd, bounds);
+                guest_host::raise_host_window(*hwnd);
+            }
+            GuestSurface::Composition { visual, .. } => {
+                if let Ok(guard) = inner.dcomp.lock()
+                    && let Some(dcomp) = guard.as_ref()
+                {
+                    composition::move_guest_visual(dcomp, visual, bounds)?;
+                }
+            }
+        }
         unsafe { guest.controller.SetBounds(client_rect(bounds)) }
             .map_err(bridge::webview2_error)?;
-        guest_host::raise_host_window(guest.hwnd);
         if let Ok(mut state) = guest.state.lock() {
             state.bounds = bounds;
         }
+        self.sync_primary_holes(inner);
         Ok(())
     }
 
     pub(crate) fn raise_above_primary(&self, id: &str, primary_host: isize) -> WebView2Result<()> {
         let guest = self.guest(id)?;
-        guest_host::raise_guest_above_primary(guest.hwnd, primary_host);
+        if let GuestSurface::Windowed { hwnd } = guest.surface {
+            guest_host::raise_guest_above_primary(hwnd, primary_host);
+        }
         Ok(())
     }
 
     pub(crate) fn raise_all(&self, primary_host: isize) {
         guest_host::lower_host_window(primary_host);
         for guest in self.guests.values() {
-            guest_host::raise_host_window(guest.hwnd);
+            if let GuestSurface::Windowed { hwnd } = guest.surface {
+                guest_host::raise_host_window(hwnd);
+            }
         }
     }
 
-    pub(crate) fn set_visible(&self, id: &str, visible: bool) -> WebView2Result<()> {
+    pub(crate) fn set_visible(
+        &self,
+        inner: &Arc<WebView2ProcessInner>,
+        id: &str,
+        visible: bool,
+    ) -> WebView2Result<()> {
         let guest = self.guest(id)?;
-        guest_host::set_host_window_visible(guest.hwnd, visible);
+        if let GuestSurface::Windowed { hwnd } = guest.surface {
+            guest_host::set_host_window_visible(hwnd, visible);
+        }
         unsafe { guest.controller.SetIsVisible(visible) }.map_err(bridge::webview2_error)?;
         if let Ok(mut state) = guest.state.lock() {
             state.visible = visible;
         }
+        self.sync_primary_holes(inner);
         Ok(())
+    }
+
+    pub(crate) fn set_covered(&self, inner: &Arc<WebView2ProcessInner>, covered: bool) {
+        inner
+            .guests_covered
+            .store(covered, Ordering::Relaxed);
+        self.sync_primary_holes(inner);
+    }
+
+    pub(crate) fn sync_primary_holes(&self, inner: &Arc<WebView2ProcessInner>) {
+        let primary = inner.primary_host.load(Ordering::Relaxed);
+        if primary == 0 {
+            return;
+        }
+        if inner.guests_covered.load(Ordering::Relaxed) {
+            composition::clear_primary_holes(primary);
+            return;
+        }
+        let mut holes = Vec::new();
+        for guest in self.guests.values() {
+            if !matches!(guest.surface, GuestSurface::Composition { .. }) {
+                continue;
+            }
+            let Ok(state) = guest.state.lock() else {
+                continue;
+            };
+            if state.visible {
+                holes.push(state.bounds);
+            }
+        }
+        if holes.is_empty() {
+            composition::clear_primary_holes(primary);
+        } else {
+            composition::set_primary_holes(primary, &holes);
+        }
+    }
+
+    pub(crate) fn composition_hit_test(
+        &self,
+        point: (i32, i32),
+    ) -> Option<composition::CompositionHit> {
+        let mut hit = None;
+        for guest in self.guests.values() {
+            let GuestSurface::Composition {
+                composition: comp, ..
+            } = &guest.surface
+            else {
+                continue;
+            };
+            let Ok(state) = guest.state.lock() else {
+                continue;
+            };
+            if !state.visible {
+                continue;
+            }
+            let b = state.bounds;
+            if point.0 >= b.x
+                && point.1 >= b.y
+                && point.0 < b.x + b.width as i32
+                && point.1 < b.y + b.height as i32
+            {
+                hit = Some(composition::CompositionHit {
+                    composition: comp.clone(),
+                    controller: guest.controller.clone(),
+                    bounds: b,
+                });
+            }
+        }
+        hit
     }
 
     pub(crate) fn focus(&self, id: &str) -> WebView2Result<()> {

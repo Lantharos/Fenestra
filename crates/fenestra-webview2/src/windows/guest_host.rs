@@ -58,6 +58,9 @@ const PRIMARY_WINDOW_CLASS: &str = "FenestraPrimaryHostWindow";
 /// would freeze the whole window.
 const CREATE_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// Exposed for composition-controller creation (same UI-thread pump).
+pub(crate) const CONTROLLER_CREATE_TIMEOUT: Duration = CREATE_TIMEOUT;
+
 /// Upper bound for `ExecuteScript` on a guest. Guests render untrusted
 /// content, so a busy renderer must not be able to stall the host.
 pub(crate) const SCRIPT_TIMEOUT: Duration = Duration::from_secs(5);

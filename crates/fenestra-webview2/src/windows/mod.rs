@@ -15,6 +15,7 @@
 #![cfg(target_os = "windows")]
 
 mod bridge;
+mod composition;
 mod desktop_services;
 mod guest;
 mod guest_commands;
@@ -886,6 +887,10 @@ pub(crate) struct WebView2ProcessInner {
     pub(crate) desktop_services: Mutex<Option<desktop_services::WindowsDesktopServiceState>>,
     pub(crate) guests: Mutex<guest::GuestManager>,
     pub(crate) wake: Mutex<Option<winit::event_loop::EventLoopProxy>>,
+    /// DirectComposition root for visual-hosted guests (under the primary HWND).
+    pub(crate) dcomp: Mutex<Option<composition::DCompRoot>>,
+    /// When true, primary host has no guest holes so HTML overlays receive input.
+    pub(crate) guests_covered: std::sync::atomic::AtomicBool,
 }
 
 impl WebView2Process {

@@ -33,7 +33,20 @@ pub(crate) fn dispatch(
     }
     if command.name == POPUP_CLOSE_COMMAND {
         return Some(with_manager(inner, |manager| {
-            manager.destroy(POPUP_GUEST_ID).map_err(bridge_error)?;
+            manager
+                .destroy_with_inner(inner, POPUP_GUEST_ID)
+                .map_err(bridge_error)?;
+            ok_empty()
+        }));
+    }
+    if command.name == "fenestra.guest.setCovered" {
+        let covered = command
+            .params
+            .get("covered")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        return Some(with_manager(inner, |manager| {
+            manager.set_covered(inner, covered);
             ok_empty()
         }));
     }
@@ -86,7 +99,9 @@ fn apply(
             ok_info(info)
         }
         GuestHostControl::Destroy { id } => {
-            manager.destroy(&id).map_err(bridge_error)?;
+            manager
+                .destroy_with_inner(inner, &id)
+                .map_err(bridge_error)?;
             ok_empty()
         }
         GuestHostControl::Navigate { id, url } => {
@@ -94,7 +109,9 @@ fn apply(
             ok_empty()
         }
         GuestHostControl::SetBounds { id, bounds } => {
-            manager.set_bounds(&id, bounds).map_err(bridge_error)?;
+            manager
+                .set_bounds(inner, &id, bounds)
+                .map_err(bridge_error)?;
             let primary = inner
                 .primary_host
                 .load(std::sync::atomic::Ordering::Relaxed);
@@ -102,7 +119,9 @@ fn apply(
             ok_empty()
         }
         GuestHostControl::SetVisible { id, visible } => {
-            manager.set_visible(&id, visible).map_err(bridge_error)?;
+            manager
+                .set_visible(inner, &id, visible)
+                .map_err(bridge_error)?;
             if visible {
                 let primary = inner
                     .primary_host
