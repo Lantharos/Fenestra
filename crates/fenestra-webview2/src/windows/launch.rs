@@ -160,7 +160,6 @@ pub(crate) fn launch(
             )),
             wake: Mutex::new(None),
             dcomp: Mutex::new(None),
-            primary_composition: Mutex::new(None),
             guests_covered: std::sync::atomic::AtomicBool::new(false),
         })
     };
@@ -476,7 +475,6 @@ impl LaunchApp {
                     guests.shutdown(&self.state.inner);
                 }
                 composition::detach_input_subclass(hwnd);
-                *self.state.inner.primary_composition.lock().unwrap() = None;
                 *self.state.inner.dcomp.lock().unwrap() = None;
                 {
                     let mut webview = self.state.inner.webview.lock().unwrap();
@@ -544,6 +542,10 @@ fn create_webview2(
     // paints a frozen white window on the UI thread mid-setup.
     wait_for_dev_server(url, &inner.event_sender);
 
+    let primary_host = guest_host::create_primary_host_window(hwnd)?;
+    inner
+        .primary_host
+        .store(primary_host, std::sync::atomic::Ordering::Relaxed);
     match composition::DCompRoot::create(hwnd) {
         Ok(dcomp) => {
             *inner.dcomp.lock().unwrap() = Some(dcomp);
@@ -553,6 +555,7 @@ fn create_webview2(
             eprintln!("fenestra: DirectComposition unavailable, guests stay windowed: {error}");
         }
     }
+    let parent = windows::Win32::Foundation::HWND(primary_host as *mut _);
 
     let user_data_dir = webview_user_data_dir(config);
     std::fs::create_dir_all(&user_data_dir).map_err(WebView2Error::Io)?;
@@ -606,74 +609,38 @@ fn create_webview2(
     };
     inner.metrics.mark("env.ready");
 
-    // Prefer dual composition: primary visual above guests so HTML overlays
-    // (dialogs with bg-black/50) can alpha-blend over live guest content.
-    let mut composition_primary = false;
     let controller: ICoreWebView2Controller = {
-        let composed = match inner.dcomp.lock() {
-            Ok(guard) => match guard.as_ref() {
-                Some(dcomp) => {
-                    match composition::create_composition_controller(
-                        hwnd,
-                        &env,
-                        dcomp,
-                        &dcomp.primary_visual,
-                    ) {
-                        Ok(pair) => Some(pair),
-                        Err(error) => {
-                            eprintln!(
-                                "fenestra: composition primary unavailable, falling back to HWND: {error}"
-                            );
-                            None
-                        }
-                    }
-                }
-                None => None,
-            },
-            Err(_) => None,
-        };
-        if let Some((composition_ctrl, controller)) = composed {
-            *inner.primary_composition.lock().unwrap() = Some(composition_ctrl);
-            composition_primary = true;
-            controller
-        } else {
-            let primary_host = guest_host::create_primary_host_window(hwnd)?;
-            inner
-                .primary_host
-                .store(primary_host, std::sync::atomic::Ordering::Relaxed);
-            let parent = windows::Win32::Foundation::HWND(primary_host as *mut _);
-            let (tx, rx) = std::sync::mpsc::channel();
-            let handler = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(
-                move |error_code, controller| {
-                    let result = (|| {
-                        error_code?;
-                        controller.ok_or_else(|| {
-                            windows::core::Error::from(windows::core::HRESULT(0x80004003u32 as i32))
-                        })
-                    })();
-                    tx.send(result).map_err(|_| {
-                        windows::core::Error::from(windows::core::HRESULT(0x80000004u32 as i32))
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handler = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(
+            move |error_code, controller| {
+                let result = (|| {
+                    error_code?;
+                    controller.ok_or_else(|| {
+                        windows::core::Error::from(windows::core::HRESULT(0x80004003u32 as i32))
                     })
-                },
-            ));
-            unsafe {
-                env.CreateCoreWebView2Controller(parent, &handler)
-                    .map_err(|error| {
-                        WebView2Error::Backend(format!("CreateCoreWebView2Controller: {error}"))
-                    })?;
+                })();
+                tx.send(result).map_err(|_| {
+                    windows::core::Error::from(windows::core::HRESULT(0x80000004u32 as i32))
+                })
+            },
+        ));
+        unsafe {
+            env.CreateCoreWebView2Controller(parent, &handler)
+                .map_err(|error| {
+                    WebView2Error::Backend(format!("CreateCoreWebView2Controller: {error}"))
+                })?;
+        }
+        match webview2_com::wait_with_pump(rx) {
+            Ok(Ok(controller)) => controller,
+            Ok(Err(error)) => {
+                return Err(WebView2Error::Backend(format!(
+                    "CreateCoreWebView2Controller callback: {error}"
+                )));
             }
-            match webview2_com::wait_with_pump(rx) {
-                Ok(Ok(controller)) => controller,
-                Ok(Err(error)) => {
-                    return Err(WebView2Error::Backend(format!(
-                        "CreateCoreWebView2Controller callback: {error}"
-                    )));
-                }
-                Err(error) => {
-                    return Err(WebView2Error::Backend(format!(
-                        "controller wait_with_pump: {error}"
-                    )));
-                }
+            Err(error) => {
+                return Err(WebView2Error::Backend(format!(
+                    "controller wait_with_pump: {error}"
+                )));
             }
         }
     };
@@ -681,14 +648,7 @@ fn create_webview2(
 
     // GetClientRect can return an empty rect before the first layout
     // pass; WebView2 SetBounds rejects 0×0 with E_INVALIDARG.
-    let bounds_hwnd = if composition_primary {
-        hwnd
-    } else {
-        inner
-            .primary_host
-            .load(std::sync::atomic::Ordering::Relaxed)
-    };
-    let size = controller_bounds(bounds_hwnd, config);
+    let size = controller_bounds(primary_host, config);
     unsafe {
         controller.SetBounds(size).map_err(|error| {
             WebView2Error::Backend(format!(
@@ -703,9 +663,8 @@ fn create_webview2(
         })?;
     }
 
-    let needs_clear_bg = composition_primary
-        || config.transparent
-        || config.effective_background_effect().requires_transparency();
+    let needs_clear_bg =
+        config.transparent || config.effective_background_effect().requires_transparency();
     if needs_clear_bg {
         set_webview_transparent_background(&controller);
     } else {
