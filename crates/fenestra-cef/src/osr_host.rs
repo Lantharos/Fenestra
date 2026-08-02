@@ -1598,26 +1598,21 @@ pub(crate) fn guest_preview_data_url(
     if width == 0 || height == 0 || bytes.len() != expected_len {
         return Err("guest has no frame to capture".to_string());
     }
-    let mut rgba = Vec::with_capacity(expected_len);
+    let mut rgb = Vec::with_capacity(expected_len / 4 * 3);
     for pixel in bytes.chunks_exact(4) {
-        let alpha = u16::from(pixel[3]);
-        if alpha == 0 {
-            rgba.extend_from_slice(&[0, 0, 0, 0]);
-        } else {
-            let unpremultiply = |channel: u8| {
-                ((u16::from(channel) * 255 + alpha / 2) / alpha).min(255) as u8
-            };
-            rgba.extend_from_slice(&[
-                unpremultiply(pixel[2]),
-                unpremultiply(pixel[1]),
-                unpremultiply(pixel[0]),
-                pixel[3],
-            ]);
-        }
+        let inverse_alpha = 255_u16 - u16::from(pixel[3]);
+        let composite = |channel: u8| {
+            (u16::from(channel) + (10 * inverse_alpha + 127) / 255).min(255) as u8
+        };
+        rgb.extend_from_slice(&[
+            composite(pixel[2]),
+            composite(pixel[1]),
+            composite(pixel[0]),
+        ]);
     }
     let mut png = Vec::new();
     PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::Sub)
-        .write_image(&rgba, width, height, ExtendedColorType::Rgba8)
+        .write_image(&rgb, width, height, ExtendedColorType::Rgb8)
         .map_err(|error| format!("failed to encode guest preview: {error}"))?;
     Ok(format!("data:image/png;base64,{}", base64_encode(&png)))
 }
