@@ -1,0 +1,279 @@
+use std::process::ExitCode;
+
+use mullion_runtime::{
+    RuntimeConfig, RuntimePackage, detect_runtime, install_user_runtime, latest_install_plan,
+    prune_user_runtimes, remove_user_runtime_version, resolve_runtime,
+};
+
+pub enum RuntimeCommand {
+    Prepare,
+    List {
+        json: bool,
+    },
+    Install {
+        package: String,
+    },
+    Remove {
+        version: Option<String>,
+        package: String,
+    },
+    Prune {
+        keep: usize,
+        package: String,
+    },
+    Doctor {
+        json: bool,
+    },
+}
+
+pub fn run_runtime(command: RuntimeCommand) -> ExitCode {
+    match command {
+        RuntimeCommand::Prepare => prepare_runtime(),
+        RuntimeCommand::List { json } => list_runtimes(json),
+        RuntimeCommand::Install { package } => install_runtime(&package),
+        RuntimeCommand::Remove { version, package } => remove_runtime(version.as_deref(), &package),
+        RuntimeCommand::Prune { keep, package } => prune_runtime(keep, &package),
+        RuntimeCommand::Doctor { json } => doctor_runtime(json),
+    }
+}
+
+fn prepare_runtime() -> ExitCode {
+    let config = RuntimeConfig::default();
+    let runtime = match resolve_runtime(&config) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("failed to resolve the Mullion runtime: {error}");
+            eprintln!("install it with `mullion runtime install`");
+            return ExitCode::from(1);
+        }
+    };
+    match mullion::ensure_cef_host(runtime.location.path()) {
+        Ok(host) => {
+            println!("{}", host.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("failed to prepare the Mullion CEF host: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn list_runtimes(json: bool) -> ExitCode {
+    let config = RuntimeConfig::default();
+    let runtimes = detect_runtime(&config);
+    if json {
+        let entries = runtimes
+            .iter()
+            .map(|r| {
+                let location_type = match &r.location {
+                    mullion_runtime::RuntimeLocation::System(_) => "system",
+                    mullion_runtime::RuntimeLocation::UserLocal(_) => "user",
+                    mullion_runtime::RuntimeLocation::Bundled(_) => "bundled",
+                };
+                format!(
+                    "{{\"package\":\"{}\",\"version\":\"{}\",\"location_type\":\"{}\",\"path\":\"{}\"}}",
+                    r.package.as_str(),
+                    r.version,
+                    location_type,
+                    r.location.path().display()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+
+        println!("{{\"runtimes\":[{entries}]}}");
+    } else {
+        if runtimes.is_empty() {
+            println!("No CEF runtimes found.");
+            println!("Run `mullion runtime install` to install the shared runtime.");
+        } else {
+            println!("CEF runtimes:");
+            for runtime in &runtimes {
+                let location_type = match &runtime.location {
+                    mullion_runtime::RuntimeLocation::System(_) => "system",
+                    mullion_runtime::RuntimeLocation::UserLocal(_) => "user",
+                    mullion_runtime::RuntimeLocation::Bundled(_) => "bundled",
+                };
+                println!(
+                    "  {} {} {} {}",
+                    runtime.version,
+                    runtime.package.as_str(),
+                    location_type,
+                    runtime.location.path().display()
+                );
+            }
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn install_runtime(package: &str) -> ExitCode {
+    let Ok(config) = runtime_config(package) else {
+        return ExitCode::from(1);
+    };
+    if let Ok(runtime) = resolve_runtime(&config) {
+        println!(
+            "A compatible CEF {package} runtime is already installed at {}.",
+            runtime.location.path().display()
+        );
+        return ExitCode::SUCCESS;
+    }
+
+    match latest_install_plan(&config) {
+        Ok(plan) => {
+            println!(
+                "Installing required CEF {} runtime {}.",
+                plan.package.as_str(),
+                plan.version
+            );
+            println!("Download: {}", plan.url);
+            println!("Destination: {}", plan.install_dir.display());
+        }
+        Err(error) => {
+            eprintln!("failed to plan CEF runtime install: {error}");
+            return ExitCode::from(1);
+        }
+    }
+
+    match install_user_runtime(&config) {
+        Ok(runtime) => {
+            println!(
+                "Installed CEF {} runtime {} at {}.",
+                runtime.package.as_str(),
+                runtime.version,
+                runtime.location.path().display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("failed to install CEF runtime: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn remove_runtime(version: Option<&str>, package: &str) -> ExitCode {
+    let Ok(config) = runtime_config(package) else {
+        return ExitCode::from(1);
+    };
+
+    let Some(version) = version else {
+        eprintln!("specify a version; run `mullion runtime list` to see installed versions");
+        return ExitCode::from(1);
+    };
+
+    match remove_user_runtime_version(&config, version) {
+        Ok(true) => {
+            println!("Removed CEF {package} runtime {version}.");
+            ExitCode::SUCCESS
+        }
+        Ok(false) => {
+            eprintln!("No user-local CEF {package} runtime {version} found.");
+            ExitCode::from(1)
+        }
+        Err(error) => {
+            eprintln!("failed to remove CEF {package} runtime {version}: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn prune_runtime(keep: usize, package: &str) -> ExitCode {
+    let Ok(config) = runtime_config(package) else {
+        return ExitCode::from(1);
+    };
+
+    match prune_user_runtimes(&config, keep) {
+        Ok(0) => {
+            println!("No stale CEF {package} runtimes found.");
+            ExitCode::SUCCESS
+        }
+        Ok(removed) => {
+            println!("Removed {removed} stale CEF {package} runtime(s).");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("failed to prune CEF {package} runtimes: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn doctor_runtime(json: bool) -> ExitCode {
+    let config = RuntimeConfig::default();
+    let runtimes = detect_runtime(&config);
+    let resolved = resolve_runtime(&config).ok();
+    let has_compatible = resolved.is_some();
+    let host_ready = resolved
+        .as_ref()
+        .map(|runtime| mullion::cef_host_release_binary(runtime.location.path()))
+        .is_some_and(|path| path.is_file());
+    let status = if has_compatible {
+        "ok"
+    } else if runtimes.is_empty() {
+        "missing"
+    } else {
+        "outdated"
+    };
+
+    if json {
+        println!(
+            "{{\"status\":\"{status}\",\"host_ready\":{host_ready},\"runtimes\":[{}]}}",
+            runtimes
+                .iter()
+                .map(|r| format!(
+                    "{{\"version\":\"{}\",\"location\":\"{}\"}}",
+                    r.version,
+                    r.location.path().display()
+                ))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    } else {
+        match status {
+            "ok" => println!("CEF runtime: ok"),
+            "missing" => {
+                println!("CEF runtime: not found");
+                println!("  Install with: mullion runtime install");
+            }
+            "outdated" => {
+                println!(
+                    "{} runtime: outdated (found versions below minimum 126)",
+                    "CEF"
+                );
+                println!("  Update with: mullion runtime install");
+            }
+            _ => {}
+        }
+        if has_compatible {
+            println!(
+                "Mullion host: {}",
+                if host_ready {
+                    "ready"
+                } else {
+                    "missing; run `mullion runtime prepare`"
+                }
+            );
+        }
+    }
+
+    if has_compatible && host_ready {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+fn runtime_config(package: &str) -> Result<RuntimeConfig, ()> {
+    let Some(package) = RuntimePackage::parse(package) else {
+        eprintln!("unknown runtime package `{package}`; use standard, client, or minimal");
+        return Err(());
+    };
+
+    Ok(RuntimeConfig {
+        package,
+        ..RuntimeConfig::default()
+    })
+}

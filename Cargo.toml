@@ -1,22 +1,22 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/fenestra-platform",
-    "crates/fenestra-runtime",
-    "crates/fenestra-bridge",
-    "crates/fenestra-cef",
-    "crates/fenestra-webview2",
-    "crates/fenestra-cli",
-    "examples/fenestra-notes",
+    "crates/mullion-platform",
+    "crates/mullion-runtime",
+    "crates/mullion-bridge",
+    "crates/mullion",
+    "crates/mullion-service",
+    "crates/mullion-cli",
+    "examples/mullion-notes",
 ]
 default-members = [
-    "crates/fenestra-platform",
-    "crates/fenestra-runtime",
-    "crates/fenestra-bridge",
-    "crates/fenestra-cef",
-    "crates/fenestra-webview2",
-    "crates/fenestra-cli",
-    "examples/fenestra-notes",
+    "crates/mullion-platform",
+    "crates/mullion-runtime",
+    "crates/mullion-bridge",
+    "crates/mullion",
+    "crates/mullion-service",
+    "crates/mullion-cli",
+    "examples/mullion-notes",
 ]
 
 [workspace.package]
@@ -24,22 +24,23 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Misoworks/Fenestra"
-homepage = "https://github.com/Misoworks/Fenestra"
-authors = ["The Fenestra Authors"]
-keywords = ["fenestra", "cef", "webview", "desktop", "chromium"]
+repository = "https://github.com/Misoworks/Mullion"
+homepage = "https://github.com/Misoworks/Mullion"
+authors = ["The Mullion Authors"]
+keywords = ["mullion", "cef", "webview", "desktop", "chromium"]
 categories = ["gui", "rendering"]
 
 [workspace.dependencies]
-fenestra-runtime = { path = "crates/fenestra-runtime", version = "0.1.0" }
-fenestra-platform = { path = "crates/fenestra-platform", version = "0.1.0" }
-fenestra-bridge = { path = "crates/fenestra-bridge", version = "0.1.0" }
-fenestra-cef = { path = "crates/fenestra-cef", version = "0.1.0" }
-fenestra-webview2 = { path = "crates/fenestra-webview2", version = "0.1.0" }
+mullion-runtime = { path = "crates/mullion-runtime", version = "0.1.0" }
+mullion-platform = { path = "crates/mullion-platform", version = "0.1.0" }
+mullion-bridge = { path = "crates/mullion-bridge", version = "0.1.0" }
+mullion = { path = "crates/mullion", version = "0.1.0" }
+mullion-service = { path = "crates/mullion-service", version = "0.1.0" }
 
 ashpd = { version = "0.13.11", features = ["global_shortcuts"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 futures-util = "0.3.31"
+getrandom = "0.4.2"
 glyphon = "0.11.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
 layershellev = "0.18.1"
@@ -50,6 +51,8 @@ clap = { version = "4.6.1", features = ["derive"] }
 raw-window-handle = "0.6.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
+sha1 = "0.11.0"
+sha2 = "0.11.0"
 thiserror = "2.0.18"
 tokio = { version = "1.48.0", features = ["rt", "sync", "time", "macros"] }
 toml = "1.1.2"

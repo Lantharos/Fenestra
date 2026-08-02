@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish the public Fenestra crates to crates.io in dependency order.
+# Publish the public Mullion crates to crates.io in dependency order.
 #
 # Usage:
 #   scripts/publish.sh                # publish all publishable crates
@@ -28,14 +28,16 @@ done
 
 # Publishable crates in dependency order.
 CRATES=(
-  fenestra-platform
-  fenestra-runtime
-  fenestra-cli
-  fenestra-cef
+  mullion-platform
+  mullion-runtime
+  mullion-bridge
+  mullion-service
+  mullion
+  mullion-cli
 )
 
 if [[ -n "$DRY_RUN" || -n "$PACKAGE_ONLY" ]]; then
-  echo "package-only run for ${#CRATES[@]} fenestra crates:"
+  echo "package-only run for ${#CRATES[@]} mullion crates:"
   printf '  - %s\n' "${CRATES[@]}"
   echo
   # Package all crates in a single `cargo package` invocation. This is
@@ -44,7 +46,7 @@ if [[ -n "$DRY_RUN" || -n "$PACKAGE_ONLY" ]]; then
   # more than one package is being packaged in the same call (see the
   # `do_package` function in cargo's `cargo_package` source — the overlay
   # is gated on `deps.has_dependencies()`). Per-crate calls like
-  # `cargo package -p fenestra-cli` would try to resolve `fenestra-runtime`
+  # `cargo package -p mullion-cli` would try to resolve `mullion-runtime`
   # against crates.io and fail because we haven't published it yet.
   package_args=()
   for crate in "${CRATES[@]}"; do
@@ -52,11 +54,11 @@ if [[ -n "$DRY_RUN" || -n "$PACKAGE_ONLY" ]]; then
   done
   cargo package "${package_args[@]}" "${CARGO_EXTRA[@]}"
   echo
-  echo "all fenestra crates packaged. run without --dry-run/--package-only to publish."
+  echo "all mullion crates packaged. run without --dry-run/--package-only to publish."
   exit 0
 fi
 
-echo "publishing ${#CRATES[@]} fenestra crates in dependency order:"
+echo "publishing ${#CRATES[@]} mullion crates in dependency order:"
 printf '  - %s\n' "${CRATES[@]}"
 echo
 
@@ -69,10 +71,10 @@ echo
 #
 # The default max attempts is high enough to ride out a multi-hour crates.io
 # rate-limit cooldown (which can be 30+ minutes for new accounts). Override
-# with FENESTRA_PUBLISH_MAX_ATTEMPTS.
+# with MULLION_PUBLISH_MAX_ATTEMPTS.
 publish_crate() {
   local crate="$1"
-  local max_attempts="${FENESTRA_PUBLISH_MAX_ATTEMPTS:-20}"
+  local max_attempts="${MULLION_PUBLISH_MAX_ATTEMPTS:-20}"
   local attempt=0
   local out status
 
@@ -149,4 +151,4 @@ for crate in "${CRATES[@]}"; do
 done
 
 echo
-echo "all fenestra crates published."
+echo "all mullion crates published."

@@ -1,483 +1,152 @@
-# Fenestra Implementation Guide
+# Mullion implementation guide
 
-Fenestra is the shared web runtime manager and embedded CEF webview system. Use it when an app wants
-HTML/CSS/JS UI with a Rust host, local runtime resolution, native desktop services, and a strict
-bridge. Fenestra does not depend on Stuk; Stuk apps wire into Fenestra via `FenestraWindow` from
-`fenestra-cef`.
+This document describes the current architecture and the boundaries contributors should preserve.
 
-## Crate Map
+## Process model
 
-| Crate | Owns |
-| --- | --- |
-| `fenestra-runtime` | CEF runtime discovery, user-local installs, package metadata, pruning, and validation |
-| `fenestra-cef` | CEF window launch, OSR native host, bridge dispatch, lifecycle, activity leases, desktop services |
-| `fenestra-webview2` | WebView2 (Evergreen) backend for Windows: winit + `webview2-com 0.36`, bridge install via `AddScriptToExecuteOnDocumentCreated`, `add_NavigationStarting` for `fenestra://` URL interception, DWM backdrop / glass, dev-server probing |
-| `fenestra-cli` | `fenestra new`, source installs, runtime commands, and bundle staging |
+A Mullion app can run in three modes from the same executable:
 
-Runtime files are user-local by default:
+1. The normal app process configures `MullionWindow`, native services, bridge commands, and policy.
+2. The bootstrap child displays native progress while installing the shared runtime.
+3. The OSR native-host child owns the winit window, wgpu renderer, input, composition, and CEF helper.
 
-```txt
-~/.local/share/fenestra/runtimes/cef/
-```
+Every app must call `run_mullion_host_from_args` before constructing its normal application state.
+This dispatches internal child modes without requiring an additional app-specific executable.
 
-Apps can use a system runtime, a bundled runtime, or a user-local runtime. If a client CEF runtime is
-missing and user installs are allowed, Fenestra installs into the user-local runtime directory rather
-than system-wide.
+The CEF helper is built from the C++ source embedded in the `mullion` crate. It always enables
+windowless rendering and always creates `MullionOsrHandler`; there is no windowed CEF handler.
 
-## Standalone Window
+## Paint and composition
 
-Use `FenestraWindow` for a pure Fenestra app:
+CEF emits BGRA dirty rectangles. The native host retains a backing store per surface and patches only
+the changed ranges. Each surface is then uploaded to an independent GPU texture:
 
-```rust
-use fenestra_cef::{
-    FenestraResult, FenestraWindow, FenestraWindowChrome, WindowBackgroundEffect, WindowRegion,
-};
+- main page
+- popup overlay
+- one texture per guest
 
-fn main() -> FenestraResult<()> {
-    if fenestra_cef::run_fenestra_host_from_args(&std::env::args().collect::<Vec<_>>()) {
-        return Ok(());
-    }
+The display list damages the union of the old and new bounds when a primitive changes. Resize waits
+for a correctly sized CEF paint rather than stretching a stale frame indefinitely.
 
-    let process = FenestraWindow::new()
-        .app_id("com.example.notes")
-        .title("Notes")
-        .entry("ui/dist/index.html")
-        .dev_server("http://localhost:5173")
-        .fenestra_chrome()
-        .glass()
-        .blur_region(WindowRegion::rounded_rect(280, 720, 14))
-        .launch_or_install()?;
+Transport is platform-specific without changing the protocol:
 
-    process.wait()?;
-    Ok(())
-}
-```
-
-Window modes:
-
-| Builder | Result |
-| --- | --- |
-| `system_chrome()` | Normal OS/window-manager decorations |
-| `fenestra_chrome()` | Fenestra-owned OSR native window with built-in titlebar |
-| `frameless()` | Undecorated OSR window; app supplies controls and drag regions |
-| `frameless().glass()` | Transparent OSR window with compositor blur/materials |
-| `shell_surface(...)` | Layer-shell surface for palette/panel-style Linux surfaces |
-
-Declare drag and control regions when the web UI owns the titlebar:
-
-```rust
-FenestraWindow::new()
-    .frameless()
-    .titlebar_drag_region(42)
-    .control_region(FenestraWindowControlAction::Close, WindowRegionRect::new(-44, 8, 28, 28));
-```
-
-## Dev Workflow
-
-For Vite-style apps:
-
-```rust
-FenestraWindow::new()
-    .entry("ui/dist/index.html")
-    .vite_dev_server(5173);
-```
-
-`dev_server(...)` waits for loopback variants including `localhost`, `127.0.0.1`, and `::1`, so
-normal Vite/Bun workflows do not need host workarounds.
-
-`dev_url(...)` is a development override. If both `url(...)` and `dev_url(...)` are set, Fenestra
-loads the dev URL while developing and keeps the production URL for packaged/runtime config:
-
-```rust
-FenestraWindow::new()
-    .url("https://raday.lantharos.com")
-    .dev_url("http://localhost:5173")
-    .dev_command("bun run dev -- --host localhost --port 5173 --strictPort");
-```
-
-On CEF/Linux, `dev_url(...)` also enables Chrome remote debugging on port 9222 automatically.
-Attach DevTools from Chrome at `chrome://inspect` or open `http://127.0.0.1:9222`.
-Use `.debug(9222)` to force a port, or `.without_debug()` to disable DevTools in dev mode.
-
-Linux CEF builds enable VA-API hardware video decode by default for WebCodecs/MSE.
-Use `.vaapi_hardware_decode(false)` to opt out.
-
-Use source installs for local desktop entries during development:
-
-```sh
-fenestra install
-fenestra update
-fenestra update --all
-```
-
-Use bundling for distributable app trees and native package staging:
-
-```sh
-fenestra bundle . --target portable
-fenestra bundle . --target deb --release
-fenestra bundle . --target appimage
-fenestra bundle . --target dmg --binary target/aarch64-apple-darwin/release/my-app
-fenestra bundle . --target msi --binary target/x86_64-pc-windows-msvc/release/my-app.exe
-```
-
-`Fenestra.toml` can pin web build and package metadata:
-
-```toml
-[app]
-id = "com.example.notes"
-name = "Notes"
-version = "0.1.0"
-icon = "assets/icon.png"
-cargo_manifest = "desktop/Cargo.toml"
-mime_types = ["inode/directory"]
-
-[install]
-command = "cargo run --manifest-path desktop/Cargo.toml --"
-
-[web]
-root = "ui"
-dist = "ui/dist"
-entry = "ui/dist/index.html"
-build = "bun run build"
-```
-
-## Hosted Web Apps
-
-Use `url(...)` for an existing hosted app. This is the normal path for turning a deployed web
-product into a desktop app without copying the web build into the desktop package:
-
-```rust
-let process = FenestraWindow::new()
-    .app_id("com.lantharos.raday")
-    .title("Raday")
-    .url("https://raday.lantharos.com")
-    .dev_url("http://localhost:5173")
-    .allowed_origin("https://preview.raday.lantharos.com")
-    .fenestra_chrome()
-    .launch_or_install()?;
-```
-
-`url(...)`, `remote_url(...)`, and `bundled_url(...)` are aliases for the production web entry.
-Fenestra automatically allows that URL's origin for bridge traffic. `allowed_origin(...)` adds any
-extra origins that are allowed to invoke the bridge.
-
-The web code should be able to run in a normal browser with no desktop APIs:
-
-```ts
-const fenestra = window.fenestra;
-
-export async function invokeDesktop<T>(command: string, payload?: unknown): Promise<T | null> {
-  if (!fenestra?.bridge) {
-    return null;
-  }
-  return fenestra.bridge.invoke(command, payload) as Promise<T>;
-}
-```
-
-For hosted apps, treat the bridge as a privileged desktop-only enhancement. The public website should
-continue to work when `window.fenestra` is absent, and native-only actions should stay behind Rust
-bridge commands with explicit command names and allowed origins.
-
-Remote-only bundle config:
-
-```toml
-[web]
-url = "https://raday.lantharos.com"
-dev_url = "http://localhost:5173"
-allowed_origins = [
-  "https://raday.lantharos.com",
-  "https://preview.raday.lantharos.com",
-  "http://localhost:5173",
-]
-```
-
-When `root`, `dist`, and `entry` are omitted, `fenestra bundle` does not build or copy local web
-assets. Add those fields only when the package should include a local web build.
-
-## Bridge
-
-Register native commands explicitly:
-
-```rust
-let process = FenestraWindow::new()
-    .entry("ui/dist/index.html")
-    .bridge_descriptor_handler(
-        BridgeCommandDescriptor::new("notes.list")
-            .target("desktop")
-            .permission("notes"),
-        |_| Ok(BridgeResponse::json(serde_json::json!([
-            { "id": "1", "title": "Product notes" }
-        ]))),
-    )
-    .launch_or_install()?;
-```
-
-Invoke from web:
-
-```js
-const notes = await window.fenestra.bridge.invoke("notes.list");
-```
-
-Use `BridgeCommandDescriptor` for permissions, target gating, and per-command allowed origins:
-
-```rust
-FenestraWindow::new()
-    .url("https://raday.lantharos.com")
-    .security(WebViewSecurity::default().allow_origin("https://raday.lantharos.com"))
-    .bridge_descriptor_handler(
-        BridgeCommandDescriptor::new("files.pick")
-            .target("desktop")
-            .permission("files")
-            .allowed_origin("https://raday.lantharos.com"),
-        pick_file,
-    );
-```
-
-Keep privileged work in Rust and expose small command surfaces to the web page. If a command needs
-access to the filesystem, credentials, notifications, native messaging, or global shortcuts, it
-should be a Rust command with validation rather than browser-side logic.
-
-## Guest WebViews
-
-Guest webviews are secondary Chromium views hosted inside one Fenestra window.
-Use them for embedded browsing (bookmarks, docs, media sites) without giving
-those pages the privileged `window.fenestra.bridge` surface.
-
-### Create from the app UI
-
-```js
-const guest = await window.fenestra.guest.create({
-  id: "browser-1",
-  url: "https://example.com",
-  x: 280,
-  y: 48,
-  width: 1000,
-  height: 720,
-  partition: "persist:bookmarks",
-  popupPolicy: "deny",
-  allowDownloads: true,
-  allowBridge: false,
-});
-
-window.fenestra.bridge.listen("guest.navigated", (event) => {
-  console.log(event.id, event.url, event.title);
-});
-
-window.fenestra.bridge.listen("guest.download", async (event) => {
-  if (event.state !== "requested") return;
-  await window.fenestra.guest.downloadAction(event.downloadId, "accept", {
-    savePath: `/tmp/${event.filename}`,
-  });
-});
-```
-
-### Commands
-
-| Command | Purpose |
-| --- | --- |
-| `fenestra.guest.create` | Create a guest (`url` or `html`, bounds, partition, policies) |
-| `fenestra.guest.destroy` | Close a guest |
-| `fenestra.guest.navigate` | Load a URL |
-| `fenestra.guest.setBounds` | Move/resize relative to the host client area |
-| `fenestra.guest.setVisible` | Show or hide |
-| `fenestra.guest.focus` | Focus the guest |
-| `fenestra.guest.reload` / `goBack` / `goForward` | Navigation |
-| `fenestra.guest.setZoom` | Zoom factor |
-| `fenestra.guest.executeJavaScript` | Run script in the guest (still no privileged bridge) |
-| `fenestra.guest.downloadAction` | `accept` / `cancel` / `pause` / `resume` a download |
-| `fenestra.guest.list` / `get` | Snapshot guests |
-
-### Events
-
-`guest.created`, `guest.destroyed`, `guest.navigated`, `guest.loading`,
-`guest.title`, `guest.newWindow`, `guest.download`.
-
-### Popup policy
-
-`popupPolicy` controls `window.open` / `target=_blank` inside a guest:
-
-| Value | Behavior |
-| --- | --- |
-| `deny` (default) | Cancel and emit `guest.newWindow` |
-| `allow` | Let Chromium open a native popup |
-| `navigateSame` | Navigate the same guest |
-| `openGuest` | Spawn another guest with the same partition |
-
-### Security
-
-- Guests do **not** get `window.fenestra` unless `allowBridge: true`.
-- Partitions isolate cookies and cache (`guest:<id>` by default).
-- Prefer keeping privileged work on the primary page + Rust bridge commands.
-
-### Platform notes
-
-| Platform | Backend | Guest compositing |
+| Platform | Transport | Large paint path |
 | --- | --- | --- |
-| Windows | WebView2 | Child HWND + extra `ICoreWebView2Controller` per guest |
-| Linux (OSR / frameless) | CEF windowless | Named overlay textures in the OSR host |
-| Linux (windowed) / macOS | CEF Alloy | Child browsers via `SetAsChild` when the host window is available; OSR is preferred for multi-guest overlays |
+| Linux | Unix domain socket | memfd plus descriptor passing |
+| macOS | Unix domain socket | inline dirty-rect batch |
+| Windows | localhost TCP | inline dirty-rect batch |
 
-OSR guests are composited above the primary page. Use `fenestra.guest.setCovered`
-while a primary-page dialog or menu needs to cover them.
+The portable paths still send only dirty rectangles. A future native shared-handle transport can be
+added behind the same message kinds without changing app code.
 
-`fenestra.popup.open` / `close` remain supported and map to the reserved guest id
-`__fenestra_popup`.
+Linux layer-shell surfaces use their dedicated host because layer-shell configuration must happen
+before a regular winit surface is created. Other platforms express palette behavior with a normal
+frameless, always-on-top, hide-on-blur window.
 
-## Activity Leases
+## Runtime ownership
 
-Hidden UI can be throttled or hibernated, but Fenestra must not hibernate while active work is in
-progress. Long-running jobs should usually live on the Rust side; leases tell Fenestra that work is
-active and hibernation must wait.
+`mullion-runtime` is the only crate allowed to decide runtime locations, versions, download archives,
+integrity, install locks, and pruning. The runtime is always CEF. WebView2 is not an alternate backend or a
+fallback.
 
-Rust-side lease:
+An install has these phases:
 
-```rust
-let lease = process.begin_activity("backup.sync");
-run_backup_job()?;
-lease.end();
+```text
+plan -> lock -> download -> SHA-1 verify -> extract -> atomic version install -> ready
 ```
 
-Use a non-blocking lease for diagnostics or status-only activity:
+The Spotify CEF index supplies archive metadata and checksums. Runtime versions are immutable
+directories, allowing existing apps to finish on an older version while the service installs a newer
+one. Runtime and CEF-host builds have independent stale-aware locks.
 
-```rust
-let lease = process.begin_activity_with(
-    ActivityOptions::new("metrics.flush").prevents_hibernation(false),
-);
+`mullion-service` owns the machine/user-level catalog. Its registry writes use a temporary file,
+`sync_all`, and atomic rename. Re-registering an app preserves its original registration timestamp.
+The maintenance loop updates CEF to the newest compatible archive and keeps two runtime versions.
+
+## Public API
+
+The primary API is a fluent `MullionWindow` builder. Configuration is grouped by concern even though
+the builder keeps common cases one method away:
+
+- content: local entry, production URL, dev URL and command
+- window: size, chrome, visibility, transparency, blur and control regions
+- browser: Chromium flags, devtools, profiles and security
+- bridge: descriptors, sync handlers and async handlers
+- lifecycle: foreground/background rates, suspend and hibernate policy
+- services: tray, autostart, shortcuts, deep links, native messaging and single instance
+- runtime: package, minimum version, bundled/shared policy
+
+The API deliberately avoids backend types. `ChromiumOptions` contains browser-process tuning; apps do
+not select a renderer.
+
+## Bridge security
+
+Bridge commands must be registered before launch. Each command can constrain targets and origins.
+The host rejects unknown commands, invalid targets, and origins outside the configured allowlist.
+
+Local `file://` application content is trusted by default. Remote content is not implicitly trusted.
+Calling `.url(...)` adds that URL's exact origin; development URLs add loopback variants needed by
+local toolchains.
+
+Guests default to `allow_bridge = false`. A guest gets an isolated request context when it declares a
+partition. Popup policy, download policy, visibility, bounds, intercepted shortcuts, and horizontal
+wheel interception are all explicit guest properties.
+
+The web bridge exposes:
+
+```text
+window.mullion.bridge
+window.mullion.window
+window.mullion.lifecycle
+window.mullion.activity
+window.mullion.guest
 ```
 
-Web-side lease:
+## Lifecycle and performance
 
-```js
-const lease = await window.fenestra.activity.begin({
-  name: "ai.indexing",
-  preventsHibernation: true,
-});
+Mullion distinguishes active, background, suspended, hibernating, and hibernated states. Activity
+leases allow durable Rust work or page work to block hibernation while it is genuinely active.
 
-try {
-  await runIndexing();
-} finally {
-  await lease.end();
-}
-```
+Rules for renderer changes:
 
-Activity leases are not a replacement for durable workers. If a task must survive window closure,
-network loss, or app restart, move it to a Rust worker and persist progress.
+- never replace damage tracking with unconditional full-frame uploads
+- retain the last frame only when the selected lifecycle policy asks for it
+- keep hidden palette windows warm unless memory-saver policy opts into hibernation
+- do not poll when a native event or deadline can wake the event loop
+- keep bridge and paint traffic off the UI thread except for final state application
 
-## Lifecycle
+## Desktop services
 
-Lifecycle policy controls rendering and hibernation:
+Desktop service configuration belongs to the window so an app has one declarative startup surface.
+Implementations must degrade by reporting unsupported capabilities, not by silently changing the app
+model.
 
-```rust
-FenestraWindow::new()
-    .hidden()
-    .hide_on_blur(true)
-    .background_frame_rate(1)
-    .hibernate_after(Duration::from_secs(300));
-```
+Current primitives cover tray menus, autostart, global shortcuts, deep links, native messaging,
+single-instance activation, hidden windows, always-on-top windows, and palette behavior. Native
+platform registration belongs in `mullion-platform` or `mullion-service`; CEF code must not own it.
 
-Defaults are palette-friendly: hidden windows suspend and throttle but stay warm. To trade instant
-resume for lower memory, opt in:
+## Bundles and installs
 
-```rust
-FenestraWindow::new()
-    .hidden()
-    .lifecycle_policy(FenestraLifecyclePolicy::memory_saver_hidden_window());
-```
+The CLI reads `Mullion.toml`, builds web assets, builds the selected Rust package, stages the runtime
+layout, writes platform metadata, and invokes a local package tool when available.
 
-Web lifecycle events:
+Supported targets are portable, Linux directory, deb, rpm, AppImage, Windows directory, exe, msi,
+macOS app, and dmg. Cross-host staging is allowed; signing and notarization remain deployment policy.
 
-```js
-window.fenestra.lifecycle.listen(({ state, reason }) => {});
-window.addEventListener("fenestra:suspend", event => {});
-window.addEventListener("fenestra:resume", event => {});
-window.addEventListener("fenestra:hibernate", event => {});
-```
+Source installs are development conveniences. They stage assets and a launcher under the Mullion data
+directory, register the app with the service, and create platform launch metadata.
 
-## Desktop Services
+## Validation
 
-Desktop integrations are declared on the window:
-
-```rust
-FenestraWindow::new()
-    .tray_icon(TrayIcon::new("main", "Notes"))
-    .autostart(AutostartEntry::new("notes", "Notes", "notes --background"))
-    .global_shortcut(GlobalShortcutRegistration::new("show", "Ctrl+Space"))
-    .single_instance(SingleInstancePolicy::FocusExisting);
-```
-
-Events are forwarded to web as `fenestra:*` events and can also be polled from Rust with
-`take_desktop_events()`.
-
-## Runtime And Bundling
-
-Fenestra checks runtime sources in this order:
-
-| Source | Use |
-| --- | --- |
-| System runtime | Already-installed compatible CEF runtime |
-| User-local runtime | Shared runtime under `~/.local/share/fenestra/runtimes/cef/` |
-| Bundled runtime | App-provided runtime for offline/self-contained packages |
-| Installer | User-local runtime download when no compatible runtime is present |
-
-The runtime is shared, but app cache profiles are isolated per app/window so multiple desktop apps
-can run at the same time without Chromium process-singleton collisions.
-
-Bundling can stage native package trees from one host:
+After code changes run:
 
 ```sh
-fenestra bundle . --target portable
-fenestra bundle . --target deb --release
-fenestra bundle . --target rpm --release
-fenestra bundle . --target appimage --release
-fenestra bundle . --target dmg --binary target/aarch64-apple-darwin/release/raday
-fenestra bundle . --target msi --binary target/x86_64-pc-windows-msvc/release/raday.exe
+cargo fmt
+cargo build --workspace
+cargo test --workspace
+cargo check --target x86_64-pc-windows-gnu --workspace
 ```
 
-Native binaries, signing, notarization, and installer signing still need the relevant platform
-toolchain and credentials. `--binary` packages a binary built by CI or a cross-compile step.
-
-## Platform Notes
-
-Fenestra exposes one cross-platform builder, `FenestraWindow`, on every supported target. The
-backend is CEF on Linux and macOS, and WebView2 (Evergreen) on Windows. The public API does not
-change between platforms.
-
-| Platform | Backend | Status |
-| --- | --- | --- |
-| Linux | CEF with OSR native host (Wayland-first) | Full transparency, blur, glass, shell surfaces |
-| Windows | WebView2 (Evergreen) via winit + `webview2-com 0.36` | System chrome, frameless drag/control regions, DWM Acrylic/Mica/MicaAlt glass, bridge, resize sync, stable profiles |
-| macOS  | CEF windowed | System chrome, frameless, dev workflow, runtime install |
-
-On Windows, `FenestraWindow` is a type alias to `fenestra_webview2::WebView2Window`. App code on
-every host imports `fenestra_cef::FenestraWindow`; the CEF crate owns the alias and points it at
-the right backend for the host target. The WebView2 backend uses the same `fenestra-bridge`
-protocol as the CEF backend: `add_NavigationStarting` cancels `fenestra://bridge/...` and
-`fenestra://window/...` URLs, the bridge install script is registered once via
-`ICoreWebView2::AddScriptToExecuteOnDocumentCreated`, and bridge responses / activity emits are
-posted to the page via `ICoreWebView2::ExecuteScript`. Glass windows set
-`WEBVIEW2_DEFAULT_BACKGROUND_COLOR=0`, clear the host brush, extend the DWM frame, and apply
-Acrylic / Mica / MicaAlt system backdrops so the page composites over the desktop material.
-
-Desktop services (tray, global shortcuts, autostart, deep links, native messaging, single-instance)
-are wired on Linux, Windows, and macOS. Shell surfaces / Wayland compositor regions remain
-Linux-only.
-
-`fenestra-cef` keeps Linux-only crates (`layershellev`, `ksni`, `ashpd`, `wayland-client`, `x11rb`)
-behind `cfg(target_os = "linux")` so a downstream app can build for Windows and macOS without
-pulling those dependencies. `fenestra-webview2` is gated to `cfg(target_os = "windows")` and ships
-a non-Windows stub so the workspace still builds for cross-platform testing on Linux.
-
-CEF host build:
-
-- `~/.local/share/fenestra/runtimes/cef/<version>-<package>/` on Linux
-- `%LOCALAPPDATA%\fenestra\runtimes\cef\...` on Windows (via `HOME` fallback during cross-platform testing)
-- `~/Library/Application Support/fenestra/runtimes/cef/...` on macOS
-
-Fenestra builds a small CEF host binary from `host/shared/` on every platform. The host build needs
-CMake plus a platform compiler toolchain (Ninja or Visual Studio on Windows, Xcode Command Line
-Tools on macOS, GCC/Clang on Linux). Linux-only macros such as `SET_LINUX_SUID_PERMISSIONS` are
-conditioned on `OS_LINUX` inside the CMake file.
-
-Do not switch to system webviews for cross-platform consistency. If a platform ever needs another
-backend, it should still preserve the Fenestra bridge, lifecycle, activity, runtime, and window
-APIs.
+The Windows cross-check validates Rust cfg coverage. A release still needs a native Windows CEF-host
+build and an actual GPU/input smoke test. The same rule applies to macOS. Linux tests do not prove
+Windows or macOS composition behavior.
