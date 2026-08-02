@@ -26,7 +26,6 @@
 #include "guest_manager.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
-#include "include/cef_image.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context_handler.h"
 #include "include/cef_task.h"
@@ -51,49 +50,6 @@ struct PaintRectBytes {
   uint64_t offset = 0;
   uint32_t len = 0;
 };
-
-bool GuestSnapshotJson(const void* buffer,
-                       int width,
-                       int height,
-                       std::string* result,
-                       std::string* error) {
-  if (!buffer || width <= 0 || height <= 0) {
-    *error = "guest has no frame to capture";
-    return false;
-  }
-  const uint64_t byte_count =
-      static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * 4;
-  if (byte_count > std::numeric_limits<size_t>::max()) {
-    *error = "guest frame is too large to capture";
-    return false;
-  }
-
-  CefRefPtr<CefImage> image = CefImage::CreateImage();
-  if (!image ||
-      !image->AddBitmap(1.0f, width, height, CEF_COLOR_TYPE_BGRA_8888,
-                        CEF_ALPHA_TYPE_PREMULTIPLIED, buffer,
-                        static_cast<size_t>(byte_count))) {
-    *error = "failed to create the guest preview image";
-    return false;
-  }
-
-  int png_width = 0;
-  int png_height = 0;
-  CefRefPtr<CefBinaryValue> png =
-      image->GetAsPNG(1.0f, true, png_width, png_height);
-  if (!png || png->GetSize() == 0) {
-    *error = "failed to encode the guest preview image";
-    return false;
-  }
-  std::vector<uint8_t> bytes(png->GetSize());
-  if (png->GetData(bytes.data(), bytes.size(), 0) != bytes.size()) {
-    *error = "failed to read the guest preview image";
-    return false;
-  }
-  *result = "{\"dataUrl\":\"data:image/png;base64," +
-            CefBase64Encode(bytes.data(), bytes.size()).ToString() + "\"}";
-  return true;
-}
 
 int SwitchInt(CefRefPtr<CefCommandLine> command_line,
               const std::string& name,
@@ -1163,19 +1119,6 @@ void FenestraOsrHandler::OnPaint(CefRefPtr<CefBrowser> browser,
         EmitBridgeEvent("\"popup.open\"", "{}");
       }
     }
-    auto captures = pending_guest_captures_.find(guest->id);
-    if (captures != pending_guest_captures_.end()) {
-      std::vector<PendingGuestCapture> requests = std::move(captures->second);
-      pending_guest_captures_.erase(captures);
-      std::string result;
-      std::string error;
-      const bool success =
-          GuestSnapshotJson(buffer, width, height, &result, &error);
-      for (const PendingGuestCapture& request : requests) {
-        ResolveBridgeResponse(request.browser_id, request.request_id, success,
-                              success ? result : JsonMessage(error));
-      }
-    }
     if (guest->visible) {
       SendGuestPaint(*guest, buffer, width, height, dirtyRects);
     }
@@ -1184,10 +1127,19 @@ void FenestraOsrHandler::OnPaint(CefRefPtr<CefBrowser> browser,
   if (suspended_ || !browser_ || !browser_->IsSame(browser)) {
     return;
   }
-	  const uint32_t kind = type == PET_POPUP ? kPopupFrame : kMainFrame;
+  const uint32_t kind = type == PET_POPUP ? kPopupFrame : kMainFrame;
   const int32_t x = type == PET_POPUP ? popup_rect_.x : 0;
   const int32_t y = type == PET_POPUP ? popup_rect_.y : 0;
-  SendPaintBatch(kind, std::string(), x, y, buffer, width, height, dirtyRects);
+  const bool sent =
+      SendPaintBatch(kind, std::string(), x, y, buffer, width, height, dirtyRects);
+  if (sent && type == PET_VIEW && pending_guest_cover_ && guests_.Covered()) {
+    pending_guest_cover_ = false;
+    for (GuestView* guest : guests_.InZOrder()) {
+      if (guest->visible) {
+        SendGuestHidden(*guest);
+      }
+    }
+  }
 }
 
 namespace {
@@ -1306,6 +1258,14 @@ void FenestraOsrHandler::UpdateDragCursor(CefRefPtr<CefBrowser> browser,
 
 void FenestraOsrHandler::HandleControlLine(const std::string& line) {
   CEF_REQUIRE_UI_THREAD();
+  std::string browser_id;
+  std::string request_id;
+  std::string payload;
+  bool ok = false;
+  if (ParseBridgeResponse(line, &browser_id, &request_id, &ok, &payload)) {
+    ResolveBridgeResponse(browser_id, request_id, ok, payload);
+    return;
+  }
   const auto parts = Split(line, '\t');
   if (parts.empty() || !browser_) {
     return;
@@ -1743,25 +1703,9 @@ bool FenestraOsrHandler::HasPendingGuest(const std::string& id) const {
   return false;
 }
 
-void FenestraOsrHandler::FailPendingGuestCaptures(
-    const std::string& id,
-    const std::string& error) {
-  auto pending = pending_guest_captures_.find(id);
-  if (pending == pending_guest_captures_.end()) {
-    return;
-  }
-  std::vector<PendingGuestCapture> requests = std::move(pending->second);
-  pending_guest_captures_.erase(pending);
-  for (const PendingGuestCapture& request : requests) {
-    ResolveBridgeResponse(request.browser_id, request.request_id, false,
-                          JsonMessage(error));
-  }
-}
-
 void FenestraOsrHandler::DestroyGuest(const std::string& id) {
   CEF_REQUIRE_UI_THREAD();
   const bool canceled = CancelPendingGuest(id);
-  FailPendingGuestCaptures(id, "guest was destroyed before capture completed");
   GuestView* guest = guests_.Find(id);
   if (!guest) {
     if (canceled) {
@@ -1985,11 +1929,15 @@ bool FenestraOsrHandler::RunGuestOperation(const std::string& operation,
       return true;
     }
     guests_.SetCovered(covered);
+    pending_guest_cover_ = covered;
     if (covered) {
       FocusGuest(std::string());
     }
     for (GuestView* guest : guests_.InZOrder()) {
       ApplyGuestVisibility(*guest);
+    }
+    if (covered && browser_) {
+      browser_->GetHost()->Invalidate(PET_VIEW);
     }
     return true;
   }
@@ -2173,9 +2121,16 @@ bool FenestraOsrHandler::HandleGuestBridgeCommand(const std::string& command,
                             JsonMessage("guest browser is not visible"));
       return true;
     }
-    pending_guest_captures_[id].push_back(
-        PendingGuestCapture{browser_id, request_id});
-    guest->browser->GetHost()->Invalidate(PET_VIEW);
+    std::string request = browser_id;
+    request.push_back('\0');
+    request += request_id;
+    request.push_back('\0');
+    request += id;
+    if (!SendMessage(kGuestCaptureRequested, 0, 0, 0, 0, request.data(),
+                     static_cast<uint32_t>(request.size()))) {
+      ResolveBridgeResponse(browser_id, request_id, false,
+                            JsonMessage("failed to request guest capture"));
+    }
     return true;
   }
   std::string response;

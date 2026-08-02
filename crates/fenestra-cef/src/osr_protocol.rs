@@ -41,6 +41,7 @@ const KIND_GUEST_BATCH: u32 = 18;
 const KIND_GUEST_SHARED_BATCH: u32 = 19;
 const KIND_GUEST_HIDDEN: u32 = 20;
 const KIND_DRAGGABLE_REGIONS_CHANGED: u32 = 21;
+const KIND_GUEST_CAPTURE_REQUESTED: u32 = 22;
 const BATCH_ENTRY_LEN: usize = 28;
 
 pub(crate) const MAIN_TEXTURE_ID: &str = "__stuk_fenestra_main";
@@ -55,6 +56,11 @@ pub(crate) enum OsrMessage {
     PopupHidden,
     /// Hide a guest overlay by id.
     GuestHidden(String),
+    GuestCaptureRequested {
+        browser_id: String,
+        request_id: String,
+        guest_id: String,
+    },
     DraggableRegionsChanged {
         drag: Vec<WindowRegionRect>,
         exclusion: Vec<WindowRegionRect>,
@@ -103,8 +109,7 @@ pub(crate) enum OsrSurface {
     Main,
     /// Legacy popup overlay (also addressable as guest id `__fenestra_popup`).
     Popup,
-    /// Named guest overlay composited under the main surface (primary HTML
-    /// alpha-blends on top for dialogs). Legacy popup stays above main.
+    /// Named guest overlay composited above the main surface.
     Guest(String),
 }
 
@@ -115,10 +120,6 @@ impl OsrSurface {
             Self::Popup => Some(POPUP_OVERLAY_ID),
             Self::Guest(id) => Some(id.as_str()),
         }
-    }
-
-    pub(crate) fn is_overlay(&self) -> bool {
-        !matches!(self, Self::Main)
     }
 }
 
@@ -195,6 +196,27 @@ pub(crate) fn read_message(reader: &mut UnixStream) -> io::Result<Option<OsrMess
         KIND_GUEST_HIDDEN => {
             close_optional_fd(fd);
             OsrMessage::GuestHidden(String::from_utf8(payload).unwrap_or_default())
+        }
+        KIND_GUEST_CAPTURE_REQUESTED => {
+            close_optional_fd(fd);
+            let mut parts = payload.splitn(3, |byte| *byte == 0);
+            let browser_id = String::from_utf8(parts.next().unwrap_or_default().to_vec())
+                .unwrap_or_default();
+            let request_id = String::from_utf8(parts.next().unwrap_or_default().to_vec())
+                .unwrap_or_default();
+            let guest_id = String::from_utf8(parts.next().unwrap_or_default().to_vec())
+                .unwrap_or_default();
+            if browser_id.is_empty() || request_id.is_empty() || guest_id.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid guest capture request",
+                ));
+            }
+            OsrMessage::GuestCaptureRequested {
+                browser_id,
+                request_id,
+                guest_id,
+            }
         }
         KIND_DRAGGABLE_REGIONS_CHANGED => {
             close_optional_fd(fd);

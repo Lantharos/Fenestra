@@ -33,6 +33,7 @@ constexpr uint32_t kGuestBatch = 18;
 constexpr uint32_t kGuestSharedBatch = 19;
 constexpr uint32_t kGuestHidden = 20;
 constexpr uint32_t kDraggableRegionsChanged = 21;
+constexpr uint32_t kGuestCaptureRequested = 22;
 
 class FenestraOsrHandler : public CefClient,
                        public CefContextMenuHandler,
@@ -170,11 +171,6 @@ class FenestraOsrHandler : public CefClient,
     GuestCreateCallback callback;
   };
 
-  struct PendingGuestCapture {
-    std::string browser_id;
-    std::string request_id;
-  };
-
   friend class FenestraGuestRequestContextHandler;
 
   bool ConnectSocket();
@@ -230,8 +226,6 @@ class FenestraOsrHandler : public CefClient,
       CefRefPtr<CefRequestContext> context);
   bool CancelPendingGuest(const std::string& id);
   bool HasPendingGuest(const std::string& id) const;
-  void FailPendingGuestCaptures(const std::string& id,
-                                const std::string& error);
   void DestroyGuest(const std::string& id);
   void FocusGuest(const std::string& id);
   void DismissPopupGuest();
@@ -266,13 +260,12 @@ class FenestraOsrHandler : public CefClient,
   std::map<std::string, CefRefPtr<CefRequestContext>> guest_contexts_;
   std::set<std::string> initialized_guest_contexts_;
   std::map<std::string, std::vector<PendingGuestCreate>> pending_guest_creates_;
-  std::map<std::string, std::vector<PendingGuestCapture>>
-      pending_guest_captures_;
   std::map<std::string, GuestDownload> downloads_;
   int guest_serial_ = 0;
 	  std::set<std::string> bridge_commands_;
 	  bool transparent_background_ = false;
 	  bool suspended_ = false;
+	  bool pending_guest_cover_ = false;
 	  int active_frame_rate_ = 60;
 	  int background_frame_rate_ = 5;
 	  bool closing_ = false;

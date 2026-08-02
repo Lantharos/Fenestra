@@ -43,6 +43,10 @@ use crate::{
         read_message, rects_from_json, regions_from_json, shell_surface_from_json,
     },
 };
+use image::{
+    ExtendedColorType, ImageEncoder,
+    codecs::png::{CompressionType, FilterType, PngEncoder},
+};
 
 struct OverlayLayer {
     frame: OsrFrame,
@@ -605,6 +609,27 @@ impl OsrNativeHost {
         }
     }
 
+    fn capture_guest(&self, browser_id: &str, request_id: &str, guest_id: &str) {
+        let result = self
+            .overlays
+            .get(guest_id)
+            .ok_or_else(|| "guest has no frame to capture".to_string())
+            .and_then(|overlay| {
+                guest_preview_data_url(
+                    overlay.buffer.bytes(),
+                    overlay.frame.width,
+                    overlay.frame.height,
+                )
+            });
+        let (status, payload) = match result {
+            Ok(data_url) => ("ok", serde_json::json!({ "dataUrl": data_url })),
+            Err(message) => ("error", serde_json::json!({ "message": message })),
+        };
+        self.send_control(&format!(
+            "FENESTRA_BRIDGE_RESPONSE\t{browser_id}\t{request_id}\t{status}\t{payload}\n"
+        ));
+    }
+
     fn send_lifecycle(&self, state: LifecycleState, reason: &str) {
         let (name, frame_rate) = match state {
             LifecycleState::Active => ("active", self.active_frame_rate()),
@@ -788,6 +813,11 @@ impl OsrNativeHost {
                         needs_redraw = true;
                     }
                 }
+                OsrHostEvent::Message(OsrMessage::GuestCaptureRequested {
+                    browser_id,
+                    request_id,
+                    guest_id,
+                }) => self.capture_guest(&browser_id, &request_id, &guest_id),
                 OsrHostEvent::Message(OsrMessage::DraggableRegionsChanged { drag, exclusion }) => {
                     self.page_drag_regions = drag;
                     self.page_drag_exclusion_regions = exclusion;
@@ -1554,6 +1584,66 @@ impl OsrNativeHost {
             );
         }
     }
+}
+
+pub(crate) fn guest_preview_data_url(
+    bytes: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<String, String> {
+    let expected_len = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "guest frame is too large to capture".to_string())?;
+    if width == 0 || height == 0 || bytes.len() != expected_len {
+        return Err("guest has no frame to capture".to_string());
+    }
+    let mut rgba = Vec::with_capacity(expected_len);
+    for pixel in bytes.chunks_exact(4) {
+        let alpha = u16::from(pixel[3]);
+        if alpha == 0 {
+            rgba.extend_from_slice(&[0, 0, 0, 0]);
+        } else {
+            let unpremultiply = |channel: u8| {
+                ((u16::from(channel) * 255 + alpha / 2) / alpha).min(255) as u8
+            };
+            rgba.extend_from_slice(&[
+                unpremultiply(pixel[2]),
+                unpremultiply(pixel[1]),
+                unpremultiply(pixel[0]),
+                pixel[3],
+            ]);
+        }
+    }
+    let mut png = Vec::new();
+    PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::Sub)
+        .write_image(&rgba, width, height, ExtendedColorType::Rgba8)
+        .map_err(|error| format!("failed to encode guest preview: {error}"))?;
+    Ok(format!("data:image/png;base64,{}", base64_encode(&png)))
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let value = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        encoded.push(ALPHABET[((value >> 18) & 0x3f) as usize] as char);
+        encoded.push(ALPHABET[((value >> 12) & 0x3f) as usize] as char);
+        encoded.push(if chunk.len() > 1 {
+            ALPHABET[((value >> 6) & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+        encoded.push(if chunk.len() > 2 {
+            ALPHABET[(value & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    encoded
 }
 
 impl ApplicationHandler for OsrNativeHost {

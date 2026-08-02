@@ -22,7 +22,7 @@ use wayland_client::{QueueHandle, protocol::wl_buffer::WlBuffer};
 use crate::{
     osr,
     osr_frame_buffer::buffer_len,
-    osr_host::OsrHostConfig,
+    osr_host::{OsrHostConfig, guest_preview_data_url},
     osr_protocol::{OsrFrame, OsrMessage, OsrPaintBatch, OsrSurface},
 };
 
@@ -417,6 +417,27 @@ impl OsrLayerHost {
                 // Wayland shell-surface host currently composites a single overlay
                 // slot (shared with fenestra.popup). GuestHidden clears that slot.
                 self.close_popup(state);
+            }
+            LayerHostEvent::Message(OsrMessage::GuestCaptureRequested {
+                browser_id,
+                request_id,
+                ..
+            }) => {
+                let result = self
+                    .popup
+                    .as_ref()
+                    .and_then(|popup| popup.frame.as_ref().map(|frame| (popup, frame)))
+                    .ok_or_else(|| "guest has no frame to capture".to_string())
+                    .and_then(|(popup, frame)| {
+                        guest_preview_data_url(&popup.buffer, frame.width, frame.height)
+                    });
+                let (status, payload) = match result {
+                    Ok(data_url) => ("ok", serde_json::json!({ "dataUrl": data_url })),
+                    Err(message) => ("error", serde_json::json!({ "message": message })),
+                };
+                self.send_control(&format!(
+                    "FENESTRA_BRIDGE_RESPONSE\t{browser_id}\t{request_id}\t{status}\t{payload}\n"
+                ));
             }
             LayerHostEvent::Message(OsrMessage::DraggableRegionsChanged { .. }) => {}
             LayerHostEvent::Message(OsrMessage::Cursor(cursor)) => {
