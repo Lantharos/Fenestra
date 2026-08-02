@@ -96,7 +96,8 @@ std::string DecodeUriComponent(const std::string& value) {
   return CefURIDecode(
              value, true,
              static_cast<cef_uri_unescape_rule_t>(
-                 UU_SPACES | UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
+                 UU_SPACES | UU_PATH_SEPARATORS |
+                 UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
                  UU_REPLACE_PLUS_WITH_SPACE))
       .ToString();
 }
@@ -1770,13 +1771,16 @@ void FenestraOsrHandler::ApplyGuestVisibility(GuestView& guest) {
     return;
   }
   CefRefPtr<CefBrowserHost> host = guest.browser->GetHost();
-  const bool hidden = !guest.visible || suspended_ || guests_.Covered();
+  const bool explicitly_hidden = !guest.visible || guests_.Covered();
+  const bool hidden = explicitly_hidden || suspended_;
   host->WasHidden(hidden);
   if (!hidden) {
     host->Invalidate(PET_VIEW);
     return;
   }
-  SendGuestHidden(guest);
+  if (explicitly_hidden) {
+    SendGuestHidden(guest);
+  }
   if (!guest.visible && focused_guest_id_ == guest.id) {
     host->SetFocus(false);
     focused_guest_id_.clear();

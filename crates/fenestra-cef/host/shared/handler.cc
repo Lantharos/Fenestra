@@ -47,7 +47,8 @@ std::string DecodeUriComponent(const std::string& value) {
   return CefURIDecode(
              value, true,
              static_cast<cef_uri_unescape_rule_t>(
-                 UU_SPACES | UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
+                 UU_SPACES | UU_PATH_SEPARATORS |
+                 UU_URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
                  UU_REPLACE_PLUS_WITH_SPACE))
       .ToString();
 }
