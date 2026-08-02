@@ -141,7 +141,7 @@ std::string GuestCachePath(const std::string& root_cache_path,
     return "";
   }
   const std::filesystem::path path = std::filesystem::path(root_cache_path) /
-                                     "guests" / SanitizePartition(partition);
+                                     ("guest-" + SanitizePartition(partition));
   std::error_code error;
   std::filesystem::create_directories(path, error);
   if (error) {
