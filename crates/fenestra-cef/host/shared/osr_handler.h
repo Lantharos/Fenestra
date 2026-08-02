@@ -31,11 +31,13 @@ constexpr uint32_t kGuestFrame = 17;
 constexpr uint32_t kGuestBatch = 18;
 constexpr uint32_t kGuestSharedBatch = 19;
 constexpr uint32_t kGuestHidden = 20;
+constexpr uint32_t kDraggableRegionsChanged = 21;
 
 class FenestraOsrHandler : public CefClient,
                        public CefContextMenuHandler,
                        public CefDisplayHandler,
                        public CefDownloadHandler,
+                       public CefDragHandler,
                        public CefLifeSpanHandler,
                        public CefLoadHandler,
                        public CefRenderHandler,
@@ -56,6 +58,7 @@ class FenestraOsrHandler : public CefClient,
   CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+  CefRefPtr<CefDragHandler> GetDragHandler() override { return this; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
@@ -123,6 +126,10 @@ class FenestraOsrHandler : public CefClient,
   void OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
                          CefRefPtr<CefDownloadItem> download_item,
                          CefRefPtr<CefDownloadItemCallback> callback) override;
+  void OnDraggableRegionsChanged(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame,
+      const std::vector<CefDraggableRegion>& regions) override;
 
   bool GetScreenInfo(CefRefPtr<CefBrowser> browser,
                      CefScreenInfo& screen_info) override;
@@ -137,7 +144,7 @@ class FenestraOsrHandler : public CefClient,
                int height) override;
   bool StartDragging(CefRefPtr<CefBrowser> browser,
                      CefRefPtr<CefDragData> drag_data,
-                     DragOperationsMask allowed_ops,
+                     cef_drag_operations_mask_t allowed_ops,
                      int x,
                      int y) override;
   void UpdateDragCursor(CefRefPtr<CefBrowser> browser,

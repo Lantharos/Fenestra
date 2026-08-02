@@ -418,6 +418,7 @@ impl OsrLayerHost {
                 // slot (shared with fenestra.popup). GuestHidden clears that slot.
                 self.close_popup(state);
             }
+            LayerHostEvent::Message(OsrMessage::DraggableRegionsChanged { .. }) => {}
             LayerHostEvent::Message(OsrMessage::Cursor(cursor)) => {
                 self.cursor_shape = cursor;
             }

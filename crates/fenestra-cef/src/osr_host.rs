@@ -264,6 +264,8 @@ struct OsrNativeHost {
     main_frame: Option<OsrFrame>,
     main_buffer: FrameBuffer,
     overlays: BTreeMap<String, OverlayLayer>,
+    page_drag_regions: Vec<WindowRegionRect>,
+    page_drag_exclusion_regions: Vec<WindowRegionRect>,
     hovered_control: Option<TitlebarControl>,
     pressed_control: Option<TitlebarControl>,
     cursor: CursorIcon,
@@ -404,6 +406,8 @@ impl OsrNativeHost {
             main_frame: None,
             main_buffer: FrameBuffer::new(),
             overlays: BTreeMap::new(),
+            page_drag_regions: Vec::new(),
+            page_drag_exclusion_regions: Vec::new(),
             hovered_control: None,
             pressed_control: None,
             cursor: CursorIcon::Default,
@@ -784,6 +788,10 @@ impl OsrNativeHost {
                         needs_redraw = true;
                     }
                 }
+                OsrHostEvent::Message(OsrMessage::DraggableRegionsChanged { drag, exclusion }) => {
+                    self.page_drag_regions = drag;
+                    self.page_drag_exclusion_regions = exclusion;
+                }
                 OsrHostEvent::Message(OsrMessage::Cursor(cursor)) => {
                     self.set_content_cursor(cursor_for_cef(&cursor));
                 }
@@ -793,7 +801,9 @@ impl OsrNativeHost {
                 }
                 OsrHostEvent::Message(OsrMessage::StartDragRequested) => {
                     if let Some(window) = &self.window {
-                        let _ = window.drag_window();
+                        if let Err(error) = window.drag_window() {
+                            eprintln!("failed to begin native window drag: {error}");
+                        }
                     }
                 }
                 OsrHostEvent::Message(OsrMessage::FileDragRequested(_request)) => {
@@ -1215,8 +1225,16 @@ impl OsrNativeHost {
         }
         self.draw_titlebar(&mut list, width);
         let y = self.titlebar_height();
-        // Guests under the primary so HTML overlays (dialogs) can alpha-blend
-        // over live guest content. Legacy popup stays above the primary.
+        if let Some(frame) = &self.main_frame {
+            list.push(ImageCommand {
+                id: MAIN_TEXTURE_ID.to_string(),
+                x: 0.0,
+                y,
+                width: frame.width as f32,
+                height: frame.height as f32,
+                opacity: 1.0,
+            });
+        }
         for (overlay_id, overlay) in &self.overlays {
             if overlay_id.as_str() == POPUP_OVERLAY_ID {
                 continue;
@@ -1227,16 +1245,6 @@ impl OsrNativeHost {
                 y: y + overlay.frame.y as f32,
                 width: overlay.frame.width as f32,
                 height: overlay.frame.height as f32,
-                opacity: 1.0,
-            });
-        }
-        if let Some(frame) = &self.main_frame {
-            list.push(ImageCommand {
-                id: MAIN_TEXTURE_ID.to_string(),
-                x: 0.0,
-                y,
-                width: frame.width as f32,
-                height: frame.height as f32,
                 opacity: 1.0,
             });
         }
@@ -1373,11 +1381,19 @@ impl OsrNativeHost {
     }
 
     fn is_drag_region(&self, width: f32, x: f32, y: f32) -> bool {
-        if configured_region_at(&self.config.drag_exclusion_regions, width, x, y) {
+        let page_y = y - self.titlebar_height();
+        let page_excluded = page_y >= 0.0
+            && configured_region_at(&self.page_drag_exclusion_regions, width, x, page_y);
+        if configured_region_at(&self.config.drag_exclusion_regions, width, x, y)
+            || page_excluded
+        {
             return false;
         }
-        if !self.config.drag_regions.is_empty() {
-            return configured_region_at(&self.config.drag_regions, width, x, y);
+        if !self.config.drag_regions.is_empty() || !self.page_drag_regions.is_empty() {
+            let page_draggable = page_y >= 0.0
+                && configured_region_at(&self.page_drag_regions, width, x, page_y);
+            return configured_region_at(&self.config.drag_regions, width, x, y)
+                || page_draggable;
         }
         self.titlebar_height() > 0.0 && y <= self.titlebar_height()
     }
@@ -1680,7 +1696,9 @@ impl ApplicationHandler for OsrNativeHost {
                                 self.logical_height(),
                             )
                         {
-                            let _ = window.drag_resize_window(direction);
+                            if let Err(error) = window.drag_resize_window(direction) {
+                                eprintln!("failed to begin native window resize: {error}");
+                            }
                             return;
                         }
                         let width = self.logical_width();
@@ -1691,7 +1709,9 @@ impl ApplicationHandler for OsrNativeHost {
                             return;
                         }
                         if self.is_drag_region(width, self.cursor_x, self.cursor_y) {
-                            let _ = window.drag_window();
+                            if let Err(error) = window.drag_window() {
+                                eprintln!("failed to begin native window drag: {error}");
+                            }
                             return;
                         }
                         self.active_click_count = self.next_click_count(button);

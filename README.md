@@ -187,7 +187,9 @@ JS body, no C++ copy to keep in sync.
     and glass windows, and for everything that needs to draw into a
     Wayland layer-shell surface. The Rust side picks this automatically
     via `FenestraWindow::should_use_osr_host`
-    (`crates/fenestra-cef/src/lib.rs:1211-1238`).
+    (`crates/fenestra-cef/src/lib.rs:1211-1238`). Chromium CSS
+    `-webkit-app-region: drag` and `no-drag` regions are forwarded to the
+    native window hit tester.
   - **Windowed CEF host** — used for `system_chrome()` and other
     system-decorated compatibility windows. Force it explicitly with
     `FENESTRA_CEF_BACKEND=windowed` if you want a top-level CEF window

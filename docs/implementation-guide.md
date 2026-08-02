@@ -317,6 +317,9 @@ window.fenestra.bridge.listen("guest.download", async (event) => {
 | Linux (OSR / frameless) | CEF windowless | Named overlay textures in the OSR host |
 | Linux (windowed) / macOS | CEF Alloy | Child browsers via `SetAsChild` when the host window is available; OSR is preferred for multi-guest overlays |
 
+OSR guests are composited above the primary page. Use `fenestra.guest.setCovered`
+while a primary-page dialog or menu needs to cover them.
+
 `fenestra.popup.open` / `close` remain supported and map to the reserved guest id
 `__fenestra_popup`.
 

@@ -835,6 +835,30 @@ void FenestraOsrHandler::OnBeforeContextMenu(
   model->Clear();
 }
 
+void FenestraOsrHandler::OnDraggableRegionsChanged(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    const std::vector<CefDraggableRegion>& regions) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser_ || !browser_->IsSame(browser)) {
+    return;
+  }
+  constexpr size_t kEntryLen = 20;
+  std::vector<char> payload(4 + regions.size() * kEntryLen, 0);
+  PutU32(&payload, 0, static_cast<uint32_t>(regions.size()));
+  for (size_t index = 0; index < regions.size(); ++index) {
+    const auto& region = regions[index];
+    const size_t offset = 4 + index * kEntryLen;
+    PutI32(&payload, offset, region.bounds.x);
+    PutI32(&payload, offset + 4, region.bounds.y);
+    PutI32(&payload, offset + 8, region.bounds.width);
+    PutI32(&payload, offset + 12, region.bounds.height);
+    PutU32(&payload, offset + 16, region.draggable ? 1 : 0);
+  }
+  SendMessage(kDraggableRegionsChanged, 0, 0, 0, 0, payload.data(),
+              static_cast<uint32_t>(payload.size()));
+}
+
 bool FenestraOsrHandler::OnContextMenuCommand(
     CefRefPtr<CefBrowser> browser,
     CefRefPtr<CefFrame> frame,
@@ -1134,7 +1158,7 @@ std::string BuildFileDragPayload(const std::vector<std::string>& paths) {
 
 bool FenestraOsrHandler::StartDragging(CefRefPtr<CefBrowser> browser,
                                    CefRefPtr<CefDragData> drag_data,
-                                   DragOperationsMask allowed_ops,
+                                   cef_drag_operations_mask_t allowed_ops,
                                    int x,
                                    int y) {
   CEF_REQUIRE_UI_THREAD();
@@ -1623,8 +1647,9 @@ void FenestraOsrHandler::ApplyGuestVisibility(GuestView& guest) {
     return;
   }
   CefRefPtr<CefBrowserHost> host = guest.browser->GetHost();
-  host->WasHidden(!guest.visible || suspended_);
-  if (guest.visible && !suspended_) {
+  const bool hidden = !guest.visible || suspended_ || guests_.Covered();
+  host->WasHidden(hidden);
+  if (!hidden) {
     host->Invalidate(PET_VIEW);
     return;
   }
@@ -1772,9 +1797,15 @@ bool FenestraOsrHandler::RunGuestOperation(const std::string& operation,
   }
   if (operation == "setCovered") {
     const bool covered = JsonBoolValue(payload, "covered", false);
+    if (guests_.Covered() == covered) {
+      return true;
+    }
     guests_.SetCovered(covered);
     if (covered) {
       FocusGuest(std::string());
+    }
+    for (GuestView* guest : guests_.InZOrder()) {
+      ApplyGuestVisibility(*guest);
     }
     return true;
   }

@@ -40,6 +40,7 @@ const KIND_GUEST_FRAME: u32 = 17;
 const KIND_GUEST_BATCH: u32 = 18;
 const KIND_GUEST_SHARED_BATCH: u32 = 19;
 const KIND_GUEST_HIDDEN: u32 = 20;
+const KIND_DRAGGABLE_REGIONS_CHANGED: u32 = 21;
 const BATCH_ENTRY_LEN: usize = 28;
 
 pub(crate) const MAIN_TEXTURE_ID: &str = "__stuk_fenestra_main";
@@ -54,6 +55,10 @@ pub(crate) enum OsrMessage {
     PopupHidden,
     /// Hide a guest overlay by id.
     GuestHidden(String),
+    DraggableRegionsChanged {
+        drag: Vec<WindowRegionRect>,
+        exclusion: Vec<WindowRegionRect>,
+    },
     Cursor(String),
     CloseRequested,
     StartDragRequested,
@@ -190,6 +195,11 @@ pub(crate) fn read_message(reader: &mut UnixStream) -> io::Result<Option<OsrMess
         KIND_GUEST_HIDDEN => {
             close_optional_fd(fd);
             OsrMessage::GuestHidden(String::from_utf8(payload).unwrap_or_default())
+        }
+        KIND_DRAGGABLE_REGIONS_CHANGED => {
+            close_optional_fd(fd);
+            let (drag, exclusion) = parse_draggable_regions(&payload)?;
+            OsrMessage::DraggableRegionsChanged { drag, exclusion }
         }
         KIND_CURSOR => {
             close_optional_fd(fd);
@@ -420,6 +430,41 @@ fn split_guest_payload(payload: &[u8]) -> io::Result<(String, Vec<u8>)> {
         ));
     }
     Ok((id, payload[id_end..].to_vec()))
+}
+
+fn parse_draggable_regions(
+    payload: &[u8],
+) -> io::Result<(Vec<WindowRegionRect>, Vec<WindowRegionRect>)> {
+    const ENTRY_LEN: usize = 20;
+    let count = payload.get(0..4).map(read_u32).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "missing drag region count")
+    })? as usize;
+    let entries_end = count
+        .checked_mul(ENTRY_LEN)
+        .and_then(|len| len.checked_add(4))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid drag region count"))?;
+    let entries = payload
+        .get(4..entries_end)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "truncated drag regions"))?;
+    let mut drag = Vec::new();
+    let mut exclusion = Vec::new();
+    for entry in entries.chunks_exact(ENTRY_LEN) {
+        let rect = WindowRegionRect::new(
+            read_i32(&entry[0..4]),
+            read_i32(&entry[4..8]),
+            read_i32(&entry[8..12]),
+            read_i32(&entry[12..16]),
+        );
+        if rect.is_empty() {
+            continue;
+        }
+        if read_u32(&entry[16..20]) != 0 {
+            drag.push(rect);
+        } else {
+            exclusion.push(rect);
+        }
+    }
+    Ok((drag, exclusion))
 }
 
 fn parse_file_drag_request(payload: &[u8], x: i32, y: i32) -> Option<FileDragRequest> {
@@ -921,6 +966,25 @@ mod tests {
         assert_eq!(batch.frames.len(), 2);
         assert_eq!((batch.frames[1].x, batch.frames[1].y), (2, 1));
         assert_eq!(batch.frames[1].bytes, vec![2, 2, 2, 255]);
+    }
+
+    #[test]
+    fn draggable_regions_split_drag_and_exclusion_rects() {
+        let mut payload = 2_u32.to_le_bytes().to_vec();
+        for (x, y, width, height, draggable) in [
+            (0_i32, 0_i32, 600_i32, 38_i32, 1_u32),
+            (520, 0, 80, 38, 0),
+        ] {
+            payload.extend_from_slice(&x.to_le_bytes());
+            payload.extend_from_slice(&y.to_le_bytes());
+            payload.extend_from_slice(&width.to_le_bytes());
+            payload.extend_from_slice(&height.to_le_bytes());
+            payload.extend_from_slice(&draggable.to_le_bytes());
+        }
+
+        let (drag, exclusion) = parse_draggable_regions(&payload).expect("regions");
+        assert_eq!(drag, vec![WindowRegionRect::new(0, 0, 600, 38)]);
+        assert_eq!(exclusion, vec![WindowRegionRect::new(520, 0, 80, 38)]);
     }
 
     fn push_entry(
