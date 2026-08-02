@@ -20,7 +20,7 @@ namespace {
 
 const char* const kGuestOperations[] = {
     "create",   "destroy", "navigate",         "setBounds",
-    "setVisible", "setCovered", "focus", "reload", "goBack",
+    "setVisible", "setCovered", "capturePreview", "focus", "reload", "goBack",
     "goForward", "list",   "get",              "setZoom",
     "executeJavaScript",   "downloadAction",
 };
