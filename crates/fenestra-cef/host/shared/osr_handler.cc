@@ -27,6 +27,7 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_parser.h"
+#include "include/cef_request_context_handler.h"
 #include "include/cef_task.h"
 #include "include/internal/cef_types.h"
 #include "include/wrapper/cef_helpers.h"
@@ -555,6 +556,29 @@ std::string CursorName(cef_cursor_type_t type) {
   }
 }
 }  // namespace
+
+class FenestraGuestRequestContextHandler : public CefRequestContextHandler {
+ public:
+  FenestraGuestRequestContextHandler(CefRefPtr<FenestraOsrHandler> owner,
+                                     std::string partition)
+      : owner_(std::move(owner)), partition_(std::move(partition)) {}
+
+  void OnRequestContextInitialized(
+      CefRefPtr<CefRequestContext> request_context) override {
+    CEF_REQUIRE_UI_THREAD();
+    CefRefPtr<FenestraOsrHandler> owner = owner_;
+    owner_ = nullptr;
+    if (owner) {
+      owner->GuestRequestContextInitialized(partition_, request_context);
+    }
+  }
+
+ private:
+  CefRefPtr<FenestraOsrHandler> owner_;
+  const std::string partition_;
+
+  IMPLEMENT_REFCOUNTING(FenestraGuestRequestContextHandler);
+};
 
 FenestraOsrHandler::FenestraOsrHandler(std::string socket_path,
                                int width,
@@ -1466,7 +1490,7 @@ std::string FenestraOsrHandler::NextGuestId() {
   return id;
 }
 
-CefRefPtr<CefRequestContext> FenestraOsrHandler::GuestRequestContext(
+CefRefPtr<CefRequestContext> FenestraOsrHandler::CreateGuestRequestContext(
     const std::string& partition) {
   CEF_REQUIRE_UI_THREAD();
   if (partition.empty()) {
@@ -1486,37 +1510,95 @@ CefRefPtr<CefRequestContext> FenestraOsrHandler::GuestRequestContext(
   if (!cache_path.empty()) {
     CefString(&settings.cache_path).FromString(cache_path);
   }
-  CefRefPtr<CefRequestContext> context =
-      CefRequestContext::CreateContext(settings, nullptr);
+  CefRefPtr<FenestraOsrHandler> self(this);
+  CefRefPtr<CefRequestContext> context = CefRequestContext::CreateContext(
+      settings, new FenestraGuestRequestContextHandler(self, partition));
   if (context) {
     guest_contexts_[partition] = context;
   }
   return context;
 }
 
-bool FenestraOsrHandler::CreateGuest(const GuestCreateRequest& request,
-                                     std::string* error) {
+void FenestraOsrHandler::CreateGuest(GuestCreateRequest request,
+                                     GuestCreateCallback callback) {
   CEF_REQUIRE_UI_THREAD();
   if (!IsValidGuestId(request.id)) {
-    *error = "guest id is not valid";
-    return false;
+    callback(false, "guest id is not valid");
+    return;
   }
+  CancelPendingGuest(request.id);
   if (guests_.Find(request.id)) {
     DestroyGuest(request.id);
   }
 
-  // An empty partition keeps the guest on the primary request context, which is
-  // what `fenestra.popup` did before it became a guest view.
-  const std::string partition =
+  request.partition =
       request.partition.empty() && request.id != kFenestraPopupGuestId
           ? DefaultGuestPartition(request.id)
           : request.partition;
+  if (request.partition.empty()) {
+    ContinueCreateGuest(request, nullptr, std::move(callback));
+    return;
+  }
+
+  const auto cached = guest_contexts_.find(request.partition);
+  if (cached != guest_contexts_.end() &&
+      initialized_guest_contexts_.contains(request.partition)) {
+    ContinueCreateGuest(request, cached->second, std::move(callback));
+    return;
+  }
+
+  const std::string partition = request.partition;
+  pending_guest_creates_[partition].push_back(
+      PendingGuestCreate{std::move(request), std::move(callback)});
+  if (cached != guest_contexts_.end()) {
+    return;
+  }
+  if (!CreateGuestRequestContext(partition)) {
+    GuestRequestContextInitialized(partition, nullptr);
+  }
+}
+
+void FenestraOsrHandler::GuestRequestContextInitialized(
+    const std::string& partition,
+    CefRefPtr<CefRequestContext> context) {
+  CEF_REQUIRE_UI_THREAD();
+  auto pending = pending_guest_creates_.find(partition);
+  if (pending == pending_guest_creates_.end()) {
+    if (context) {
+      guest_contexts_[partition] = context;
+      initialized_guest_contexts_.insert(partition);
+    }
+    return;
+  }
+
+  std::vector<PendingGuestCreate> creates = std::move(pending->second);
+  pending_guest_creates_.erase(pending);
+  if (!context) {
+    guest_contexts_.erase(partition);
+    for (PendingGuestCreate& create : creates) {
+      create.callback(false, "failed to initialize the guest request context");
+    }
+    return;
+  }
+
+  guest_contexts_[partition] = context;
+  initialized_guest_contexts_.insert(partition);
+  for (PendingGuestCreate& create : creates) {
+    ContinueCreateGuest(create.request, context, std::move(create.callback));
+  }
+}
+
+void FenestraOsrHandler::ContinueCreateGuest(
+    const GuestCreateRequest& request,
+    CefRefPtr<CefRequestContext> context,
+    GuestCreateCallback callback) {
+  CEF_REQUIRE_UI_THREAD();
 
   GuestView guest;
   guest.id = request.id;
   guest.url = request.url;
   guest.bounds = request.bounds;
-  guest.partition = partition;
+  guest.partition = request.partition;
   guest.visible = request.visible;
   guest.allow_bridge = request.allow_bridge;
   guest.allow_downloads = request.allow_downloads;
@@ -1541,8 +1623,7 @@ bool FenestraOsrHandler::CreateGuest(const GuestCreateRequest& request,
 
   CefRefPtr<CefBrowser> browser =
       CefBrowserHost::CreateBrowserSync(window_info, this, request.url, settings,
-                                       extra_info,
-                                       GuestRequestContext(partition));
+                                       extra_info, context);
   pending_guest_id_.clear();
 
   GuestView* created = guests_.Find(request.id);
@@ -1550,26 +1631,68 @@ bool FenestraOsrHandler::CreateGuest(const GuestCreateRequest& request,
     if (created) {
       guests_.Erase(request.id);
     }
-    *error = "failed to create the guest browser";
-    return false;
+    callback(false, "failed to create the guest browser");
+    return;
   }
   if (!created) {
     browser->GetHost()->CloseBrowser(true);
-    *error = "guest was destroyed while it was being created";
-    return false;
+    callback(false, "guest was destroyed while it was being created");
+    return;
   }
   created->browser = browser;
   created->pending = false;
   ApplyGuestBounds(*created);
   ApplyGuestVisibility(*created);
-  EmitPrimaryEvent("guest.created", GuestInfoJson(*created));
-  return true;
+  const std::string result = GuestInfoJson(*created);
+  EmitPrimaryEvent("guest.created", result);
+  callback(true, result);
+}
+
+bool FenestraOsrHandler::CancelPendingGuest(const std::string& id) {
+  CEF_REQUIRE_UI_THREAD();
+  std::vector<GuestCreateCallback> callbacks;
+  for (auto partition = pending_guest_creates_.begin();
+       partition != pending_guest_creates_.end();) {
+    auto& creates = partition->second;
+    for (auto create = creates.begin(); create != creates.end();) {
+      if (create->request.id == id) {
+        callbacks.push_back(std::move(create->callback));
+        create = creates.erase(create);
+      } else {
+        ++create;
+      }
+    }
+    if (creates.empty()) {
+      partition = pending_guest_creates_.erase(partition);
+    } else {
+      ++partition;
+    }
+  }
+  for (GuestCreateCallback& callback : callbacks) {
+    callback(false, "guest creation canceled");
+  }
+  return !callbacks.empty();
+}
+
+bool FenestraOsrHandler::HasPendingGuest(const std::string& id) const {
+  for (const auto& entry : pending_guest_creates_) {
+    for (const PendingGuestCreate& create : entry.second) {
+      if (create.request.id == id) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 void FenestraOsrHandler::DestroyGuest(const std::string& id) {
   CEF_REQUIRE_UI_THREAD();
+  const bool canceled = CancelPendingGuest(id);
   GuestView* guest = guests_.Find(id);
   if (!guest) {
+    if (canceled) {
+      EmitPrimaryEvent("guest.destroyed", GuestIdJson(id));
+    }
     return;
   }
   const GuestView removed = *guest;
@@ -1775,21 +1898,6 @@ bool FenestraOsrHandler::RunGuestOperation(const std::string& operation,
                                            std::string* error) {
   CEF_REQUIRE_UI_THREAD();
   *response = "{}";
-  if (operation == "create") {
-    GuestCreateRequest request;
-    if (!ParseGuestCreateRequest(payload, &request, error)) {
-      return false;
-    }
-    if (request.id.empty()) {
-      request.id = NextGuestId();
-    }
-    if (!CreateGuest(request, error)) {
-      return false;
-    }
-    const GuestView* created = guests_.Find(request.id);
-    *response = created ? GuestInfoJson(*created) : GuestIdJson(request.id);
-    return true;
-  }
   if (operation == "list") {
     const GuestRegistry& registry = guests_;
     *response = GuestListJson(registry.InZOrder());
@@ -1819,7 +1927,7 @@ bool FenestraOsrHandler::RunGuestOperation(const std::string& operation,
     return false;
   }
   if (operation == "destroy") {
-    if (!guests_.Find(id)) {
+    if (!guests_.Find(id) && !HasPendingGuest(id)) {
       *error = "unknown guest id";
       return false;
     }
@@ -1937,12 +2045,14 @@ bool FenestraOsrHandler::HandleGuestBridgeCommand(const std::string& command,
     request.allow_bridge = false;
     request.allow_downloads = false;
     request.visible = true;
-    std::string error;
-    if (!CreateGuest(request, &error)) {
-      ResolveBridgeResponse(browser_id, request_id, false, JsonMessage(error));
-      return true;
-    }
-    ResolveBridgeResponse(browser_id, request_id, true, "{\"accepted\":true}");
+    CefRefPtr<FenestraOsrHandler> self(this);
+    CreateGuest(
+        std::move(request),
+        [self, browser_id, request_id](bool success, const std::string& result) {
+          self->ResolveBridgeResponse(
+              browser_id, request_id, success,
+              success ? "{\"accepted\":true}" : JsonMessage(result));
+        });
     return true;
   }
   if (command == "fenestra.popup.close") {
@@ -1955,6 +2065,25 @@ bool FenestraOsrHandler::HandleGuestBridgeCommand(const std::string& command,
   }
 
   const std::string operation = GuestOperationName(command, kGuestBridgePrefix);
+  if (operation == "create") {
+    GuestCreateRequest request;
+    std::string error;
+    if (!ParseGuestCreateRequest(payload, &request, &error)) {
+      ResolveBridgeResponse(browser_id, request_id, false, JsonMessage(error));
+      return true;
+    }
+    if (request.id.empty()) {
+      request.id = NextGuestId();
+    }
+    CefRefPtr<FenestraOsrHandler> self(this);
+    CreateGuest(
+        std::move(request),
+        [self, browser_id, request_id](bool success, const std::string& result) {
+          self->ResolveBridgeResponse(browser_id, request_id, success,
+                                      success ? result : JsonMessage(result));
+        });
+    return true;
+  }
   std::string response;
   std::string error;
   if (!RunGuestOperation(operation, payload, &response, &error)) {
@@ -1971,6 +2100,23 @@ void FenestraOsrHandler::ApplyHostControl(const std::string& command,
   const std::string operation =
       GuestOperationName(command, kGuestHostControlPrefix);
   if (operation.empty()) {
+    return;
+  }
+  if (operation == "create") {
+    GuestCreateRequest request;
+    std::string error;
+    if (!ParseGuestCreateRequest(value, &request, &error)) {
+      std::cerr << "guest.create failed: " << error << std::endl;
+      return;
+    }
+    if (request.id.empty()) {
+      request.id = NextGuestId();
+    }
+    CreateGuest(std::move(request), [](bool success, const std::string& result) {
+      if (!success) {
+        std::cerr << "guest.create failed: " << result << std::endl;
+      }
+    });
     return;
   }
   std::string response;
@@ -2021,10 +2167,12 @@ bool FenestraOsrHandler::OnBeforePopup(CefRefPtr<CefBrowser> browser,
       request.partition = guest->partition;
       request.allow_downloads = guest->allow_downloads;
       request.popup_policy = guest->popup_policy;
-      std::string error;
-      if (!CreateGuest(request, &error)) {
-        std::cerr << "guest popup failed: " << error << std::endl;
-      }
+      CreateGuest(std::move(request),
+                  [](bool success, const std::string& result) {
+                    if (!success) {
+                      std::cerr << "guest popup failed: " << result << std::endl;
+                    }
+                  });
       return true;
     }
     case GuestPopupPolicy::kDeny:

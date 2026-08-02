@@ -2,6 +2,7 @@
 #define FENESTRA_CEF_HOST_OSR_HANDLER_H_
 
 #include <cstdint>
+#include <functional>
 #include <list>
 #include <map>
 #include <mutex>
@@ -161,6 +162,15 @@ class FenestraOsrHandler : public CefClient,
 
  private:
   using BrowserList = std::list<CefRefPtr<CefBrowser>>;
+  using GuestCreateCallback =
+      std::function<void(bool success, const std::string& result)>;
+
+  struct PendingGuestCreate {
+    GuestCreateRequest request;
+    GuestCreateCallback callback;
+  };
+
+  friend class FenestraGuestRequestContextHandler;
 
   bool ConnectSocket();
   bool SendMessage(uint32_t kind,
@@ -206,7 +216,15 @@ class FenestraOsrHandler : public CefClient,
                          const std::string& payload,
                          std::string* response,
                          std::string* error);
-  bool CreateGuest(const GuestCreateRequest& request, std::string* error);
+  void CreateGuest(GuestCreateRequest request, GuestCreateCallback callback);
+  void ContinueCreateGuest(const GuestCreateRequest& request,
+                           CefRefPtr<CefRequestContext> context,
+                           GuestCreateCallback callback);
+  void GuestRequestContextInitialized(
+      const std::string& partition,
+      CefRefPtr<CefRequestContext> context);
+  bool CancelPendingGuest(const std::string& id);
+  bool HasPendingGuest(const std::string& id) const;
   void DestroyGuest(const std::string& id);
   void FocusGuest(const std::string& id);
   void DismissPopupGuest();
@@ -222,7 +240,8 @@ class FenestraOsrHandler : public CefClient,
   void SendGuestHidden(const GuestView& guest);
   void EmitPrimaryEvent(const std::string& name, const std::string& payload);
   bool RunGuestDownloadAction(const std::string& payload, std::string* error);
-  CefRefPtr<CefRequestContext> GuestRequestContext(const std::string& partition);
+  CefRefPtr<CefRequestContext> CreateGuestRequestContext(
+      const std::string& partition);
   std::string NextGuestId();
 
   BrowserList browsers_;
@@ -238,6 +257,8 @@ class FenestraOsrHandler : public CefClient,
   std::string focused_guest_id_;
   std::string pending_guest_id_;
   std::map<std::string, CefRefPtr<CefRequestContext>> guest_contexts_;
+  std::set<std::string> initialized_guest_contexts_;
+  std::map<std::string, std::vector<PendingGuestCreate>> pending_guest_creates_;
   std::map<std::string, GuestDownload> downloads_;
   int guest_serial_ = 0;
 	  std::set<std::string> bridge_commands_;
