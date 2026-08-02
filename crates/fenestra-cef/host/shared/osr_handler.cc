@@ -1771,14 +1771,13 @@ void FenestraOsrHandler::ApplyGuestVisibility(GuestView& guest) {
     return;
   }
   CefRefPtr<CefBrowserHost> host = guest.browser->GetHost();
-  const bool explicitly_hidden = !guest.visible || guests_.Covered();
-  const bool hidden = explicitly_hidden || suspended_;
+  const bool hidden = !guest.visible || suspended_ || guests_.Covered();
   host->WasHidden(hidden);
   if (!hidden) {
     host->Invalidate(PET_VIEW);
     return;
   }
-  if (explicitly_hidden) {
+  if (!guest.visible) {
     SendGuestHidden(guest);
   }
   if (!guest.visible && focused_guest_id_ == guest.id) {

@@ -1225,16 +1225,6 @@ impl OsrNativeHost {
         }
         self.draw_titlebar(&mut list, width);
         let y = self.titlebar_height();
-        if let Some(frame) = &self.main_frame {
-            list.push(ImageCommand {
-                id: MAIN_TEXTURE_ID.to_string(),
-                x: 0.0,
-                y,
-                width: frame.width as f32,
-                height: frame.height as f32,
-                opacity: 1.0,
-            });
-        }
         for (overlay_id, overlay) in &self.overlays {
             if overlay_id.as_str() == POPUP_OVERLAY_ID {
                 continue;
@@ -1245,6 +1235,16 @@ impl OsrNativeHost {
                 y: y + overlay.frame.y as f32,
                 width: overlay.frame.width as f32,
                 height: overlay.frame.height as f32,
+                opacity: 1.0,
+            });
+        }
+        if let Some(frame) = &self.main_frame {
+            list.push(ImageCommand {
+                id: MAIN_TEXTURE_ID.to_string(),
+                x: 0.0,
+                y,
+                width: frame.width as f32,
+                height: frame.height as f32,
                 opacity: 1.0,
             });
         }
