@@ -4,12 +4,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::osr_transport::IpcEndpoint;
+use crate::host::{ManagedChild, prepare_child_command};
+use crate::osr::transport::IpcEndpoint;
 use crate::{
     BridgeHandlers, MullionError, MullionProcess, MullionResult, MullionWindowConfig,
-    browser_profile_dir, ld_library_path, prepare_bridge_command,
-    process_tree::{ManagedChild, prepare_child_command},
-    spawn_bridge_dispatch,
+    browser_profile_dir, ld_library_path, prepare_bridge_command, spawn_bridge_dispatch,
 };
 use mullion_bridge::{BridgeRuntime, LaunchMetrics};
 
@@ -23,7 +22,7 @@ pub(crate) fn run_from_args(args: &[String]) -> bool {
         eprintln!("missing Mullion OSR host config path");
         std::process::exit(1);
     };
-    if let Err(error) = crate::osr_host::run(config_path) {
+    if let Err(error) = crate::osr::host::run(config_path) {
         eprintln!("Mullion OSR host failed: {error}");
         std::process::exit(1);
     }
@@ -59,15 +58,15 @@ pub(crate) fn launch_process(
         "hide_on_blur": config.hide_on_blur,
         "always_on_top": config.always_on_top,
         "transparent": config.transparent,
-        "shell_surface": crate::osr_protocol::shell_surface_to_json(config.shell_surface.as_ref()),
+        "shell_surface": crate::osr::protocol::shell_surface_to_json(config.shell_surface.as_ref()),
         "background_effect": config.effective_background_effect().as_str(),
         "chrome": config.chrome.as_str(),
         "bridge_commands": mullion_bridge::bridge_commands_with_all_internal(config.bridge.commands()),
-        "regions": crate::osr_protocol::regions_to_json(&config.regions),
-        "drag_regions": crate::osr_protocol::rects_to_json(&config.drag_regions),
-        "drag_exclusion_regions": crate::osr_protocol::rects_to_json(&config.drag_exclusion_regions),
-        "control_regions": crate::osr_protocol::control_regions_to_json(&config.control_regions),
-        "lifecycle": crate::osr_protocol::lifecycle_to_json(&config.lifecycle),
+        "regions": crate::osr::protocol::regions_to_json(&config.regions),
+        "drag_regions": crate::osr::protocol::rects_to_json(&config.drag_regions),
+        "drag_exclusion_regions": crate::osr::protocol::rects_to_json(&config.drag_exclusion_regions),
+        "control_regions": crate::osr::protocol::control_regions_to_json(&config.control_regions),
+        "lifecycle": crate::osr::protocol::lifecycle_to_json(&config.lifecycle),
         "dev_mode": config.dev_mode(),
         "remote_devtools_port": config.effective_remote_devtools_port(),
         "remote_devtools_disabled": config.browser.remote_devtools_disabled,
@@ -123,7 +122,7 @@ pub(crate) fn cef_osr_command(
     host_binary: &Path,
     endpoint: &IpcEndpoint,
     authentication_token: &str,
-    config: &crate::osr_host::OsrHostConfig,
+    config: &crate::osr::host::OsrHostConfig,
     width: u32,
     height: u32,
     scale: f64,

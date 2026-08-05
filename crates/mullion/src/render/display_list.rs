@@ -1,4 +1,4 @@
-use crate::style::Color;
+use crate::window::style::Color;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DisplayList {

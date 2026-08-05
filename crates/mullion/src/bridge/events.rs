@@ -8,7 +8,7 @@ use std::{
 use mullion_bridge::{BridgeCommand, BridgeHandlers, BridgeResult};
 use mullion_platform::{PlatformEvent, ShellSurfaceMargin};
 
-use crate::browser::HOST_CONTROL_PREFIX;
+use crate::launch::browser::HOST_CONTROL_PREFIX;
 
 #[derive(Clone)]
 pub struct BridgeEventEmitter {

@@ -1,4 +1,4 @@
-use crate::osr_protocol::OsrFrame;
+use crate::osr::protocol::OsrFrame;
 
 pub(crate) struct FrameBuffer {
     width: u32,
@@ -229,7 +229,7 @@ fn blend_bgra(source: &[u8], destination: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::osr_protocol::OsrSurface;
+    use crate::osr::protocol::OsrSurface;
 
     #[test]
     fn dirty_rect_patches_backing_store_at_offset() {

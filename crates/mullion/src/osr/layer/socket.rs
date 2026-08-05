@@ -10,10 +10,8 @@ use std::{
 
 use layershellev::calloop::channel::Sender;
 
-use crate::{
-    HOST_CONTROL_PREFIX, ShellSurfaceMargin,
-    osr_protocol::{OsrMessage, read_message},
-};
+use crate::osr::protocol::{OsrMessage, read_message};
+use crate::{HOST_CONTROL_PREFIX, ShellSurfaceMargin};
 
 pub(super) enum LayerHostEvent {
     Connected(UnixStream),
@@ -99,7 +97,7 @@ fn start_socket_reader(
             let Ok((mut candidate, _)) = listener.accept() else {
                 return;
             };
-            if crate::osr_transport::authenticate(&mut candidate, &authentication_token).is_ok() {
+            if crate::osr::transport::authenticate(&mut candidate, &authentication_token).is_ok() {
                 break candidate;
             }
         };

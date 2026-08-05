@@ -17,21 +17,24 @@ use mullion_platform::{
 };
 use mullion_runtime::{RuntimeConfig, RuntimeInfo, resolve_runtime};
 
-use crate::bootstrap;
-use crate::config::{
-    MullionLifecyclePolicy, MullionWindowChrome, MullionWindowConfig, MullionWindowControlAction,
-    MullionWindowControlRegion,
+pub mod config;
+pub mod glass;
+pub mod style;
+
+pub use config::{
+    DesktopServiceConfig, MullionLifecyclePolicy, MullionWindowChrome, MullionWindowConfig,
+    MullionWindowControlAction, MullionWindowControlRegion,
 };
-use crate::desktop_services::apply_desktop_services;
+pub use glass::GlassSpec;
+
+use crate::desktop::apply_desktop_services;
 use crate::error::{MullionError, MullionResult};
-use crate::glass::GlassSpec;
-use crate::launch_support::{
-    allow_dev_origins, allow_origin, allow_url_origin, canonical_entry, dev_server_candidates,
-    metrics_label, shell_command, split_entry_suffix, touch_shared_service,
+use crate::host::{ManagedChild, MullionProcess, prepare_child_command};
+use crate::launch::{
+    allow_dev_origins, allow_origin, allow_url_origin, bootstrap, canonical_entry,
+    dev_server_candidates, metrics_label, shell_command, split_entry_suffix, touch_shared_service,
 };
 use crate::osr;
-use crate::process::MullionProcess;
-use crate::process_tree::{ManagedChild, prepare_child_command};
 
 /// Cross-platform Mullion window builder.
 #[derive(Clone, Debug)]

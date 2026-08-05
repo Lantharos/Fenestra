@@ -9,16 +9,22 @@ use std::{
 
 use mullion_bridge::INSTALL_SCRIPT;
 
-const HOST_CMAKE: &str = include_str!("../host/shared/CMakeLists.txt");
-const HOST_MAIN: &str = include_str!("../host/shared/main.cc");
-const HOST_APP_H: &str = include_str!("../host/shared/app.h");
-const HOST_APP_CC: &str = include_str!("../host/shared/app.cc");
-const HOST_OSR_HANDLER_H: &str = include_str!("../host/shared/osr_handler.h");
-const HOST_OSR_HANDLER_CC: &str = include_str!("../host/shared/osr_handler.cc");
-const HOST_GUEST_MANAGER_H: &str = include_str!("../host/shared/guest_manager.h");
-const HOST_GUEST_MANAGER_CC: &str = include_str!("../host/shared/guest_manager.cc");
-const HOST_JSON_UTIL_H: &str = include_str!("../host/shared/json_util.h");
-const HOST_JSON_UTIL_CC: &str = include_str!("../host/shared/json_util.cc");
+mod process;
+mod process_tree;
+
+pub use process::MullionProcess;
+pub(crate) use process_tree::{ManagedChild, prepare_child_command};
+
+const HOST_CMAKE: &str = include_str!("../../host/shared/CMakeLists.txt");
+const HOST_MAIN: &str = include_str!("../../host/shared/main.cc");
+const HOST_APP_H: &str = include_str!("../../host/shared/app.h");
+const HOST_APP_CC: &str = include_str!("../../host/shared/app.cc");
+const HOST_OSR_HANDLER_H: &str = include_str!("../../host/shared/osr_handler.h");
+const HOST_OSR_HANDLER_CC: &str = include_str!("../../host/shared/osr_handler.cc");
+const HOST_GUEST_MANAGER_H: &str = include_str!("../../host/shared/guest_manager.h");
+const HOST_GUEST_MANAGER_CC: &str = include_str!("../../host/shared/guest_manager.cc");
+const HOST_JSON_UTIL_H: &str = include_str!("../../host/shared/json_util.h");
+const HOST_JSON_UTIL_CC: &str = include_str!("../../host/shared/json_util.cc");
 const HOST_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const HOST_BUILD_LOCK_STALE_AFTER: Duration = Duration::from_secs(30 * 60);
 

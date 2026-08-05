@@ -13,9 +13,9 @@ use mullion_bridge::{
 };
 use mullion_platform::{PlatformEvent, ShellSurfaceMargin, SingleInstancePolicy};
 
-use crate::bridge_events::{BridgeEventEmitter, platform_event_payload};
-use crate::desktop_services::{self, DesktopServiceState};
-use crate::process_tree::ManagedChild;
+use crate::bridge::{BridgeEventEmitter, platform_event_payload};
+use crate::desktop::{DesktopServiceState, start_desktop_event_forwarder};
+use crate::host::process_tree::ManagedChild;
 
 pub struct MullionProcess {
     pub(crate) child: ManagedChild,
@@ -134,7 +134,7 @@ impl MullionProcess {
         };
         let running = Arc::new(AtomicBool::new(true));
         self.desktop_event_running = Some(Arc::clone(&running));
-        self.desktop_event_thread = Some(desktop_services::start_desktop_event_forwarder(
+        self.desktop_event_thread = Some(start_desktop_event_forwarder(
             services,
             running,
             move |event| {

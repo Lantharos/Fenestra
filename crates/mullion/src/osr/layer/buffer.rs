@@ -3,10 +3,8 @@ use std::{
     io::{Seek, SeekFrom, Write},
 };
 
-use crate::{
-    osr_frame_buffer::{buffer_len, compose_frame, ensure_buffer},
-    osr_protocol::OsrFrame,
-};
+use crate::osr::frame_buffer::{buffer_len, compose_frame, ensure_buffer};
+use crate::osr::protocol::OsrFrame;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct DamageRect {

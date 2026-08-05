@@ -1,12 +1,17 @@
-use std::{path::PathBuf, process::Command};
+pub(crate) mod bootstrap;
+pub(crate) mod browser;
 
-use mullion_bridge::ContentSecurity;
-use winit::{dpi::PhysicalPosition, event_loop::ActiveEventLoop};
+pub use browser::BrowserOptions;
+#[cfg(target_os = "linux")]
+pub(crate) use browser::HOST_CONTROL_PREFIX;
+pub(crate) use browser::apply_browser_launch_args;
 
-use crate::bootstrap;
-use crate::config::MullionWindowConfig;
 use crate::error::{MullionError, MullionResult};
 use crate::osr;
+use crate::window::MullionWindowConfig;
+use mullion_bridge::ContentSecurity;
+use std::{path::PathBuf, process::Command};
+use winit::{dpi::PhysicalPosition, event_loop::ActiveEventLoop};
 
 pub fn run_mullion_host_from_args(args: &[String]) -> bool {
     osr::run_from_args(args) || bootstrap::run_from_args(args)
@@ -269,9 +274,7 @@ mod tests {
 
     use mullion_platform::WindowBackgroundEffect;
 
-    use crate::config::MullionLifecyclePolicy;
-    use crate::glass::GlassSpec;
-    use crate::window::MullionWindow;
+    use crate::window::{GlassSpec, MullionLifecyclePolicy, MullionWindow};
 
     #[test]
     fn hidden_window_lifecycle_is_palette_biased() {

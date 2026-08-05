@@ -5,16 +5,14 @@ use layershellev::{
     xkb_keyboard::{ElementState, KeyEvent},
 };
 
-use super::{ClickMemory, OsrLayerHost};
-use crate::{
-    osr_layer_host::input::{
-        EVENTFLAG_ALT_DOWN, EVENTFLAG_COMMAND_DOWN, EVENTFLAG_CONTROL_DOWN, EVENTFLAG_IS_REPEAT,
-        EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON,
-        EVENTFLAG_PRECISION_SCROLLING_DELTA, EVENTFLAG_RIGHT_MOUSE_BUTTON, EVENTFLAG_SHIFT_DOWN,
-        cef_mouse_button, key_name, should_send_char_text,
-    },
-    osr_protocol::encode_component,
+use super::input::{
+    EVENTFLAG_ALT_DOWN, EVENTFLAG_COMMAND_DOWN, EVENTFLAG_CONTROL_DOWN, EVENTFLAG_IS_REPEAT,
+    EVENTFLAG_LEFT_MOUSE_BUTTON, EVENTFLAG_MIDDLE_MOUSE_BUTTON,
+    EVENTFLAG_PRECISION_SCROLLING_DELTA, EVENTFLAG_RIGHT_MOUSE_BUTTON, EVENTFLAG_SHIFT_DOWN,
+    cef_mouse_button, key_name, should_send_char_text,
 };
+use super::types::{ClickMemory, OsrLayerHost};
+use crate::osr::protocol::encode_component;
 
 impl OsrLayerHost {
     pub(super) fn forward_mouse_move(&self, leave: bool) {

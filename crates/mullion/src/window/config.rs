@@ -8,7 +8,7 @@ use mullion_platform::{
 };
 use mullion_runtime::RuntimeConfig;
 
-use crate::browser::BrowserOptions;
+use crate::launch::browser::BrowserOptions;
 
 #[derive(Clone, Debug)]
 pub struct MullionWindowConfig {

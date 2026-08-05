@@ -1,4 +1,4 @@
-use crate::style::Color;
+use crate::window::style::Color;
 use bytemuck::{Pod, Zeroable};
 
 use crate::render::{RectCommand, RoundedRectCommand};
