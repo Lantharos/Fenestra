@@ -15,14 +15,14 @@ Mullion is distributed from GitHub, not crates.io. Add it to your app with a git
 
 ```toml
 [dependencies]
-mullion = { git = "https://github.com/Misoworks/Mullion" }
+mullion = { git = "https://github.com/Lantharos/Mullion" }
 ```
 
 Install the CLI and shared service the same way:
 
 ```sh
-cargo install --git https://github.com/Misoworks/Mullion --package mullion-cli
-cargo install --git https://github.com/Misoworks/Mullion --package mullion-service
+cargo install --git https://github.com/Lantharos/Mullion --package mullion-cli
+cargo install --git https://github.com/Lantharos/Mullion --package mullion-service
 ```
 
 ## Why Mullion
@@ -65,8 +65,8 @@ switches to full-frame redraws.
 ## Quick start
 
 ```sh
-cargo install --git https://github.com/Misoworks/Mullion --package mullion-cli
-cargo install --git https://github.com/Misoworks/Mullion --package mullion-service
+cargo install --git https://github.com/Lantharos/Mullion --package mullion-cli
+cargo install --git https://github.com/Lantharos/Mullion --package mullion-service
 mullion new my-app
 cd my-app
 cargo run

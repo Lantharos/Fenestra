@@ -174,7 +174,7 @@ pub fn resolve_service_executable() -> ServiceResult<PathBuf> {
     }
 
     Err(ServiceError::Update(
-        "mullion-service executable not found; install it with `cargo install --git https://github.com/Misoworks/Mullion --package mullion-service` or set MULLION_SERVICE_PATH".to_string(),
+        "mullion-service executable not found; install it with `cargo install --git https://github.com/Lantharos/Mullion --package mullion-service` or set MULLION_SERVICE_PATH".to_string(),
     ))
 }
 
@@ -250,7 +250,7 @@ pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
         for (name, value) in [
             ("DisplayName", "Mullion".to_string()),
             ("DisplayVersion", env!("CARGO_PKG_VERSION").to_string()),
-            ("Publisher", "Misoworks".to_string()),
+            ("Publisher", "Lantharos".to_string()),
             ("UninstallString", uninstall),
         ] {
             run_checked(
@@ -285,11 +285,11 @@ pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
             .ok_or_else(|| ServiceError::Update("HOME is not set".to_string()))?;
         let directory = Path::new(&home).join("Library/LaunchAgents");
         fs::create_dir_all(&directory)?;
-        let path = directory.join("net.misoworks.mullion.plist");
+        let path = directory.join("net.lantharos.mullion.plist");
         fs::write(
             &path,
             format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>Label</key><string>net.misoworks.mullion</string><key>ProgramArguments</key><array><string>{}</string><string>run</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>\n",
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>Label</key><string>net.lantharos.mullion</string><key>ProgramArguments</key><array><string>{}</string><string>run</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>\n",
                 executable.display()
             ),
         )?;
@@ -337,7 +337,7 @@ pub fn uninstall_login_autostart() -> ServiceResult<()> {
     }
     #[cfg(target_os = "macos")]
     if let Some(home) = std::env::var_os("HOME") {
-        let path = Path::new(&home).join("Library/LaunchAgents/net.misoworks.mullion.plist");
+        let path = Path::new(&home).join("Library/LaunchAgents/net.lantharos.mullion.plist");
         let _ = Command::new("launchctl")
             .args(["bootout", &path.display().to_string()])
             .status();

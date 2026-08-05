@@ -32,7 +32,7 @@ mod tests {
 
     fn manifest() -> AppManifest {
         AppManifest {
-            id: "net.misoworks.notes".to_string(),
+            id: "net.lantharos.notes".to_string(),
             name: "Notes".to_string(),
             version: "1.0.0".to_string(),
             executable: std::path::PathBuf::from("/opt/notes/notes"),
@@ -49,11 +49,11 @@ mod tests {
     fn registry_round_trips_apps() {
         let service = service();
         let registered = service.register(manifest()).unwrap();
-        assert_eq!(registered.manifest.id, "net.misoworks.notes");
+        assert_eq!(registered.manifest.id, "net.lantharos.notes");
         assert_eq!(service.apps().unwrap().len(), 1);
-        assert_eq!(service.app("net.misoworks.notes").unwrap(), registered);
+        assert_eq!(service.app("net.lantharos.notes").unwrap(), registered);
         assert_eq!(
-            service.unregister("net.misoworks.notes").unwrap(),
+            service.unregister("net.lantharos.notes").unwrap(),
             registered
         );
     }
