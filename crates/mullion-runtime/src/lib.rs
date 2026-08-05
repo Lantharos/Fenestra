@@ -1,0 +1,102 @@
+mod detect;
+mod download;
+mod error;
+mod host;
+mod install;
+mod paths;
+mod resolve;
+mod types;
+mod version;
+
+pub use download::{DEFAULT_CEF_INDEX_URL, latest_install_plan};
+pub use error::RuntimeError;
+pub use host::{has_host_binary, host_candidates, launchable_host_candidates};
+pub use install::{
+    install_user_runtime, install_user_runtime_with_progress, prune_user_runtimes,
+    remove_user_minimal_runtime_if_client_requested, remove_user_runtime_version,
+    update_user_runtime_with_progress,
+};
+pub use paths::{
+    bundled_runtime_path, runtime_version_path, system_runtime_path, user_runtime_path,
+};
+pub use resolve::{ensure_runtime, resolve_runtime};
+pub use types::{
+    RuntimeConfig, RuntimeInfo, RuntimeInstallPlan, RuntimeInstallProgress, RuntimeInstallStep,
+    RuntimeLocation, RuntimeMode, RuntimePackage,
+};
+
+pub use detect::detect_runtime;
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn runtime_mode_round_trips() {
+        assert_eq!(
+            RuntimeMode::SharedPreferred,
+            RuntimeMode::parse("shared-preferred").unwrap()
+        );
+        assert_eq!(
+            RuntimeMode::SystemRequired,
+            RuntimeMode::parse("system-required").unwrap()
+        );
+        assert!(RuntimeMode::parse("invalid").is_none());
+    }
+
+    #[test]
+    fn runtime_package_round_trips() {
+        assert_eq!(
+            RuntimePackage::Client,
+            RuntimePackage::parse("client").unwrap()
+        );
+        assert_eq!(
+            RuntimePackage::Minimal,
+            RuntimePackage::parse("minimal").unwrap()
+        );
+        assert_eq!(
+            RuntimePackage::Standard,
+            RuntimePackage::parse("standard").unwrap()
+        );
+        assert_eq!(RuntimePackage::Standard.as_str(), "standard");
+        assert!(RuntimePackage::parse("browser").is_none());
+    }
+
+    #[test]
+    fn runtime_config_has_sane_defaults() {
+        let config = RuntimeConfig::default();
+        assert_eq!(config.mode, RuntimeMode::SharedPreferred);
+        assert_eq!(config.package, RuntimePackage::Standard);
+        assert_eq!(config.index_url, None);
+        assert!(config.allow_user_install);
+        assert!(config.allow_bundled);
+    }
+
+    #[test]
+    fn runtime_location_extracts_path() {
+        let path = PathBuf::from("/usr/lib/mullion/cef");
+        let loc = RuntimeLocation::System(path.clone());
+        assert_eq!(loc.path(), path);
+    }
+
+    #[test]
+    fn detect_runtime_skips_missing_dirs() {
+        let config = RuntimeConfig::default();
+        let runtimes = detect_runtime(&config);
+        assert!(runtimes.is_empty() || runtimes.iter().all(|r| r.location.path().is_dir()));
+    }
+
+    #[test]
+    fn version_checks_use_major_version() {
+        assert!(crate::version::version_satisfies(
+            "147.0.14+gabc+chromium-147.0.7727.138",
+            "126"
+        ));
+        assert!(!crate::version::version_satisfies(
+            "101.0.18+gabc+chromium-101.0.4951.67",
+            "126"
+        ));
+    }
+}

@@ -1,0 +1,14 @@
+#[cfg(target_os = "linux")]
+#[path = "linux/mod.rs"]
+mod platform;
+#[cfg(target_os = "macos")]
+#[path = "macos/mod.rs"]
+mod platform;
+#[cfg(target_os = "windows")]
+#[path = "windows/mod.rs"]
+mod platform;
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+#[path = "stub.rs"]
+mod platform;
+
+pub use platform::{DesktopServiceState, apply_desktop_services, start_desktop_event_forwarder};
