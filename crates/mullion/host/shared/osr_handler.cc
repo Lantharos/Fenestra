@@ -1100,6 +1100,22 @@ void MullionOsrHandler::OnAddressChange(CefRefPtr<CefBrowser> browser,
   EmitPrimaryEvent("guest.navigated", GuestNavigatedJson(*guest));
 }
 
+void MullionOsrHandler::OnFaviconURLChange(
+    CefRefPtr<CefBrowser> browser,
+    const std::vector<CefString>& icon_urls) {
+  CEF_REQUIRE_UI_THREAD();
+  GuestView* guest = GuestForBrowser(browser);
+  if (!guest) {
+    return;
+  }
+  std::vector<std::string> favicons;
+  favicons.reserve(icon_urls.size());
+  for (const CefString& icon : icon_urls) {
+    favicons.push_back(icon.ToString());
+  }
+  EmitPrimaryEvent("guest.favicon", GuestFaviconJson(guest->id, favicons));
+}
+
 bool MullionOsrHandler::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
                                     CefRefPtr<CefFrame> frame,
                                     CefRefPtr<CefRequest> request,
@@ -1377,19 +1393,20 @@ void MullionOsrHandler::HandleControlLine(const std::string& line) {
     return;
   }
   CefRefPtr<CefBrowser> target_browser = browser_;
+  GuestView* pointer_guest = nullptr;
   int pointer_x = parts.size() >= 3 ? std::atoi(parts[1].c_str()) : 0;
   int pointer_y = parts.size() >= 3 ? std::atoi(parts[2].c_str()) : 0;
   const bool pointer_event =
       parts[0] == "mouse_move" || parts[0] == "mouse_click" ||
       parts[0] == "mouse_wheel" || parts[0] == "mouse_navigation";
   if (pointer_event) {
-    GuestView* guest = guests_.TopmostAt(pointer_x, pointer_y);
-    if (guest && guest->browser) {
-      target_browser = guest->browser;
-      pointer_x -= guest->bounds.x;
-      pointer_y -= guest->bounds.y;
+    pointer_guest = guests_.TopmostAt(pointer_x, pointer_y);
+    if (pointer_guest && pointer_guest->browser) {
+      target_browser = pointer_guest->browser;
+      pointer_x -= pointer_guest->bounds.x;
+      pointer_y -= pointer_guest->bounds.y;
       if (parts[0] == "mouse_click") {
-        FocusGuest(guest->id);
+        FocusGuest(pointer_guest->id);
       }
     } else if (parts[0] == "mouse_click") {
       DismissPopupGuest();
@@ -1476,18 +1493,43 @@ void MullionOsrHandler::HandleControlLine(const std::string& line) {
     target_browser->GetMainFrame()->ExecuteJavaScript(
         script, target_browser->GetMainFrame()->GetURL(), 0);
   } else if (parts[0] == "mouse_wheel" && parts.size() >= 6) {
+    const double dx = std::atof(parts[3].c_str());
+    const double dy = std::atof(parts[4].c_str());
+    const uint32_t modifiers = std::strtoul(parts[5].c_str(), nullptr, 10);
+    if (pointer_guest && pointer_guest->intercept_horizontal_wheel &&
+        IsPredominantlyHorizontalWheel(dx, dy)) {
+      EmitPrimaryEvent(
+          "guest.wheel",
+          GuestWheelJson(pointer_guest->id, dx, dy, modifiers));
+      return;
+    }
     CefMouseEvent event;
     event.x = pointer_x;
     event.y = pointer_y;
-    const int dx = std::atoi(parts[3].c_str());
-    const int dy = std::atoi(parts[4].c_str());
-    event.modifiers = std::strtoul(parts[5].c_str(), nullptr, 10);
-    host->SendMouseWheelEvent(event, dx, dy);
+    event.modifiers = modifiers;
+    host->SendMouseWheelEvent(event, static_cast<int>(dx),
+                              static_cast<int>(dy));
   } else if (parts[0] == "key" && parts.size() >= 6) {
     const bool pressed = std::atoi(parts[1].c_str()) != 0;
     const std::string key = DecodeUriComponent(parts[2]);
     const std::string text = DecodeUriComponent(parts[3]);
     const uint32_t modifiers = std::strtoul(parts[4].c_str(), nullptr, 10);
+    const bool repeat =
+        (parts.size() >= 6 && std::atoi(parts[5].c_str()) != 0) ||
+        (modifiers & kGuestModRepeat) != 0;
+    GuestView* focused_guest =
+        focused_guest_id_.empty() ? nullptr : guests_.Find(focused_guest_id_);
+    if (focused_guest && !focused_guest->intercepted_shortcuts.empty()) {
+      if (const std::string* accelerator = MatchInterceptedShortcut(
+              focused_guest->intercepted_shortcuts, key, modifiers)) {
+        if (pressed) {
+          EmitPrimaryEvent("guest.shortcut",
+                           GuestShortcutJson(focused_guest->id, *accelerator,
+                                             key, repeat, modifiers));
+        }
+        return;
+      }
+    }
     const int key_code = KeyCodeForName(key);
     CefKeyEvent event;
     event.type = pressed ? KEYEVENT_RAWKEYDOWN : KEYEVENT_KEYUP;
@@ -1751,6 +1793,8 @@ void MullionOsrHandler::ContinueCreateGuest(
   guest.visible = request.visible;
   guest.allow_bridge = request.allow_bridge;
   guest.allow_downloads = request.allow_downloads;
+  guest.intercepted_shortcuts = request.intercepted_shortcuts;
+  guest.intercept_horizontal_wheel = request.intercept_horizontal_wheel;
   guest.popup_policy = request.popup_policy;
   guest.pending = true;
   guests_.Insert(std::move(guest));

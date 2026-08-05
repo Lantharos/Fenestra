@@ -1,5 +1,4 @@
 use std::io;
-#[cfg(unix)]
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]

@@ -673,6 +673,22 @@ mod tests {
     }
 
     #[test]
+    fn create_options_parse_input_policy() {
+        let options = GuestCreateOptions::from_value(&json!({
+            "url": "https://example.com",
+            "bounds": { "x": 0, "y": 0, "width": 800, "height": 600 },
+            "interceptedShortcuts": ["Primary+T", "Primary+K"],
+            "interceptHorizontalWheel": true,
+        }))
+        .unwrap();
+        assert_eq!(
+            options.intercepted_shortcuts,
+            vec!["Primary+T".to_string(), "Primary+K".to_string()]
+        );
+        assert!(options.intercept_horizontal_wheel);
+    }
+
+    #[test]
     fn guest_commands_are_appended() {
         let commands = bridge_commands_with_guest(vec!["notes.list".into()]);
         assert!(commands.iter().any(|c| c == CREATE_COMMAND));

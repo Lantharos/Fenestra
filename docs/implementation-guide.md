@@ -124,6 +124,11 @@ Guests default to `allow_bridge = false`. A guest gets an isolated request conte
 partition. Popup policy, download policy, visibility, bounds, intercepted shortcuts, and horizontal
 wheel interception are all explicit guest properties.
 
+While a guest is focused, matching `interceptedShortcuts` are consumed by the host: keydown emits
+`guest.shortcut` to the primary page and neither keydown nor keyup reaches the guest. With
+`interceptHorizontalWheel`, predominantly horizontal wheel samples emit `guest.wheel` and are not
+forwarded to the guest. Favicon URL changes emit `guest.favicon`.
+
 The web bridge exposes:
 
 ```text

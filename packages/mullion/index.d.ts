@@ -38,6 +38,10 @@ export interface GuestCreateOptions {
   bounds: GuestBounds;
   partition?: string;
   allowBridge?: boolean;
+  /** Accelerators consumed while the guest is focused (e.g. `Primary+K`). */
+  interceptedShortcuts?: string[];
+  /** Consume predominantly horizontal wheel/trackpad input over the guest. */
+  interceptHorizontalWheel?: boolean;
   visible?: boolean;
   popupPolicy?: string;
   allowDownloads?: boolean;
@@ -73,6 +77,32 @@ export interface GuestDownloadEvent {
   receivedBytes: number;
   state: string;
   savePath: string;
+}
+
+export interface GuestShortcutEvent {
+  id: string;
+  accelerator: string;
+  key: string;
+  repeat: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}
+
+export interface GuestWheelEvent {
+  id: string;
+  deltaX: number;
+  deltaY: number;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}
+
+export interface GuestFaviconEvent {
+  id: string;
+  favicons: string[];
 }
 
 export interface MullionGuestApi {
@@ -152,6 +182,9 @@ export declare const events: {
   guestNavigated(callback: (payload: GuestNavigatedEvent) => void): () => void;
   guestNewWindow(callback: (payload: GuestNewWindowEvent) => void): () => void;
   guestDownload(callback: (payload: GuestDownloadEvent) => void): () => void;
+  guestShortcut(callback: (payload: GuestShortcutEvent) => void): () => void;
+  guestWheel(callback: (payload: GuestWheelEvent) => void): () => void;
+  guestFavicon(callback: (payload: GuestFaviconEvent) => void): () => void;
 };
 
 export declare const appWindow: MullionWindowApi;

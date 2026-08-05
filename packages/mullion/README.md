@@ -20,6 +20,18 @@ listen("tray.click", () => appWindow.show());
 events.guestDownload((download) => {
   console.log(download.filename, download.state);
 });
+
+events.guestShortcut((event) => {
+  console.log(event.accelerator, event.key);
+});
+
+events.guestWheel((event) => {
+  console.log(event.deltaX, event.deltaY);
+});
+
+events.guestFavicon((event) => {
+  console.log(event.id, event.favicons);
+});
 ```
 
 ## Window controls
@@ -41,6 +53,8 @@ const tab = await guest.create({
   url: "https://example.com",
   bounds: { x: 16, y: 64, width: 900, height: 600 },
   partition: "persist:browser",
+  interceptedShortcuts: ["Primary+T", "Primary+K"],
+  interceptHorizontalWheel: true,
 });
 
 await tab.navigate("https://example.com/docs");

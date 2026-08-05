@@ -84,6 +84,18 @@ export const events = {
   guestDownload(callback) {
     return listen("guest.download", callback);
   },
+  /** @param {(payload: import("./index.d.ts").GuestShortcutEvent) => void} callback */
+  guestShortcut(callback) {
+    return listen("guest.shortcut", callback);
+  },
+  /** @param {(payload: import("./index.d.ts").GuestWheelEvent) => void} callback */
+  guestWheel(callback) {
+    return listen("guest.wheel", callback);
+  },
+  /** @param {(payload: import("./index.d.ts").GuestFaviconEvent) => void} callback */
+  guestFavicon(callback) {
+    return listen("guest.favicon", callback);
+  },
 };
 
 export const appWindow = {

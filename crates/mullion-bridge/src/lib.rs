@@ -12,6 +12,7 @@
 pub mod activity;
 pub mod bridge;
 pub mod guest;
+pub mod guest_input;
 pub mod metrics;
 pub mod web_bridge;
 
@@ -36,6 +37,10 @@ pub use guest::{
     RELOAD_COMMAND as GUEST_RELOAD_COMMAND, SET_BOUNDS_COMMAND as GUEST_SET_BOUNDS_COMMAND,
     SET_VISIBLE_COMMAND as GUEST_SET_VISIBLE_COMMAND, SET_ZOOM_COMMAND as GUEST_SET_ZOOM_COMMAND,
     bridge_commands_with_guest, default_partition_for, is_guest_command, normalize_guest_id,
+};
+pub use guest_input::{
+    MOD_ALT, MOD_COMMAND, MOD_CONTROL, MOD_MASK, MOD_SHIFT, is_predominantly_horizontal_wheel,
+    match_intercepted_shortcut, platform_primary_modifier,
 };
 pub use metrics::{
     LaunchMetrics, MULLION_TRACE_ENV, MullionLaunchMetric, MullionLaunchMetricsSnapshot,
