@@ -220,10 +220,19 @@ impl GpuRenderer {
         if width == 0 || height == 0 {
             return;
         }
+        let scale_factor = scale_factor.max(0.25);
+        // Wayland often emits a configure after interactive move with the same
+        // size. Reconfiguring the swapchain there flashes a blank frame.
+        if self.surface_config.width == width
+            && self.surface_config.height == height
+            && (self.scale_factor - scale_factor).abs() < f32::EPSILON
+        {
+            return;
+        }
 
         self.surface_config.width = width;
         self.surface_config.height = height;
-        self.scale_factor = scale_factor.max(0.25);
+        self.scale_factor = scale_factor;
         self.surface.configure(&self.device, &self.surface_config);
     }
 
@@ -394,29 +403,8 @@ impl GpuRenderer {
                 .map_err(|error| RendererError::Text(error.to_string()))?;
         }
 
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                self.window.request_redraw();
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Suboptimal(_) => {
-                self.surface.configure(&self.device, &self.surface_config);
-                self.window.request_redraw();
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface = self
-                    .instance
-                    .create_surface(self.window.clone())
-                    .map_err(|error| RendererError::Surface(error.to_string()))?;
-                self.surface.configure(&self.device, &self.surface_config);
-                self.window.request_redraw();
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Validation => {
-                return Err(RendererError::SurfaceValidation);
-            }
+        let Some(frame) = self.acquire_surface_texture()? else {
+            return Ok(());
         };
 
         let view = frame
@@ -487,6 +475,47 @@ impl GpuRenderer {
         frame.present();
         self.atlas.trim();
         Ok(())
+    }
+
+    fn acquire_surface_texture(&mut self) -> Result<Option<wgpu::SurfaceTexture>, RendererError> {
+        // After interactive move Wayland often returns Outdated. Reconfigure and
+        // retry in-place — returning without a present flashes transparent glass.
+        for attempt in 0..3 {
+            match self.surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(frame) => return Ok(Some(frame)),
+                wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                    // Still present this buffer; refresh config for the next frame.
+                    self.surface.configure(&self.device, &self.surface_config);
+                    return Ok(Some(frame));
+                }
+                wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                    self.window.request_redraw();
+                    return Ok(None);
+                }
+                wgpu::CurrentSurfaceTexture::Outdated => {
+                    self.surface.configure(&self.device, &self.surface_config);
+                    if attempt + 1 == 3 {
+                        self.window.request_redraw();
+                        return Ok(None);
+                    }
+                }
+                wgpu::CurrentSurfaceTexture::Lost => {
+                    self.surface = self
+                        .instance
+                        .create_surface(self.window.clone())
+                        .map_err(|error| RendererError::Surface(error.to_string()))?;
+                    self.surface.configure(&self.device, &self.surface_config);
+                    if attempt + 1 == 3 {
+                        self.window.request_redraw();
+                        return Ok(None);
+                    }
+                }
+                wgpu::CurrentSurfaceTexture::Validation => {
+                    return Err(RendererError::SurfaceValidation);
+                }
+            }
+        }
+        Ok(None)
     }
 
     fn image_draws(&mut self, display_list: &DisplayList) -> Vec<ImageDraw> {

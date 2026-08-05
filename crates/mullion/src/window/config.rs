@@ -154,7 +154,9 @@ impl Default for MullionLifecyclePolicy {
 impl MullionLifecyclePolicy {
     pub fn browser_tab() -> Self {
         Self {
-            suspend_on_blur: true,
+            // Blur suspend fights Wayland interactive-move focus loss on the
+            // non-primary window and is not worth it for visible tabs.
+            suspend_on_blur: false,
             hibernate_after: Some(Duration::from_secs(300)),
             ..Self::default()
         }

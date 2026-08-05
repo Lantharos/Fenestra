@@ -332,7 +332,7 @@ impl ExtBackgroundEffect {
                 height,
             )
         };
-        debug("committed ext_background_effect_surface_v1");
+        debug("applied ext_background_effect_surface_v1 regions");
 
         Some(WaylandEffect {
             display,
@@ -410,14 +410,10 @@ unsafe fn apply_surface_regions(
         }
     }
 
+    // Do not wl_surface_commit here. This surface is owned by wgpu; a commit
+    // without attaching a buffer races presentation and flashes transparent
+    // windows (especially after interactive move / focus regain).
     unsafe {
-        wl_proxy_marshal_flags(
-            surface,
-            SURFACE_COMMIT,
-            ptr::null(),
-            wl_proxy_get_version(surface),
-            0,
-        );
         wl_display_flush(display);
     }
     true
