@@ -20,7 +20,6 @@ use mullion_platform::WindowBackgroundEffect;
 /// | Windows | `Acrylic`   | DWM acrylic; use `.windows("mica")` for Mica  |
 /// | macOS   | `Vibrancy`  | NSVisualEffectView under-window background    |
 /// | Linux   | `Blur`      | Wayland `ext_background_effect_v1` blur       |
-/// | Asher   | (no default) | Asher is not implemented yet                 |
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GlassSpec {
     windows: Option<WindowBackgroundEffect>,

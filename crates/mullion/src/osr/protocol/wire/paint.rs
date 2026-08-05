@@ -123,6 +123,7 @@ pub(super) fn split_guest_payload(payload: &[u8]) -> io::Result<(String, Vec<u8>
     Ok((id, payload[id_end..].to_vec()))
 }
 
+#[cfg(unix)]
 pub(super) fn read_shared_bytes(fd: i32) -> io::Result<Vec<u8>> {
     let mut file = unsafe { File::from_raw_fd(fd) };
     file.seek(SeekFrom::Start(0))?;

@@ -26,43 +26,25 @@ fn notes_mullion_toml(name: &str) -> String {
 fn notes_main_rs() -> &'static str {
     r#"use std::path::PathBuf;
 
-use mullion::{
-    AppChrome, BridgeResponse, MullionWindow, run_mullion_host_from_args,
-};
+use mullion::prelude::*;
 
 fn main() {
-    let args = std::env::args().collect::<Vec<_>>();
-    if run_mullion_host_from_args(&args) {
-        return;
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let window = MullionWindow::new()
-        .title("Notes")
-        .size(900, 640)
-        .entry(format!(
-            "{}?chrome=app",
-            manifest_dir.join("ui/index.html").display()
-        ))
-        .frameless()
-        .glass()
-        .app_chrome(AppChrome::new(38, 260))
-        .bridge_handler("notes.create", |command| {
-            Ok(BridgeResponse::json(serde_json::json!({
-                "ok": true,
-                "params": command.params
-            })))
-        });
-
-    match window.launch() {
-        Ok(process) => {
-            let _ = process.wait();
-        }
-        Err(error) => {
-            eprintln!("failed to launch Mullion: {error}");
-            std::process::exit(1);
-        }
-    }
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Mullion.toml");
+    MullionWindow::main(|window| {
+        Ok(window
+            .with_manifest(manifest)?
+            .size(900, 640)
+            .frameless()
+            .glass()
+            .app_chrome(AppChrome::new(38, 260))
+            .lifecycle_policy(MullionLifecyclePolicy::browser_tab())
+            .bridge_handler("notes.create", |command| {
+                Ok(BridgeResponse::json(serde_json::json!({
+                    "ok": true,
+                    "params": command.params
+                })))
+            }))
+    });
 }
 "#
 }

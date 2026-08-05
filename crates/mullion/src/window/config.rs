@@ -112,10 +112,6 @@ impl MullionWindowConfig {
 
 pub(crate) fn low_power_glass_requested() -> bool {
     env_flag("MULLION_LOW_POWER_GLASS")
-        || env_flag("ASHER_LOW_POWER_MODE")
-        || std::env::var("ASHER_POWER_PROFILE")
-            .map(|value| matches!(value.as_str(), "battery" | "low-power" | "power-saver"))
-            .unwrap_or(false)
 }
 
 pub(crate) fn env_flag(name: &str) -> bool {
