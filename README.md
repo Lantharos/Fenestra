@@ -14,8 +14,8 @@ mullion = { git = "https://github.com/Lantharos/Mullion" }
 ```
 
 ```sh
-cargo install --git https://github.com/Lantharos/Mullion --package mullion-cli
-cargo install --git https://github.com/Lantharos/Mullion --package mullion-service
+cargo install --git https://github.com/Lantharos/Mullion mullion-cli
+cargo install --git https://github.com/Lantharos/Mullion mullion-service
 ```
 
 For the TypeScript helpers used by the web UI:
