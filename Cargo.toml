@@ -59,4 +59,5 @@ toml = "1.1.2"
 wayland-client = "0.31.14"
 wgpu = "29.0.3"
 winit = { git = "https://github.com/rust-windowing/winit", rev = "42366231b0d92480a933339bd5eaa7fba8106f42" }
+window-vibrancy = "0.8.0"
 x11rb = "0.13.2"

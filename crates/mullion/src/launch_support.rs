@@ -308,7 +308,7 @@ mod tests {
         let window = MullionWindow::new().glass();
         assert!(window.config.transparent);
         let expected = match mullion_platform::current_desktop_os() {
-            mullion_platform::PlatformOs::Windows => WindowBackgroundEffect::Mica,
+            mullion_platform::PlatformOs::Windows => WindowBackgroundEffect::Acrylic,
             mullion_platform::PlatformOs::Macos => WindowBackgroundEffect::Vibrancy,
             mullion_platform::PlatformOs::Linux => WindowBackgroundEffect::Blur,
             _ => WindowBackgroundEffect::None,
@@ -336,7 +336,7 @@ mod tests {
     fn glass_spec_drops_unknown_effect_names() {
         let window = MullionWindow::new().glass_spec(GlassSpec::new().windows("sparkles"));
         let expected = match mullion_platform::current_desktop_os() {
-            mullion_platform::PlatformOs::Windows => WindowBackgroundEffect::Mica,
+            mullion_platform::PlatformOs::Windows => WindowBackgroundEffect::Acrylic,
             mullion_platform::PlatformOs::Macos => WindowBackgroundEffect::Vibrancy,
             mullion_platform::PlatformOs::Linux => WindowBackgroundEffect::Blur,
             _ => WindowBackgroundEffect::None,

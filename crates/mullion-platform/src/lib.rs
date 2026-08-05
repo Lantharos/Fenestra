@@ -1,3 +1,6 @@
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[path = "platform/desktop_background_effect.rs"]
+mod desktop_background_effect;
 mod shell;
 #[path = "platform/wayland_background_effect.rs"]
 mod wayland_background_effect;
@@ -16,7 +19,20 @@ pub fn request_window_effect(
     window: &Arc<dyn Window>,
     options: &WindowOptions,
 ) -> Option<WindowEffect> {
-    wayland_background_effect::request(window, options)
+    #[cfg(target_os = "linux")]
+    {
+        wayland_background_effect::request(window, options)
+    }
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        desktop_background_effect::request(window, options)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        let _ = window;
+        let _ = options;
+        None
+    }
 }
 
 pub fn request_surface_effect<W>(

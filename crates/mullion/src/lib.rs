@@ -84,9 +84,12 @@ pub use launch_support::run_mullion_host_from_args;
 pub use process::MullionProcess;
 pub use window::MullionWindow;
 
+#[cfg(target_os = "linux")]
+pub(crate) use bridge_events::parse_host_control;
 pub(crate) use bridge_events::{
-    parse_host_control, prepare_bridge_command, spawn_bridge_dispatch,
-    spawn_native_host_bridge_proxy,
+    prepare_bridge_command, spawn_bridge_dispatch, spawn_native_host_bridge_proxy,
 };
-pub(crate) use browser::{HOST_CONTROL_PREFIX, apply_browser_launch_args};
+#[cfg(target_os = "linux")]
+pub(crate) use browser::HOST_CONTROL_PREFIX;
+pub(crate) use browser::apply_browser_launch_args;
 pub(crate) use launch_support::centered_window_position;

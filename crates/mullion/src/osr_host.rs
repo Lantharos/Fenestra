@@ -19,6 +19,8 @@ use mullion_platform::{
 };
 #[cfg(target_os = "linux")]
 use winit::platform::wayland::WindowAttributesWayland;
+#[cfg(target_os = "windows")]
+use winit::platform::windows::{BackdropType, WindowAttributesWindows};
 use winit::{
     application::ApplicationHandler,
     cursor::{Cursor, CursorIcon},
@@ -1549,6 +1551,12 @@ impl OsrNativeHost {
                 attributes = attributes.with_platform_attributes(Box::new(wayland_attributes));
             }
         }
+        #[cfg(target_os = "windows")]
+        if let Some(backdrop) = windows_system_backdrop(self.config.background_effect) {
+            attributes = attributes.with_platform_attributes(Box::new(
+                WindowAttributesWindows::default().with_system_backdrop(backdrop),
+            ));
+        }
         if let Some(position) =
             crate::centered_window_position(event_loop, self.config.width, self.config.height)
         {
@@ -2634,5 +2642,18 @@ fn cursor_for_cef(cursor: &str) -> CursorIcon {
         "se-resize" => CursorIcon::SeResize,
         "sw-resize" => CursorIcon::SwResize,
         _ => CursorIcon::Default,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_system_backdrop(effect: WindowBackgroundEffect) -> Option<BackdropType> {
+    match effect {
+        WindowBackgroundEffect::Acrylic | WindowBackgroundEffect::Glass => {
+            Some(BackdropType::TransientWindow)
+        }
+        WindowBackgroundEffect::Mica => Some(BackdropType::MainWindow),
+        WindowBackgroundEffect::MicaAlt => Some(BackdropType::TabbedWindow),
+        WindowBackgroundEffect::None => None,
+        _ => Some(BackdropType::TransientWindow),
     }
 }

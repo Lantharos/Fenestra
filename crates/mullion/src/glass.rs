@@ -17,8 +17,8 @@ use mullion_platform::WindowBackgroundEffect;
 ///
 /// | OS      | Effect      | Notes                                         |
 /// | ------- | ----------- | --------------------------------------------- |
-/// | Windows | `Mica`      | DWM main-window Mica system backdrop          |
-/// | macOS   | `Vibrancy`  | NSVisualEffectView, the most transparent blur |
+/// | Windows | `Acrylic`   | DWM acrylic; use `.windows("mica")` for Mica  |
+/// | macOS   | `Vibrancy`  | NSVisualEffectView under-window background    |
 /// | Linux   | `Blur`      | Wayland `ext_background_effect_v1` blur       |
 /// | Asher   | (no default) | Asher is not implemented yet                 |
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -56,7 +56,7 @@ impl GlassSpec {
     pub fn resolve(self) -> WindowBackgroundEffect {
         match mullion_platform::current_desktop_os() {
             mullion_platform::PlatformOs::Windows => {
-                self.windows.unwrap_or(WindowBackgroundEffect::Mica)
+                self.windows.unwrap_or(WindowBackgroundEffect::Acrylic)
             }
             mullion_platform::PlatformOs::Macos => {
                 self.macos.unwrap_or(WindowBackgroundEffect::Vibrancy)

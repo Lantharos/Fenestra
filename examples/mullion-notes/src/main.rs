@@ -130,8 +130,8 @@ impl ExampleChromeMode {
                     ))
                     .input_region(WindowRegion::adaptive_rounded_rect(14)),
             ),
-            // Native Win32 titlebar + DWM Mica. Custom HTML titlebars
-            // belong to --frameless / --mullion-chrome only.
+            // Native Win32 titlebar + DWM Acrylic (default glass). Use
+            // `.glass_spec(GlassSpec::new().windows("mica"))` for Mica.
             Self::Glass => window
                 .system_chrome()
                 .glass()

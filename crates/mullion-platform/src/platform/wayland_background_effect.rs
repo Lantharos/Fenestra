@@ -1,10 +1,10 @@
-use std::sync::Arc;
-
-use winit::window::Window;
-
 use crate::WindowOptions;
 #[cfg(target_os = "linux")]
 use crate::{WindowBackgroundEffect, WindowRegion};
+#[cfg(target_os = "linux")]
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use winit::window::Window;
 
 #[cfg(target_os = "linux")]
 use std::ffi::{c_char, c_uint, c_void};
@@ -66,11 +66,6 @@ where
             options,
         )
     }
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn request(_window: &Arc<dyn Window>, _options: &WindowOptions) -> Option<WaylandEffect> {
-    None
 }
 
 #[cfg(not(target_os = "linux"))]
