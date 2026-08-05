@@ -1,5 +1,8 @@
 use clap::{Parser, Subcommand};
-use mullion_service::{AppManifest, MullionService};
+use mullion_service::{
+    AppManifest, MullionService, ensure_ready, install_login_autostart_with, load_policy,
+    set_login_autostart, uninstall_login_autostart,
+};
 use std::{path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
@@ -15,13 +18,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Install login/startup autostart for the Mullion service.
     Install,
+    /// Remove login autostart, registered apps, and Mullion service data.
     Uninstall,
+    /// Disable login autostart; apps will start the service on demand instead.
+    PreferOnDemand,
+    /// Enable login autostart again.
+    PreferLogin,
     Run {
         #[arg(long, default_value_t = 21_600)]
         interval_seconds: u64,
     },
     EnsureRuntime,
+    /// Ensure the daemon is running, refresh the runtime, and report status.
+    Ensure,
     Maintain,
     Register {
         manifest: PathBuf,
@@ -52,16 +63,26 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let service = MullionService::default();
     match cli.command {
         Command::Install => {
-            install_service()?;
-            println!("installed Mullion service");
+            set_login_autostart(true)?;
+            install_login_autostart_with(&std::env::current_exe()?)?;
+            println!("installed Mullion service at login");
         }
         Command::Uninstall => {
-            uninstall_service()?;
+            uninstall_login_autostart()?;
             uninstall_registered_apps(&service)?;
             if service.root().is_dir() {
                 std::fs::remove_dir_all(service.root())?;
             }
             println!("uninstalled Mullion and its registered apps");
+        }
+        Command::PreferOnDemand => {
+            set_login_autostart(false)?;
+            println!("Mullion will start with the first app instead of at login");
+        }
+        Command::PreferLogin => {
+            set_login_autostart(true)?;
+            install_login_autostart_with(&std::env::current_exe()?)?;
+            println!("Mullion will start at login");
         }
         Command::Run { interval_seconds } => loop {
             match service.maintain() {
@@ -83,6 +104,14 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             })?;
             println!("{}", runtime.location.path().display());
         }
+        Command::Ensure => {
+            let report = ensure_ready(None)?;
+            let policy = load_policy();
+            println!(
+                "runtime={} daemon={} login_autostart={}",
+                report.runtime_version, report.daemon_running, policy.login_autostart
+            );
+        }
         Command::Maintain => {
             let report = service.maintain()?;
             println!(
@@ -101,19 +130,18 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", service.unregister(&id)?.manifest.id);
         }
         Command::Update { id } => {
-            println!(
-                "{}",
-                if service.update_app(&id)? {
-                    "updated"
-                } else {
-                    "current"
-                }
-            );
+            if service.update_app(&id)? {
+                println!("updated {id}");
+            } else {
+                println!("{id} already up to date");
+            }
         }
         Command::List { json } => {
             let apps = service.apps()?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&apps)?);
+            } else if apps.is_empty() {
+                println!("no registered apps");
             } else {
                 for app in apps {
                     println!(
@@ -129,169 +157,22 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
 fn uninstall_registered_apps(service: &MullionService) -> Result<(), Box<dyn std::error::Error>> {
     for app in service.apps()? {
-        let id = &app.manifest.id;
-        #[cfg(target_os = "windows")]
-        {
-            let _ = std::process::Command::new("reg")
-                .args([
-                    "delete",
-                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                    "/v",
-                    id,
-                    "/f",
-                ])
-                .status();
-            if let Some(app_data) = std::env::var_os("APPDATA") {
-                let shortcut = std::path::Path::new(&app_data)
-                    .join("Microsoft/Windows/Start Menu/Programs")
-                    .join(format!("{id}.lnk"));
-                let _ = std::fs::remove_file(shortcut);
-            }
-        }
+        let id = app.manifest.id;
+        let _ = service.unregister(&id);
         #[cfg(target_os = "linux")]
         if let Some(home) = std::env::var_os("HOME") {
-            let home = std::path::Path::new(&home);
-            let _ = std::fs::remove_file(
-                home.join(".local/share/applications")
-                    .join(format!("{id}.desktop")),
-            );
+            let home = std::path::PathBuf::from(home);
             let _ =
                 std::fs::remove_file(home.join(".config/autostart").join(format!("{id}.desktop")));
         }
         #[cfg(target_os = "macos")]
         if let Some(home) = std::env::var_os("HOME") {
-            let home = std::path::Path::new(&home);
-            let app_bundle = home.join("Applications").join(format!("{id}.app"));
-            if app_bundle.is_dir() {
-                let _ = std::fs::remove_dir_all(app_bundle);
-            }
             let _ = std::fs::remove_file(
-                home.join("Library/LaunchAgents")
+                std::path::PathBuf::from(home)
+                    .join("Library/LaunchAgents")
                     .join(format!("{id}.plist")),
             );
         }
     }
     Ok(())
-}
-
-fn install_service() -> Result<(), Box<dyn std::error::Error>> {
-    let executable = std::env::current_exe()?;
-    #[cfg(target_os = "windows")]
-    {
-        let command = format!("\"{}\" run", executable.display());
-        run_checked(std::process::Command::new("reg").args([
-            "add",
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-            "/v",
-            "Mullion Service",
-            "/t",
-            "REG_SZ",
-            "/d",
-            &command,
-            "/f",
-        ]))?;
-        let uninstall = format!("\"{}\" uninstall", executable.display());
-        let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Mullion";
-        for (name, value) in [
-            ("DisplayName", "Mullion".to_string()),
-            ("DisplayVersion", env!("CARGO_PKG_VERSION").to_string()),
-            ("Publisher", "Misoworks".to_string()),
-            ("UninstallString", uninstall),
-        ] {
-            run_checked(
-                std::process::Command::new("reg")
-                    .args(["add", key, "/v", name, "/t", "REG_SZ", "/d", &value, "/f"]),
-            )?;
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
-        let directory = std::path::Path::new(&home).join(".config/systemd/user");
-        std::fs::create_dir_all(&directory)?;
-        std::fs::write(
-            directory.join("mullion.service"),
-            format!(
-                "[Unit]\nDescription=Mullion runtime and app service\n\n[Service]\nExecStart={} run\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n",
-                executable.display()
-            ),
-        )?;
-        run_checked(std::process::Command::new("systemctl").args([
-            "--user",
-            "enable",
-            "--now",
-            "mullion.service",
-        ]))?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
-        let directory = std::path::Path::new(&home).join("Library/LaunchAgents");
-        std::fs::create_dir_all(&directory)?;
-        let path = directory.join("net.misoworks.mullion.plist");
-        std::fs::write(
-            &path,
-            format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>Label</key><string>net.misoworks.mullion</string><key>ProgramArguments</key><array><string>{}</string><string>run</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>\n",
-                executable.display()
-            ),
-        )?;
-        run_checked(std::process::Command::new("launchctl").args([
-            "load",
-            "-w",
-            &path.display().to_string(),
-        ]))?;
-    }
-    Ok(())
-}
-
-fn uninstall_service() -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(target_os = "windows")]
-    {
-        let _ = std::process::Command::new("reg")
-            .args([
-                "delete",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                "/v",
-                "Mullion Service",
-                "/f",
-            ])
-            .status();
-        let _ = std::process::Command::new("reg")
-            .args([
-                "delete",
-                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Mullion",
-                "/f",
-            ])
-            .status();
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let _ = std::process::Command::new("systemctl")
-            .args(["--user", "disable", "--now", "mullion.service"])
-            .status();
-        if let Some(home) = std::env::var_os("HOME") {
-            let path = std::path::Path::new(&home).join(".config/systemd/user/mullion.service");
-            let _ = std::fs::remove_file(path);
-        }
-    }
-    #[cfg(target_os = "macos")]
-    if let Some(home) = std::env::var_os("HOME") {
-        let path =
-            std::path::Path::new(&home).join("Library/LaunchAgents/net.misoworks.mullion.plist");
-        let _ = std::process::Command::new("launchctl")
-            .args(["bootout", &path.display().to_string()])
-            .status();
-        let _ = std::fs::remove_file(path);
-    }
-    Ok(())
-}
-
-fn run_checked(command: &mut std::process::Command) -> Result<(), Box<dyn std::error::Error>> {
-    let status = command.status()?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("command failed with {status}").into())
-    }
 }

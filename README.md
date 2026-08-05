@@ -3,21 +3,37 @@
 # Mullion
 
 Mullion is a native application framework built around one shared Chromium runtime. Every desktop
-uses the same CEF off-screen-rendering pipeline, the same bridge, the same guest model, and the same
-runtime service. Apps keep native windows, GPU composition, tray and palette behavior, filesystem
-access, background work, and platform integration without shipping a browser engine per app.
+uses the same off-screen-rendering pipeline, the same bridge, the same guest model, and the same
+runtime service. Apps keep native windows, GPU composition, tray and palette behavior, background
+work, and platform integration without shipping a browser engine per app.
 
 The project is early and intentionally fast-moving; pre-1.0 APIs may change when that improves the design.
 
+## Install from Git
+
+Mullion is distributed from GitHub, not crates.io. Add it to your app with a git dependency:
+
+```toml
+[dependencies]
+mullion = { git = "https://github.com/Misoworks/Mullion" }
+```
+
+Install the CLI and shared service the same way:
+
+```sh
+cargo install --git https://github.com/Misoworks/Mullion --package mullion-cli
+cargo install --git https://github.com/Misoworks/Mullion --package mullion-service
+```
+
 ## Why Mullion
 
-- One CEF runtime across Linux, Windows, and macOS
-- OSR-only rendering; no WebView2 backend and no windowed CEF fallback
+- One shared Chromium runtime across Linux, Windows, and macOS
+- OSR-only rendering on every desktop
 - Damage-driven GPU composition with dirty-rect uploads
 - Embedded guests for browser tabs, previews, authentication, and untrusted pages
 - Typed Rust-to-web bridge with explicit command and origin permissions
 - Native first-run runtime installer before any web content starts
-- Shared service for app registration, CEF updates, pruning, and update policy
+- Shared service that oversees registered apps, runtime updates, pruning, and update policy
 - Windows, macOS, and Linux bundle staging from one `Mullion.toml`
 - Tray apps, hidden windows, palettes, global shortcuts, deep links, autostart, and single-instance apps
 - Lifecycle throttling and hibernation for background windows and browser-style workloads
@@ -30,12 +46,12 @@ app process
         |
         +-- native OSR window (winit + wgpu)
         |      |
-        |      +-- CEF helper process
+        |      +-- Mullion host process
         |      +-- main page and guest surfaces
         |      +-- damage-only texture uploads
         |
         +-- mullion-service
-               +-- shared CEF runtime
+               +-- shared Chromium runtime
                +-- registered app catalog
                +-- runtime updates and pruning
                +-- app update channels and policy
@@ -48,15 +64,9 @@ switches to full-frame redraws.
 
 ## Quick start
 
-Install the CLI:
-
 ```sh
 cargo install --git https://github.com/Misoworks/Mullion --package mullion-cli
-```
-
-Create and run an app:
-
-```sh
+cargo install --git https://github.com/Misoworks/Mullion --package mullion-service
 mullion new my-app
 cd my-app
 cargo run
@@ -86,8 +96,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`launch_or_install` opens a small native bootstrap window when the shared runtime is missing. The
-download, verification, extraction, and host build happen before the page is allowed to start.
+`launch_or_install` contacts the shared Mullion service, opens a small native bootstrap window when
+the runtime is missing, then downloads, verifies, extracts, and builds the host before the page starts.
 
 ## Window recipes
 
@@ -133,6 +143,10 @@ Runtime data is stored per platform under the Mullion application-data directory
 ~/.local/share/mullion/runtimes/cef/
 ```
 
+`mullion-service` oversees the shared runtime and every registered Mullion app. By default it installs
+a login/startup entry so it is ready when the computer starts. If the user disables that
+(`mullion-service prefer-on-demand`), the service starts when the first Mullion app launches.
+
 Useful commands:
 
 ```sh
@@ -142,15 +156,19 @@ mullion runtime prepare
 mullion runtime list
 mullion runtime prune --keep 2
 
+mullion-service install
+mullion-service prefer-on-demand
+mullion-service prefer-login
+mullion-service ensure
 mullion-service ensure-runtime
 mullion-service list
 mullion-service maintain
 mullion-service run --interval-seconds 21600
 ```
 
-The long-running service checks for the latest compatible CEF build, installs it atomically, keeps
-running apps on their current runtime, and prunes old versions after they become unused. Apps are
-registered in one atomic catalog with version, executable, update channel, and update policy.
+The long-running service checks for the latest compatible Chromium runtime, installs it atomically,
+keeps running apps on their current runtime, and prunes old versions after they become unused. Apps
+are registered in one atomic catalog with version, executable, update channel, and update policy.
 Because Mullion is the shared system runtime, `mullion-service uninstall` also removes every
 registered Mullion app and its desktop integration.
 
@@ -188,9 +206,9 @@ the fully staged tree and platform metadata remain in the output directory.
 
 | Crate | Responsibility |
 | --- | --- |
-| `mullion` | Public API, OSR host, GPU renderer, CEF helper, guests, lifecycle, desktop services |
-| `mullion-runtime` | CEF discovery, verified downloads, locks, versions, paths, updates, pruning |
-| `mullion-service` | Shared process, app registry, update policy, runtime maintenance |
+| `mullion` | Public API, OSR host, GPU renderer, Mullion host, guests, lifecycle, desktop services |
+| `mullion-runtime` | Runtime discovery, verified downloads, locks, versions, paths, updates, pruning |
+| `mullion-service` | Shared process, app registry, update policy, runtime maintenance, login/on-demand start |
 | `mullion-bridge` | Typed commands, permissions, activity leases, guests, injected web API |
 | `mullion-platform` | Native window, shell, region, tray, shortcut, and platform primitives |
 | `mullion-cli` | Project creation, source installs, runtime commands, bundles |

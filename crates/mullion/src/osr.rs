@@ -37,7 +37,7 @@ pub(crate) fn launch_process(
     url: &str,
     metrics: LaunchMetrics,
 ) -> MullionResult<MullionProcess> {
-    let host_binary = crate::ensure_cef_host(runtime_dir)
+    let host_binary = crate::ensure_host(runtime_dir)
         .map_err(|message| MullionError::CreationFailed { message })?;
     metrics.mark("host.ready");
     let host_config_path =
@@ -70,8 +70,8 @@ pub(crate) fn launch_process(
         "lifecycle": crate::osr_protocol::lifecycle_to_json(&config.lifecycle),
         "dev_mode": config.dev_mode(),
         "remote_devtools_port": config.effective_remote_devtools_port(),
-        "remote_devtools_disabled": config.chromium.remote_devtools_disabled,
-        "hardware_decode": config.chromium.hardware_decode_enabled(),
+        "remote_devtools_disabled": config.browser.remote_devtools_disabled,
+        "hardware_decode": config.browser.hardware_decode_enabled(),
     });
     std::fs::write(&host_config_path, body.to_string()).map_err(|error| {
         MullionError::CreationFailed {
@@ -164,7 +164,7 @@ pub(crate) fn cef_osr_command(
             "--cache-path={}",
             cache_dir.join("browser").display()
         ));
-    crate::apply_cef_launch_args(&mut command, &config.chromium_options(), config.dev_mode);
+    crate::apply_browser_launch_args(&mut command, &config.browser_options(), config.dev_mode);
     command
         .current_dir(&release_dir)
         .env("GDK_BACKEND", "wayland")

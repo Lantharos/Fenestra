@@ -1,7 +1,7 @@
 [package]
 name = "mullion"
-description = "Cross-platform CEF OSR application framework and native desktop runtime"
-keywords = ["mullion", "cef", "chromium", "webview", "desktop"]
+description = "Cross-platform Mullion application framework and native desktop runtime"
+keywords = ["mullion", "desktop", "chromium", "osr", "webview"]
 categories = ["gui", "rendering", "web-programming"]
 include = [
     "src/**/*",
@@ -23,6 +23,7 @@ readme = "README.md"
 mullion-runtime.workspace = true
 mullion-bridge.workspace = true
 mullion-platform.workspace = true
+mullion-service.workspace = true
 bytemuck.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true

@@ -22,9 +22,10 @@ use winit::platform::wayland::WindowAttributesWayland;
 use winit::{
     application::ApplicationHandler,
     cursor::{Cursor, CursorIcon},
+    data_transfer::{DataTransferId, DataTransferSendBuilder, SendData, TypeHint},
     dpi::{LogicalSize, PhysicalSize},
     event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
+    event_loop::{ActiveEventLoop, ControlFlow, DndAction, EventLoop, EventLoopProxy},
     keyboard::Key,
     monitor::MonitorHandle,
     window::{
@@ -40,9 +41,10 @@ use crate::{
     MullionLifecyclePolicy, MullionWindowChrome, MullionWindowControlRegion, osr,
     osr_frame_buffer::FrameBuffer,
     osr_protocol::{
-        MAIN_TEXTURE_ID, OsrFrame, OsrMessage, OsrPaintBatch, OsrSurface, POPUP_OVERLAY_ID,
-        POPUP_TEXTURE_ID, control_regions_from_json, encode_component, lifecycle_from_json,
-        read_message, rects_from_json, regions_from_json, shell_surface_from_json,
+        FileDragRequest, MAIN_TEXTURE_ID, OsrFrame, OsrMessage, OsrPaintBatch, OsrSurface,
+        POPUP_OVERLAY_ID, POPUP_TEXTURE_ID, control_regions_from_json, encode_component,
+        lifecycle_from_json, read_message, rects_from_json, regions_from_json,
+        shell_surface_from_json,
     },
 };
 use image::{
@@ -142,8 +144,8 @@ pub(crate) struct OsrHostConfig {
 }
 
 impl OsrHostConfig {
-    pub(crate) fn chromium_options(&self) -> crate::ChromiumOptions {
-        crate::ChromiumOptions {
+    pub(crate) fn browser_options(&self) -> crate::BrowserOptions {
+        crate::BrowserOptions {
             remote_devtools_port: self.remote_devtools_port,
             remote_devtools_disabled: self.remote_devtools_disabled,
             #[cfg(target_os = "linux")]
@@ -301,6 +303,7 @@ struct OsrNativeHost {
     activity_hibernation_blockers: BTreeSet<String>,
     presented: bool,
     pending_activation_token: Option<ActivationToken>,
+    active_file_drag: Option<DataTransferId>,
     started: Instant,
 }
 
@@ -443,6 +446,7 @@ impl OsrNativeHost {
             activity_hibernation_blockers: BTreeSet::new(),
             presented: false,
             pending_activation_token: None,
+            active_file_drag: None,
             started: Instant::now(),
         }
     }
@@ -629,6 +633,62 @@ impl OsrNativeHost {
             let _ = socket.write_all(line.as_bytes());
             let _ = socket.flush();
         }
+    }
+
+    fn start_file_drag(&mut self, event_loop: &dyn ActiveEventLoop, request: FileDragRequest) {
+        let FileDragRequest { paths, x: _, y: _ } = request;
+        let Some(window) = self.window.clone() else {
+            self.finish_file_drag(None);
+            return;
+        };
+
+        let paths: Vec<PathBuf> = paths
+            .into_iter()
+            .map(|path| PathBuf::from(path.trim()))
+            .filter(|path| !path.as_os_str().is_empty())
+            .collect();
+        if paths.is_empty() {
+            self.finish_file_drag(None);
+            return;
+        }
+
+        let transfer = DataTransferSendBuilder::new(paths)
+            .with_type(TypeHint::UriList, |paths, _| {
+                SendData::from_file_paths(paths.iter())
+            })
+            .build();
+
+        match event_loop.start_drag(
+            window.id(),
+            transfer,
+            &[DndAction::Copy, DndAction::Move],
+            None,
+        ) {
+            Ok(id) => {
+                self.active_file_drag = Some(id);
+            }
+            Err(error) => {
+                eprintln!("failed to start native file drag: {error}");
+                self.finish_file_drag(None);
+            }
+        }
+    }
+
+    fn finish_file_drag(&mut self, action: Option<DndAction>) {
+        self.active_file_drag = None;
+        let operation = match action {
+            Some(DndAction::Copy) => "copy",
+            Some(DndAction::Move) => "move",
+            Some(DndAction::Link) => "link",
+            _ => "none",
+        };
+        let (x, y) = self
+            .content_position(self.cursor_x, self.cursor_y)
+            .unwrap_or((self.cursor_x, self.cursor_y));
+        self.send_control(&format!(
+            "file_drag_ended\t{:.0}\t{:.0}\t{operation}\n",
+            x, y
+        ));
     }
 
     fn capture_guest(&self, browser_id: &str, request_id: &str, guest_id: &str) {
@@ -858,13 +918,8 @@ impl OsrNativeHost {
                         }
                     }
                 }
-                OsrHostEvent::Message(OsrMessage::FileDragRequested(_request)) => {
-                    // TODO: implement native file drag-out for OSR windows.
-                    // The host needs to use an X11 DnD or Wayland data-device
-                    // implementation to start a system drag with the file URIs
-                    // so the user can drop files from the app into other apps
-                    // (file managers, editors, desktops, etc.). Until that is
-                    // wired up, file drag-out silently fails in OSR mode.
+                OsrHostEvent::Message(OsrMessage::FileDragRequested(request)) => {
+                    self.start_file_drag(event_loop, request);
                 }
                 OsrHostEvent::Message(OsrMessage::MinimizeRequested) => {
                     if self.config.lifecycle.suspend_on_minimize {
@@ -1843,6 +1898,16 @@ impl ApplicationHandler for OsrNativeHost {
             WindowEvent::MouseWheel { delta, .. } => {
                 self.forward_mouse_wheel(delta);
             }
+            WindowEvent::OutgoingDragDropped { id, action } => {
+                if self.active_file_drag == Some(id) {
+                    self.finish_file_drag(action);
+                }
+            }
+            WindowEvent::OutgoingDragCanceled { id } => {
+                if self.active_file_drag == Some(id) {
+                    self.finish_file_drag(None);
+                }
+            }
             _ => {}
         }
     }
@@ -1992,7 +2057,7 @@ impl OsrNativeHost {
                 "mouse_move\t{:.2}\t{:.2}\t{}\t{}\n",
                 x,
                 y,
-                self.chromium_modifiers(),
+                self.input_modifiers(),
                 i32::from(leave)
             ));
         }
@@ -2010,7 +2075,7 @@ impl OsrNativeHost {
             x,
             y,
             button,
-            self.chromium_modifiers(),
+            self.input_modifiers(),
             i32::from(up),
             click_count.max(1)
         ));
@@ -2030,7 +2095,7 @@ impl OsrNativeHost {
             x,
             y,
             button,
-            self.chromium_modifiers()
+            self.input_modifiers()
         ));
     }
 
@@ -2041,6 +2106,7 @@ impl OsrNativeHost {
         let (dx, dy, precision) = match delta {
             MouseScrollDelta::LineDelta(x, y) => ((x * 120.0) as i32, (y * 120.0) as i32, false),
             MouseScrollDelta::PixelDelta(position) => (position.x as i32, position.y as i32, true),
+            _ => return,
         };
         self.send_control(&format!(
             "mouse_wheel\t{:.2}\t{:.2}\t{}\t{}\t{}\n",
@@ -2048,7 +2114,7 @@ impl OsrNativeHost {
             y,
             dx,
             dy,
-            self.chromium_modifiers()
+            self.input_modifiers()
                 | if precision {
                     EVENTFLAG_PRECISION_SCROLLING_DELTA
                 } else {
@@ -2073,12 +2139,12 @@ impl OsrNativeHost {
             i32::from(pressed),
             encode_component(&key_name(event)),
             encode_component(text),
-            self.chromium_modifiers() | if event.repeat { EVENTFLAG_IS_REPEAT } else { 0 },
+            self.input_modifiers() | if event.repeat { EVENTFLAG_IS_REPEAT } else { 0 },
             i32::from(event.repeat)
         ));
     }
 
-    fn chromium_modifiers(&self) -> u32 {
+    fn input_modifiers(&self) -> u32 {
         let mut modifiers = 0;
         if self.modifiers.shift_key() {
             modifiers |= EVENTFLAG_SHIFT_DOWN;

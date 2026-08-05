@@ -232,7 +232,7 @@ fn read_config(path: &Path) -> Result<RuntimeConfig, String> {
         min_version: value
             .get("min_version")
             .and_then(Value::as_str)
-            .unwrap_or("126")
+            .unwrap_or("144")
             .to_string(),
         index_url: value
             .get("index_url")

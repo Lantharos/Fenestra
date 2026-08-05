@@ -154,6 +154,7 @@ class MullionOsrHandler : public CefClient,
                         DragOperation operation) override;
 
   void HandleControlLine(const std::string& line);
+  void FinishNativeFileDrag(int x, int y, const std::string& operation);
   void ApplyHostControl(const std::string& command, const std::string& value);
   void ResolveBridgeResponse(const std::string& browser_id,
                              const std::string& request_id,
@@ -271,6 +272,7 @@ class MullionOsrHandler : public CefClient,
 	  int active_frame_rate_ = 60;
 	  int background_frame_rate_ = 5;
 	  bool closing_ = false;
+  CefRefPtr<CefBrowser> drag_source_browser_;
 
   IMPLEMENT_REFCOUNTING(MullionOsrHandler);
 };

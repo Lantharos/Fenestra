@@ -22,7 +22,7 @@ const HOST_JSON_UTIL_CC: &str = include_str!("../host/shared/json_util.cc");
 const HOST_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const HOST_BUILD_LOCK_STALE_AFTER: Duration = Duration::from_secs(30 * 60);
 
-pub fn cef_host_binary_name() -> &'static str {
+pub fn host_binary_name() -> &'static str {
     if cfg!(target_os = "windows") {
         "mullion-host.exe"
     } else {
@@ -30,12 +30,12 @@ pub fn cef_host_binary_name() -> &'static str {
     }
 }
 
-pub fn cef_host_release_binary(runtime_dir: &Path) -> PathBuf {
-    runtime_dir.join("Release").join(cef_host_binary_name())
+pub fn host_release_binary(runtime_dir: &Path) -> PathBuf {
+    runtime_dir.join("Release").join(host_binary_name())
 }
 
-pub fn ensure_cef_host(runtime_dir: &Path) -> Result<PathBuf, String> {
-    let binary = cef_host_release_binary(runtime_dir);
+pub fn ensure_host(runtime_dir: &Path) -> Result<PathBuf, String> {
+    let binary = host_release_binary(runtime_dir);
     let source_dir = runtime_dir.join(".mullion-host-src");
     let build_dir = runtime_dir.join(".mullion-host-build");
     let source_stamp = build_dir.join("mullion-host-source.fnv");

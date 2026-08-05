@@ -45,7 +45,7 @@ use std::{
 pub use desktop_services::{
     DesktopServiceState, apply_desktop_services, start_desktop_event_forwarder,
 };
-pub use host::{browser_profile_dir, cef_host_release_binary, ensure_cef_host, ld_library_path};
+pub use host::{browser_profile_dir, ensure_host, host_release_binary, ld_library_path};
 use mullion_bridge::LaunchMetrics;
 pub use mullion_bridge::{
     ActivityEventEmitter, ActivityHostUpdate, ActivityOptions, ActivityRecord, MullionActivityLease,
@@ -75,6 +75,10 @@ pub use mullion_runtime::{
     RuntimeLocation, RuntimeMode, RuntimePackage, detect_runtime,
     install_user_runtime_with_progress, resolve_runtime, user_runtime_path,
 };
+pub use mullion_service::{
+    AppManifest, AppUpdateConfig, MullionService, ServicePolicy, UpdatePolicy, ensure_ready,
+    set_login_autostart,
+};
 use process_tree::{ManagedChild, prepare_child_command};
 use thiserror::Error;
 use winit::{dpi::PhysicalPosition, event_loop::ActiveEventLoop};
@@ -93,16 +97,16 @@ pub(crate) const DISABLED_CEF_FEATURES: &str = concat!(
 
 const DEFAULT_REMOTE_DEVTOOLS_PORT: u16 = 9222;
 
-/// Linux CEF launch options for media-heavy apps (WebCodecs, MSE, hardware decode).
+/// Browser-process launch options (devtools, hardware decode, and related flags).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ChromiumOptions {
+pub struct BrowserOptions {
     pub remote_devtools_port: Option<u16>,
     pub remote_devtools_disabled: bool,
     #[cfg(target_os = "linux")]
     pub vaapi_hardware_decode: bool,
 }
 
-impl Default for ChromiumOptions {
+impl Default for BrowserOptions {
     fn default() -> Self {
         Self {
             remote_devtools_port: None,
@@ -113,7 +117,7 @@ impl Default for ChromiumOptions {
     }
 }
 
-impl ChromiumOptions {
+impl BrowserOptions {
     pub fn effective_remote_devtools_port(&self, dev_mode: bool) -> Option<u16> {
         if self.remote_devtools_disabled {
             return None;
@@ -139,9 +143,9 @@ impl ChromiumOptions {
     }
 }
 
-pub(crate) fn apply_cef_launch_args(
+pub(crate) fn apply_browser_launch_args(
     command: &mut Command,
-    options: &ChromiumOptions,
+    options: &BrowserOptions,
     dev_mode: bool,
 ) {
     let enabled_features: Vec<&str> = {
@@ -193,10 +197,10 @@ pub(crate) fn apply_cef_launch_args(
 pub enum MullionError {
     #[error("{0}")]
     Runtime(#[from] RuntimeError),
-    #[error("CEF OSR host creation failed: {message}")]
+    #[error("window creation failed: {message}")]
     CreationFailed { message: String },
     #[error("Mullion currently supports Linux, macOS, and Windows")]
-    MobileSystemWebViewRequired,
+    MobileUnsupported,
 }
 
 pub type MullionResult<T> = std::result::Result<T, MullionError>;
@@ -238,7 +242,7 @@ pub struct MullionWindowConfig {
     pub runtime: RuntimeConfig,
     pub bridge: BridgeRegistry,
     pub security: ContentSecurity,
-    pub chromium: ChromiumOptions,
+    pub browser: BrowserOptions,
 }
 
 impl Default for MullionWindowConfig {
@@ -275,7 +279,7 @@ impl Default for MullionWindowConfig {
             runtime: RuntimeConfig::default(),
             bridge: BridgeRegistry::default(),
             security: ContentSecurity::default(),
-            chromium: ChromiumOptions::default(),
+            browser: BrowserOptions::default(),
         }
     }
 }
@@ -295,8 +299,11 @@ impl MullionWindowConfig {
     }
 
     pub fn effective_remote_devtools_port(&self) -> Option<u16> {
-        self.chromium
-            .effective_remote_devtools_port(self.dev_mode())
+        self.browser.effective_remote_devtools_port(self.dev_mode())
+    }
+
+    pub fn browser_options(&self) -> BrowserOptions {
+        self.browser.clone()
     }
 }
 
@@ -462,7 +469,7 @@ impl MullionWindowControlRegion {
     }
 }
 
-/// Cross-platform CEF OSR window builder.
+/// Cross-platform Mullion window builder.
 #[derive(Clone, Debug)]
 pub struct MullionWindow {
     pub config: MullionWindowConfig,
@@ -889,23 +896,23 @@ impl MullionWindow {
     /// When `dev_url` is configured, remote DevTools are enabled automatically on port 9222.
     /// Attach from Chrome at `chrome://inspect` or open `http://127.0.0.1:9222`.
     pub fn debug(mut self, port: u16) -> Self {
-        self.config.chromium.remote_devtools_port = Some(port);
-        self.config.chromium.remote_devtools_disabled = false;
+        self.config.browser.remote_devtools_port = Some(port);
+        self.config.browser.remote_devtools_disabled = false;
         self
     }
 
     /// Disables remote DevTools even when `dev_url` is configured.
     pub fn without_debug(mut self) -> Self {
-        self.config.chromium.remote_devtools_disabled = true;
+        self.config.browser.remote_devtools_disabled = true;
         self
     }
 
-    /// Linux CEF only: enable VA-API hardware video decode for WebCodecs/MSE.
+    /// Linux only: enable VA-API hardware video decode for WebCodecs/MSE.
     ///
     /// Enabled by default on Linux.
     #[cfg(target_os = "linux")]
     pub fn vaapi_hardware_decode(mut self, enabled: bool) -> Self {
-        self.config.chromium.vaapi_hardware_decode = enabled;
+        self.config.browser.vaapi_hardware_decode = enabled;
         self
     }
 
@@ -1306,11 +1313,13 @@ impl MullionWindow {
     }
 
     pub fn launch(self) -> MullionResult<MullionProcess> {
+        touch_shared_service(&self.config);
         let runtime = resolve_runtime(&self.config.runtime)?;
         self.launch_with_runtime(runtime)
     }
 
     pub fn launch_or_install(self) -> MullionResult<MullionProcess> {
+        touch_shared_service(&self.config);
         bootstrap::install(&self.config.runtime)?;
         let runtime = resolve_runtime(&self.config.runtime)?;
         self.launch_with_runtime(runtime)
@@ -1320,7 +1329,7 @@ impl MullionWindow {
         #[cfg(any(target_os = "android", target_os = "ios"))]
         {
             let _ = runtime;
-            return Err(MullionError::MobileSystemWebViewRequired);
+            return Err(MullionError::MobileUnsupported);
         }
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
@@ -1502,6 +1511,33 @@ fn metrics_label(config: &MullionWindowConfig) -> String {
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(&config.title)
         .to_string()
+}
+
+fn touch_shared_service(config: &MullionWindowConfig) {
+    let register = config.app_id.as_ref().and_then(|id| {
+        let executable = std::env::current_exe().ok()?;
+        Some(mullion_service::AppManifest {
+            id: id.clone(),
+            name: config.title.clone(),
+            version: "0.0.0".to_string(),
+            executable,
+            args: Vec::new(),
+            update: None,
+        })
+    });
+    match mullion_service::ensure_ready(register) {
+        Ok(report) => {
+            if std::env::var_os("MULLION_TRACE").is_some() {
+                eprintln!(
+                    "mullion-service ready runtime={} daemon={} login_autostart={}",
+                    report.runtime_version, report.daemon_running, report.login_autostart
+                );
+            }
+        }
+        Err(error) => {
+            eprintln!("mullion-service: {error}");
+        }
+    }
 }
 
 fn shell_command(command: &str) -> Command {

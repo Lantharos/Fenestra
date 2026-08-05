@@ -16,6 +16,15 @@ use std::{
 };
 use thiserror::Error;
 
+mod lifecycle;
+
+pub use lifecycle::{
+    ServicePolicy, ServiceReadyReport, ensure_daemon_running, ensure_ready,
+    install_login_autostart, install_login_autostart_with, is_daemon_running, load_policy,
+    policy_path, resolve_service_executable, save_policy, set_login_autostart, start_daemon,
+    uninstall_login_autostart,
+};
+
 const REGISTRY_VERSION: u32 = 1;
 
 #[derive(Debug, Error)]

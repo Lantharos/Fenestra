@@ -58,5 +58,5 @@ tokio = { version = "1.48.0", features = ["rt", "sync", "time", "macros"] }
 toml = "1.1.2"
 wayland-client = "0.31.14"
 wgpu = "29.0.3"
-winit = "0.31.0-beta.2"
+winit = { git = "https://github.com/rust-windowing/winit", rev = "42366231b0d92480a933339bd5eaa7fba8106f42" }
 x11rb = "0.13.2"

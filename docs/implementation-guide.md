@@ -76,8 +76,8 @@ the builder keeps common cases one method away:
 - services: tray, autostart, shortcuts, deep links, native messaging and single instance
 - runtime: package, minimum version, bundled/shared policy
 
-The API deliberately avoids backend types. `ChromiumOptions` contains browser-process tuning; apps do
-not select a renderer.
+The API deliberately avoids backend types. `BrowserOptions` contains browser-process tuning; apps do
+not select a renderer. Mullion always uses the shared OSR host.
 
 ## Bridge security
 

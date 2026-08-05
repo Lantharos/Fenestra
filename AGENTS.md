@@ -4,7 +4,7 @@
 - Mullion runtime detection, downloads, validation, manifests, locks, pruning, and runtime paths live in `crates/mullion-runtime`.
 - Shared app registration, runtime maintenance, and update policy live in `crates/mullion-service`.
 - CEF host source, CEF process launch, browser profiles, OSR transport, GPU composition, guests, and the public window API live in `crates/mullion`.
-- Mullion uses CEF OSR on every desktop. Do not add windowed CEF, WebView2, or another renderer fallback.
+- Mullion uses OSR on every desktop. Do not add windowed CEF, WebView2, or another renderer fallback.
 - `mullion-platform` owns lightweight window/platform/shell types, compositor regions, and native platform primitives.
 - Mullion crates must not depend on Stuk crates. If a primitive is required by Mullion, keep it in Mullion-owned crates or modules.
 - Stuk must not depend on Mullion.

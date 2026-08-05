@@ -133,7 +133,7 @@ impl Default for RuntimeConfig {
         Self {
             mode: RuntimeMode::SharedPreferred,
             package: RuntimePackage::Standard,
-            min_version: "126".to_string(),
+            min_version: "144".to_string(),
             index_url: None,
             allow_user_install: true,
             allow_bundled: true,
@@ -545,33 +545,44 @@ pub fn latest_install_plan(config: &RuntimeConfig) -> Result<RuntimeInstallPlan,
         .and_then(|major| major.parse::<u32>().ok())
         .unwrap_or(0);
 
-    for version in &platform_index.versions {
-        if major_version(&version.cef_version) < min_major {
-            continue;
-        }
-        if let Some(file) = version
-            .files
-            .iter()
-            .find(|file| file.kind == config.package.as_str())
-        {
-            let install_dir = runtime_version_path(config.package, &version.cef_version);
-            return Ok(RuntimeInstallPlan {
-                package: config.package,
-                version: version.cef_version.clone(),
-                platform: platform.to_string(),
-                archive_name: file.name.clone(),
-                url: archive_url(index_url, &file.name),
-                sha1: file.sha1.clone(),
-                install_dir,
-            });
-        }
-    }
+    let mut candidates = platform_index
+        .versions
+        .iter()
+        .filter(|version| major_version(&version.cef_version) >= min_major)
+        .filter_map(|version| {
+            version
+                .files
+                .iter()
+                .find(|file| file.kind == config.package.as_str())
+                .map(|file| (version, file))
+        })
+        .collect::<Vec<_>>();
 
-    Err(RuntimeError::NotFound(format!(
-        "no {} CEF build found for {platform} at Chromium {} or newer",
-        config.package.as_str(),
-        config.min_version
-    )))
+    candidates.sort_by_key(|(version, _)| {
+        (
+            channel_preference(version.channel.as_deref()),
+            std::cmp::Reverse(version_sort_key(&version.cef_version)),
+        )
+    });
+
+    let Some((version, file)) = candidates.into_iter().next() else {
+        return Err(RuntimeError::NotFound(format!(
+            "no {} CEF build found for {platform} at Chromium {} or newer",
+            config.package.as_str(),
+            config.min_version
+        )));
+    };
+
+    let install_dir = runtime_version_path(config.package, &version.cef_version);
+    Ok(RuntimeInstallPlan {
+        package: config.package,
+        version: version.cef_version.clone(),
+        platform: platform.to_string(),
+        archive_name: file.name.clone(),
+        url: archive_url(index_url, &file.name),
+        sha1: file.sha1.clone(),
+        install_dir,
+    })
 }
 
 fn detect_version(runtime_dir: &Path) -> String {
@@ -641,17 +652,17 @@ fn is_runtime_dir(path: &Path) -> bool {
         || path.join("Chromium Embedded Framework.framework").is_dir()
 }
 
-pub fn has_cef_host(path: &Path) -> bool {
-    launchable_cef_host_candidates(path)
+pub fn has_host_binary(path: &Path) -> bool {
+    launchable_host_candidates(path)
         .into_iter()
         .any(|candidate| candidate.is_file())
 }
 
-pub fn cef_host_candidates(runtime_dir: &Path) -> Vec<PathBuf> {
-    launchable_cef_host_candidates(runtime_dir)
+pub fn host_candidates(runtime_dir: &Path) -> Vec<PathBuf> {
+    launchable_host_candidates(runtime_dir)
 }
 
-pub fn launchable_cef_host_candidates(runtime_dir: &Path) -> Vec<PathBuf> {
+pub fn launchable_host_candidates(runtime_dir: &Path) -> Vec<PathBuf> {
     vec![
         runtime_dir.join("cefclient"),
         runtime_dir.join("Release").join("cefclient"),
@@ -680,7 +691,7 @@ fn runtime_is_launchable_client(runtime_dir: &Path) -> bool {
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.ends_with(RuntimePackage::Client.install_suffix()))
-        && has_cef_host(runtime_dir)
+        && has_host_binary(runtime_dir)
 }
 
 fn runtime_is_standard(runtime_dir: &Path) -> bool {
@@ -701,7 +712,12 @@ fn select_runtime(config: &RuntimeConfig, runtimes: Vec<RuntimeInfo>) -> Option<
         .filter(|runtime| location_allowed(config.mode, &runtime.location))
         .collect::<Vec<_>>();
 
-    compatible.sort_by_key(|runtime| runtime_priority(config.mode, &runtime.location));
+    compatible.sort_by_key(|runtime| {
+        (
+            runtime_priority(config.mode, &runtime.location),
+            std::cmp::Reverse(version_sort_key(&runtime.version)),
+        )
+    });
     compatible.into_iter().next()
 }
 
@@ -752,10 +768,23 @@ fn version_satisfies(found: &str, required: &str) -> bool {
 }
 
 fn runtime_sort_key(path: &Path) -> Vec<u32> {
-    detect_version(path)
+    version_sort_key(&detect_version(path))
+}
+
+fn version_sort_key(version: &str) -> Vec<u32> {
+    version
         .split(['.', '+', '-', '_'])
         .filter_map(|part| part.parse::<u32>().ok())
         .collect()
+}
+
+fn channel_preference(channel: Option<&str>) -> u8 {
+    match channel {
+        Some("stable") | None => 0,
+        Some("beta") => 1,
+        Some("dev") | Some("canary") => 2,
+        _ => 3,
+    }
 }
 
 fn major_version(version: &str) -> u32 {
@@ -807,6 +836,8 @@ struct CefPlatformIndex {
 #[derive(Deserialize)]
 struct CefVersion {
     cef_version: String,
+    #[serde(default)]
+    channel: Option<String>,
     files: Vec<CefFile>,
 }
 

@@ -22,7 +22,7 @@ impl OsrLayerHost {
             "mouse_move\t{:.2}\t{:.2}\t{}\t{}\n",
             self.cursor_x.max(0.0),
             self.cursor_y.max(0.0),
-            self.chromium_modifiers(),
+            self.input_modifiers(),
             i32::from(leave)
         ));
     }
@@ -51,7 +51,7 @@ impl OsrLayerHost {
             self.cursor_y.max(0.0),
             dx,
             dy,
-            self.chromium_modifiers() | EVENTFLAG_PRECISION_SCROLLING_DELTA
+            self.input_modifiers() | EVENTFLAG_PRECISION_SCROLLING_DELTA
         ));
     }
 
@@ -71,7 +71,7 @@ impl OsrLayerHost {
             i32::from(pressed),
             encode_component(&key_name(event)),
             encode_component(text),
-            self.chromium_modifiers() | if event.repeat { EVENTFLAG_IS_REPEAT } else { 0 },
+            self.input_modifiers() | if event.repeat { EVENTFLAG_IS_REPEAT } else { 0 },
             i32::from(event.repeat)
         ));
     }
@@ -85,7 +85,7 @@ impl OsrLayerHost {
             self.cursor_x.max(0.0),
             self.cursor_y.max(0.0),
             button,
-            self.chromium_modifiers(),
+            self.input_modifiers(),
             i32::from(up),
             click_count.max(1)
         ));
@@ -102,11 +102,11 @@ impl OsrLayerHost {
             self.cursor_x.max(0.0),
             self.cursor_y.max(0.0),
             button,
-            self.chromium_modifiers()
+            self.input_modifiers()
         ));
     }
 
-    fn chromium_modifiers(&self) -> u32 {
+    fn input_modifiers(&self) -> u32 {
         let mut modifiers = 0;
         if self.modifiers.shift_key() {
             modifiers |= EVENTFLAG_SHIFT_DOWN;

@@ -77,10 +77,11 @@ pub(crate) enum OsrMessage {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub(crate) struct FileDragRequest {
     pub paths: Vec<String>,
+    #[allow(dead_code)]
     pub x: i32,
+    #[allow(dead_code)]
     pub y: i32,
 }
 

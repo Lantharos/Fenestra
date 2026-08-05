@@ -448,8 +448,8 @@ impl OsrLayerHost {
             }
             LayerHostEvent::Message(OsrMessage::StartDragRequested) => {}
             LayerHostEvent::Message(OsrMessage::FileDragRequested(_)) => {
-                // TODO: implement native file drag-out using the layer-shell
-                // DnD protocol or an X11/Wayland data-device backend.
+                // Layer-shell surfaces are not winit windows, so file drag-out
+                // needs a smithay/data-device path rather than ActiveEventLoop::start_drag.
             }
             LayerHostEvent::Message(OsrMessage::MinimizeRequested) => {}
             LayerHostEvent::Message(OsrMessage::ToggleMaximizeRequested) => {}

@@ -1,8 +1,8 @@
 use std::process::ExitCode;
 
 use mullion_runtime::{
-    RuntimeConfig, RuntimePackage, detect_runtime, install_user_runtime, latest_install_plan,
-    prune_user_runtimes, remove_user_runtime_version, resolve_runtime,
+    RuntimeConfig, RuntimePackage, detect_runtime, latest_install_plan, prune_user_runtimes,
+    remove_user_runtime_version, resolve_runtime, update_user_runtime_with_progress,
 };
 
 pub enum RuntimeCommand {
@@ -47,7 +47,7 @@ fn prepare_runtime() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    match mullion::ensure_cef_host(runtime.location.path()) {
+    match mullion::ensure_host(runtime.location.path()) {
         Ok(host) => {
             println!("{}", host.display());
             ExitCode::SUCCESS
@@ -113,34 +113,45 @@ fn install_runtime(package: &str) -> ExitCode {
     let Ok(config) = runtime_config(package) else {
         return ExitCode::from(1);
     };
-    if let Ok(runtime) = resolve_runtime(&config) {
+
+    let plan = match latest_install_plan(&config) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("failed to plan runtime install: {error}");
+            return ExitCode::from(1);
+        }
+    };
+
+    if let Ok(runtime) = resolve_runtime(&config)
+        && runtime.version == plan.version
+    {
         println!(
-            "A compatible CEF {package} runtime is already installed at {}.",
+            "Latest {} runtime {} is already installed at {}.",
+            package,
+            runtime.version,
             runtime.location.path().display()
         );
         return ExitCode::SUCCESS;
     }
 
-    match latest_install_plan(&config) {
-        Ok(plan) => {
-            println!(
-                "Installing required CEF {} runtime {}.",
-                plan.package.as_str(),
-                plan.version
-            );
-            println!("Download: {}", plan.url);
-            println!("Destination: {}", plan.install_dir.display());
-        }
-        Err(error) => {
-            eprintln!("failed to plan CEF runtime install: {error}");
-            return ExitCode::from(1);
-        }
-    }
+    println!(
+        "Installing {} runtime {}.",
+        plan.package.as_str(),
+        plan.version
+    );
+    println!("Download: {}", plan.url);
+    println!("Destination: {}", plan.install_dir.display());
 
-    match install_user_runtime(&config) {
+    match update_user_runtime_with_progress(&config, |progress| {
+        let percent = progress
+            .fraction
+            .map(|fraction| format!(" {:>3}%", (fraction * 100.0).round() as u8))
+            .unwrap_or_default();
+        eprintln!("{}{}", progress.message, percent);
+    }) {
         Ok(runtime) => {
             println!(
-                "Installed CEF {} runtime {} at {}.",
+                "Installed {} runtime {} at {}.",
                 runtime.package.as_str(),
                 runtime.version,
                 runtime.location.path().display()
@@ -148,7 +159,7 @@ fn install_runtime(package: &str) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("failed to install CEF runtime: {error}");
+            eprintln!("failed to install runtime: {error}");
             ExitCode::from(1)
         }
     }
@@ -208,7 +219,7 @@ fn doctor_runtime(json: bool) -> ExitCode {
     let has_compatible = resolved.is_some();
     let host_ready = resolved
         .as_ref()
-        .map(|runtime| mullion::cef_host_release_binary(runtime.location.path()))
+        .map(|runtime| mullion::host_release_binary(runtime.location.path()))
         .is_some_and(|path| path.is_file());
     let status = if has_compatible {
         "ok"
@@ -240,7 +251,7 @@ fn doctor_runtime(json: bool) -> ExitCode {
             }
             "outdated" => {
                 println!(
-                    "{} runtime: outdated (found versions below minimum 126)",
+                    "{} runtime: outdated (found versions below minimum 144)",
                     "CEF"
                 );
                 println!("  Update with: mullion runtime install");

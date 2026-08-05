@@ -1337,18 +1337,60 @@ bool MullionOsrHandler::StartDragging(CefRefPtr<CefBrowser> browser,
   }
 
   const std::string payload = BuildFileDragPayload(paths);
-  SendMessage(kFileDragRequested, 0, 0, x, y, payload.data(),
-              static_cast<uint32_t>(payload.size()));
+  if (!SendMessage(kFileDragRequested, 0, 0, x, y, payload.data(),
+                   static_cast<uint32_t>(payload.size()))) {
+    return false;
+  }
 
-  // Until a native X11/Wayland DnD backend is wired up in the host, the
-  // request is reported but no system drag is started. Return false so CEF
-  // doesn't keep waiting for DragSource*Ended callbacks.
-  return false;
+  // The Rust host owns the system drag via winit. Keep CEF's drag source
+  // alive until the host reports completion through file_drag_ended.
+  drag_source_browser_ = browser;
+  (void)allowed_ops;
+  return true;
 }
 
 void MullionOsrHandler::UpdateDragCursor(CefRefPtr<CefBrowser> browser,
                                       DragOperation operation) {
   // No-op: cursor changes are driven by the host's window manager.
+  (void)browser;
+  (void)operation;
+}
+
+namespace {
+
+cef_drag_operations_mask_t DragOperationFromName(const std::string& operation) {
+  if (operation == "copy") {
+    return DRAG_OPERATION_COPY;
+  }
+  if (operation == "move") {
+    return DRAG_OPERATION_MOVE;
+  }
+  if (operation == "link") {
+    return DRAG_OPERATION_LINK;
+  }
+  return DRAG_OPERATION_NONE;
+}
+
+}  // namespace
+
+void MullionOsrHandler::FinishNativeFileDrag(int x,
+                                             int y,
+                                             const std::string& operation) {
+  CEF_REQUIRE_UI_THREAD();
+  CefRefPtr<CefBrowser> browser = drag_source_browser_;
+  drag_source_browser_ = nullptr;
+  if (!browser) {
+    browser = browser_;
+  }
+  if (!browser) {
+    return;
+  }
+  CefRefPtr<CefBrowserHost> host = browser->GetHost();
+  if (!host) {
+    return;
+  }
+  host->DragSourceEndedAt(x, y, DragOperationFromName(operation));
+  host->DragSourceSystemDragEnded();
 }
 
 void MullionOsrHandler::HandleControlLine(const std::string& line) {
@@ -1501,6 +1543,9 @@ void MullionOsrHandler::HandleControlLine(const std::string& line) {
 	  } else if (parts[0] == "close") {
     host->CloseBrowser(false);
     CefPostDelayedTask(TID_UI, new QuitTask, 250);
+	  } else if (parts[0] == "file_drag_ended" && parts.size() >= 4) {
+	    FinishNativeFileDrag(std::atoi(parts[1].c_str()),
+	                         std::atoi(parts[2].c_str()), parts[3]);
 	  }
 	}
 
