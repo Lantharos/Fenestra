@@ -7,8 +7,8 @@ use std::{
 };
 
 use mullion_bridge::{
-    BridgeCommand, BridgeCommandDescriptor, BridgeError, BridgeHandlers, BridgeResult,
-    ContentSecurity, LaunchMetrics,
+    BridgeCommand, BridgeCommandDescriptor, BridgeError, BridgeHandlers, BridgeResponse,
+    BridgeResult, ContentSecurity, LaunchMetrics,
 };
 use mullion_platform::{
     AutostartEntry, DeepLinkRegistration, GlobalShortcutRegistration, NativeMessagingHost,
@@ -17,10 +17,13 @@ use mullion_platform::{
 };
 use mullion_runtime::{RuntimeConfig, RuntimeInfo, resolve_runtime};
 
+pub mod app_chrome;
 pub mod config;
 pub mod glass;
+pub mod manifest;
 pub mod style;
 
+pub use app_chrome::AppChrome;
 pub use config::{
     DesktopServiceConfig, MullionLifecyclePolicy, MullionWindowChrome, MullionWindowConfig,
     MullionWindowControlAction, MullionWindowControlRegion,
@@ -44,6 +47,65 @@ pub struct MullionWindow {
 }
 
 impl MullionWindow {
+    /// Runs child host modes when needed, builds the window, then launches it.
+    ///
+    /// Typical app entry:
+    /// ```ignore
+    /// fn main() {
+    ///     MullionWindow::main(|window| {
+    ///         Ok(window.app().title("My App").entry("ui/index.html"))
+    ///     });
+    /// }
+    /// ```
+    pub fn main(build: impl FnOnce(Self) -> MullionResult<Self>) -> ! {
+        let args = std::env::args().collect::<Vec<_>>();
+        if crate::launch::run_mullion_host_from_args(&args) {
+            std::process::exit(0);
+        }
+        let window = match build(Self::new()) {
+            Ok(window) => window,
+            Err(error) => {
+                eprintln!("failed to configure Mullion window: {error}");
+                std::process::exit(1);
+            }
+        };
+        match window.launch_or_install() {
+            Ok(process) => match process.wait() {
+                Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+                Err(error) => {
+                    eprintln!("Mullion process wait failed: {error}");
+                    std::process::exit(1);
+                }
+            },
+            Err(error) => {
+                eprintln!("failed to launch Mullion window: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    /// Conventional desktop app: system chrome, opaque, browser-tab lifecycle.
+    pub fn app(self) -> Self {
+        self.system_chrome()
+            .opaque()
+            .lifecycle_policy(MullionLifecyclePolicy::browser_tab())
+    }
+
+    /// Frameless glass palette/launcher with hide-on-blur and palette lifecycle.
+    pub fn palette(self) -> Self {
+        self.frameless()
+            .glass()
+            .hide_on_blur(true)
+            .lifecycle_policy(MullionLifecyclePolicy::hidden_window())
+    }
+
+    /// Warm background/tray host: starts hidden with palette lifecycle.
+    /// Pair with [`Self::tray_icon`] and [`Self::single_instance_id`].
+    pub fn tray_app(self) -> Self {
+        self.hidden()
+            .lifecycle_policy(MullionLifecyclePolicy::hidden_window())
+    }
+
     pub fn new() -> Self {
         Self {
             config: MullionWindowConfig::default(),
@@ -63,23 +125,11 @@ impl MullionWindow {
         self
     }
 
-    pub fn remote_url(self, url: impl Into<String>) -> Self {
-        self.url(url)
-    }
-
-    pub fn bundled_url(self, url: impl Into<String>) -> Self {
-        self.url(url)
-    }
-
     pub fn dev_url(mut self, url: impl Into<String>) -> Self {
         let url = url.into();
         allow_dev_origins(&mut self.config.security, &url);
         self.config.dev_url = Some(url);
         self
-    }
-
-    pub fn dev_server(self, url: impl Into<String>) -> Self {
-        self.dev_url(url)
     }
 
     pub fn vite_dev_server(self, port: u16) -> Self {
@@ -224,16 +274,6 @@ impl MullionWindow {
         self
     }
 
-    pub fn with_frameless(mut self, frameless: bool) -> Self {
-        self.config.frameless = frameless;
-        self.config.chrome = if frameless {
-            MullionWindowChrome::Frameless
-        } else {
-            MullionWindowChrome::System
-        };
-        self
-    }
-
     pub fn system_chrome(mut self) -> Self {
         self.config.frameless = false;
         self.config.chrome = MullionWindowChrome::System;
@@ -268,17 +308,9 @@ impl MullionWindow {
         self
     }
 
-    pub fn glass_material(self, effect: WindowBackgroundEffect) -> Self {
-        self.glass_effect(effect)
-    }
-
     pub fn glass_low_power_effect(mut self, effect: WindowBackgroundEffect) -> Self {
         self.config.low_power_background_effect = Some(effect);
         self
-    }
-
-    pub fn glass_low_power_material(self, effect: WindowBackgroundEffect) -> Self {
-        self.glass_low_power_effect(effect)
     }
 
     pub fn background_effect(mut self, effect: WindowBackgroundEffect) -> Self {
@@ -454,10 +486,6 @@ impl MullionWindow {
         self
     }
 
-    pub fn allowed_bridge_origin(self, origin: impl Into<String>) -> Self {
-        self.allowed_origin(origin)
-    }
-
     pub fn bridge_command_descriptor(mut self, descriptor: BridgeCommandDescriptor) -> Self {
         self.config.bridge.register_descriptor(descriptor);
         self
@@ -471,6 +499,25 @@ impl MullionWindow {
         self.config.bridge.register(name.clone());
         self.bridge_handlers.register(name, handler);
         self
+    }
+
+    /// Registers a bridge command that deserializes params into `Req` and
+    /// serializes the handler return value as JSON.
+    pub fn bridge_typed<Req, Res, F>(self, command_name: impl Into<String>, handler: F) -> Self
+    where
+        Req: serde::de::DeserializeOwned,
+        Res: serde::Serialize,
+        F: Fn(Req) -> Result<Res, BridgeError> + Send + Sync + 'static,
+    {
+        self.bridge_handler(command_name, move |command| {
+            let request = serde_json::from_value(command.params)
+                .map_err(|error| BridgeError::new(format!("invalid bridge params: {error}")))?;
+            let response = handler(request)?;
+            let value = serde_json::to_value(response).map_err(|error| {
+                BridgeError::new(format!("failed to encode bridge result: {error}"))
+            })?;
+            Ok(BridgeResponse::json(value))
+        })
     }
 
     pub fn bridge_descriptor_handler<F>(

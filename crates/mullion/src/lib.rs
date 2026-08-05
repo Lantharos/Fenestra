@@ -7,17 +7,28 @@ mod osr;
 mod render;
 mod window;
 
+pub use error::{MullionError, MullionResult};
+pub use host::MullionProcess;
+pub use launch::run_mullion_host_from_args;
+pub use window::{
+    AppChrome, GlassSpec, MullionLifecyclePolicy, MullionWindow, MullionWindowChrome,
+    MullionWindowConfig, MullionWindowControlAction,
+};
+
+/// Common imports for app authors.
+pub mod prelude {
+    pub use crate::{
+        AppChrome, BridgeCommand, BridgeError, BridgeResponse, BridgeResult, GlassSpec,
+        MullionError, MullionLifecyclePolicy, MullionProcess, MullionResult, MullionWindow,
+        MullionWindowChrome, TrayIcon, WindowBackgroundEffect, WindowRegion, WindowRegionRect,
+    };
+}
+
 pub use bridge::BridgeEventEmitter;
 pub use desktop::{DesktopServiceState, apply_desktop_services, start_desktop_event_forwarder};
-pub use error::{MullionError, MullionResult};
-pub use host::{
-    MullionProcess, browser_profile_dir, ensure_host, host_release_binary, ld_library_path,
-};
-pub use launch::{BrowserOptions, run_mullion_host_from_args};
-pub use window::{
-    DesktopServiceConfig, GlassSpec, MullionLifecyclePolicy, MullionWindow, MullionWindowChrome,
-    MullionWindowConfig, MullionWindowControlAction, MullionWindowControlRegion,
-};
+pub use host::{browser_profile_dir, ensure_host, host_release_binary, ld_library_path};
+pub use launch::BrowserOptions;
+pub use window::{DesktopServiceConfig, MullionWindowControlRegion};
 
 pub use mullion_bridge::{
     ActivityEventEmitter, ActivityHostUpdate, ActivityOptions, ActivityRecord, MullionActivityLease,

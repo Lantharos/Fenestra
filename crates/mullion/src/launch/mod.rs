@@ -277,6 +277,41 @@ mod tests {
     use crate::window::{GlassSpec, MullionLifecyclePolicy, MullionWindow};
 
     #[test]
+    fn recipes_set_expected_defaults() {
+        let app = MullionWindow::new().app();
+        assert!(!app.config.transparent);
+        assert_eq!(
+            app.config.chrome,
+            crate::window::MullionWindowChrome::System
+        );
+        assert_eq!(app.config.lifecycle, MullionLifecyclePolicy::browser_tab());
+
+        let palette = MullionWindow::new().palette();
+        assert!(palette.config.transparent);
+        assert!(palette.config.hide_on_blur);
+        assert_eq!(
+            palette.config.lifecycle,
+            MullionLifecyclePolicy::hidden_window()
+        );
+
+        let tray = MullionWindow::new().tray_app();
+        assert!(!tray.config.visible);
+        assert_eq!(
+            tray.config.lifecycle,
+            MullionLifecyclePolicy::hidden_window()
+        );
+    }
+
+    #[test]
+    fn app_chrome_adds_drag_and_controls() {
+        let window = MullionWindow::new().app_chrome(crate::AppChrome::new(38, 260));
+        assert_eq!(window.config.drag_regions.len(), 1);
+        assert_eq!(window.config.control_regions.len(), 3);
+        assert!(window.config.regions.blur.is_some());
+        assert!(window.config.regions.opaque.is_some());
+    }
+
+    #[test]
     fn hidden_window_lifecycle_is_palette_biased() {
         let lifecycle = MullionLifecyclePolicy::hidden_window();
         assert_eq!(lifecycle.background_frame_rate, 1);
@@ -348,10 +383,10 @@ mod tests {
     }
 
     #[test]
-    fn glass_material_tracks_low_power_fallback() {
+    fn glass_effect_tracks_low_power_fallback() {
         let window = MullionWindow::new()
-            .glass_material(WindowBackgroundEffect::Acrylic)
-            .glass_low_power_material(WindowBackgroundEffect::Mica);
+            .glass_effect(WindowBackgroundEffect::Acrylic)
+            .glass_low_power_effect(WindowBackgroundEffect::Mica);
         assert_eq!(
             window.config.background_effect,
             WindowBackgroundEffect::Acrylic

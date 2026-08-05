@@ -37,6 +37,8 @@ thiserror.workspace = true
 tokio.workspace = true
 wgpu.workspace = true
 winit.workspace = true
+serde = { workspace = true, features = ["derive"] }
+toml = { workspace = true, features = ["parse"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd.workspace = true

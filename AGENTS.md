@@ -10,5 +10,6 @@
 - Mullion crates must not depend on Stuk crates. If a primitive is required by Mullion, keep it in Mullion-owned crates or modules.
 - Stuk must not depend on Mullion.
 - Apps should use `MullionWindow` from `mullion` directly.
+- Prefer `MullionWindow::main`, recipes (`.app()` / `.palette()` / `.tray_app()`), `AppChrome`, and `with_manifest` for new apps; keep advanced shell/region APIs available but secondary.
 - Run `cargo fmt`, `cargo build --workspace`, and `cargo test --workspace` after code changes. For Windows-only changes, also run `cargo check --target x86_64-pc-windows-gnu --workspace` since the host development environment is typically Linux.
 - When publishing, use `scripts/publish.sh`. Crate metadata lives in each crate's `Cargo.toml`; the workspace owns version, license, repository, homepage, authors, keywords, categories.
