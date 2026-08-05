@@ -262,9 +262,24 @@ impl OsrLayerHost {
             LayerHostEvent::Message(OsrMessage::FocusRequested) => {
                 self.set_surface_visible(true, state)
             }
+            LayerHostEvent::Message(OsrMessage::BridgeRequest(line)) => {
+                if !line.is_empty() {
+                    let mut output = std::io::stdout();
+                    use std::io::Write;
+                    let _ = writeln!(output, "{line}");
+                    let _ = output.flush();
+                }
+            }
             LayerHostEvent::Visible(visible) => self.set_surface_visible(visible, state),
             LayerHostEvent::Alpha(alpha) => self.set_surface_alpha(alpha, state),
             LayerHostEvent::Margin(margin) => self.set_surface_margin(margin, state),
+            LayerHostEvent::ControlLine(line) => {
+                let mut line = line;
+                if !line.ends_with('\n') {
+                    line.push('\n');
+                }
+                self.send_control(&line);
+            }
             LayerHostEvent::Disconnected => {
                 self.socket = None;
                 return ReturnData::RequestExit;
@@ -277,13 +292,25 @@ impl OsrLayerHost {
         if self.child.is_some() {
             return;
         }
+        let Some(app_id) = self
+            .config
+            .app_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            eprintln!("Mullion layer OSR host requires a non-empty app_id");
+            return;
+        };
         let Ok(authentication_token) = crate::osr::transport::authentication_token() else {
             eprintln!("failed to secure Mullion layer OSR transport");
             return;
         };
-        let Some(socket_path) =
-            super::socket::open_socket_reader(self.sender.clone(), authentication_token.clone())
-        else {
+        let Some(socket_path) = super::socket::open_socket_reader(
+            self.sender.clone(),
+            authentication_token.clone(),
+            app_id,
+        ) else {
             return;
         };
 
@@ -308,10 +335,5 @@ impl OsrLayerHost {
             }
         };
         self.child = Some(child);
-        if !self.config.bridge_commands.is_empty()
-            && let Some(child) = self.child.as_mut()
-        {
-            super::socket::spawn_layer_bridge_proxy(child, self.sender.clone());
-        }
     }
 }

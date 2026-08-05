@@ -2,8 +2,6 @@ pub(crate) mod bootstrap;
 pub(crate) mod browser;
 
 pub use browser::BrowserOptions;
-#[cfg(target_os = "linux")]
-pub(crate) use browser::HOST_CONTROL_PREFIX;
 pub(crate) use browser::apply_browser_launch_args;
 
 use crate::error::{MullionError, MullionResult};

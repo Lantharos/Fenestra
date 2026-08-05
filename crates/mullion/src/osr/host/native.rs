@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::Write,
+    io::{BufRead, Write},
     process::Child,
     sync::{Arc, Mutex, mpsc},
     time::Instant,
@@ -48,6 +48,7 @@ pub(super) struct OsrNativeHost {
     pub(super) child: Option<Child>,
     pub(super) socket: Option<Arc<Mutex<IpcStream>>>,
     pub(super) surface_size: winit::dpi::PhysicalSize<u32>,
+    pub(super) scale_factor: f64,
     pub(super) main_frame: Option<OsrFrame>,
     pub(super) main_buffer: FrameBuffer,
     pub(super) overlays: BTreeMap<String, OverlayLayer>,
@@ -70,6 +71,8 @@ pub(super) struct OsrNativeHost {
     pub(super) hibernate_commit_deadline: Option<Instant>,
     pub(super) closing_deadline: Option<Instant>,
     pub(super) pending_resize_paint: Option<PendingResizePaint>,
+    pub(super) pending_suspend_at: Option<Instant>,
+    pub(super) effect_regions_dirty: bool,
     pub(super) activity_hibernation_blockers: BTreeSet<String>,
     pub(super) presented: bool,
     pub(super) pending_activation_token: Option<ActivationToken>,
@@ -78,6 +81,8 @@ pub(super) struct OsrNativeHost {
     /// CEF exited with process-singleton handoff (code 24). The existing
     /// browser process owns this window's OSR endpoint; keep listening.
     pub(super) cef_handed_off: bool,
+    /// Deadline for the primary CEF process to connect after exit-24 handoff.
+    pub(super) handoff_deadline: Option<Instant>,
 }
 
 impl OsrNativeHost {
@@ -87,6 +92,7 @@ impl OsrNativeHost {
         receiver: mpsc::Receiver<OsrHostEvent>,
         proxy: EventLoopProxy,
     ) -> Self {
+        start_parent_bridge_reader(sender.clone(), proxy.clone());
         let surface_size = winit::dpi::PhysicalSize::new(config.width, config.height);
         let visible = config.visible;
         let focused = visible && config.active;
@@ -114,6 +120,7 @@ impl OsrNativeHost {
             child: None,
             socket: None,
             surface_size,
+            scale_factor: 1.0,
             main_frame: None,
             main_buffer: FrameBuffer::new(),
             overlays: BTreeMap::new(),
@@ -136,12 +143,15 @@ impl OsrNativeHost {
             hibernate_commit_deadline: None,
             closing_deadline: None,
             pending_resize_paint: None,
+            pending_suspend_at: None,
+            effect_regions_dirty: false,
             activity_hibernation_blockers: BTreeSet::new(),
             presented: false,
             pending_activation_token: None,
             active_file_drag: None,
             started: Instant::now(),
             cef_handed_off: false,
+            handoff_deadline: None,
         }
     }
 
@@ -149,7 +159,17 @@ impl OsrNativeHost {
         if self.child.is_some() {
             return;
         }
-        let (endpoint, listener) = match crate::osr::transport::IpcEndpoint::bind() {
+        let Some(app_id) = self
+            .config
+            .app_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            eprintln!("Mullion OSR host requires a non-empty app_id");
+            return;
+        };
+        let (endpoint, listener) = match crate::osr::transport::IpcEndpoint::bind(app_id) {
             Ok(connection) => connection,
             Err(error) => {
                 eprintln!("failed to bind OSR transport: {error}");
@@ -165,6 +185,7 @@ impl OsrNativeHost {
         };
         start_socket_reader(
             listener,
+            endpoint.clone(),
             authentication_token.clone(),
             self.sender.clone(),
             self.proxy.clone(),
@@ -190,18 +211,6 @@ impl OsrNativeHost {
             }
         };
         self.child = Some(child);
-        if let Some(child) = self.child.as_mut() {
-            let sender = self.sender.clone();
-            let proxy = self.proxy.clone();
-            crate::spawn_native_host_bridge_proxy(child, move |command, value| {
-                let Some(control) = super::events::host_control_from_parts(&command, &value) else {
-                    return;
-                };
-                if sender.send(OsrHostEvent::HostControl(control)).is_ok() {
-                    proxy.wake_up();
-                }
-            });
-        }
     }
 
     pub(super) fn content_size_for_cef(&self) -> (u32, u32, f64) {
@@ -299,18 +308,22 @@ impl OsrNativeHost {
         self.send_control("close\n");
         self.closing_deadline = Some(Instant::now() + super::types::CLOSE_GRACE);
         // Local CEF child owns the process — exit immediately if it is already
-        // gone. Handed-off windows still need the grace period so the shared
-        // CEF process can close this browser without quitting other windows.
+        // gone. Handed-off / shared-singleton windows still need the grace
+        // period so CloseBrowser can finish without killing sibling windows.
         if self.child.is_none() && !self.cef_handed_off {
             event_loop.exit();
         }
     }
 
     pub(super) fn force_close(&mut self, event_loop: &dyn ActiveEventLoop) {
-        if let Some(child) = self.child.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
+        // Do not kill the CEF child here. Multi-window apps share one CEF
+        // process via profile singleton handoff; killing it would close every
+        // window. CloseBrowser / socket-EOF teardown owns CEF lifetime.
+        // Hibernate is the only path that intentionally kills CEF.
+        if let Some(mut child) = self.child.take() {
+            let _ = child.try_wait();
         }
+        self.socket = None;
         event_loop.exit();
     }
 
@@ -391,6 +404,7 @@ impl OsrNativeHost {
             }
         };
         self.surface_size = window.surface_size();
+        self.scale_factor = window.scale_factor();
         let renderer = match pollster::block_on(GpuRenderer::new(window.clone())) {
             Ok(renderer) => renderer,
             Err(error) => {
@@ -529,4 +543,25 @@ pub(super) fn present_window(window: &Arc<dyn WinitWindow>) {
     window.request_user_attention(Some(UserAttentionType::Informational));
     window.focus_window();
     window.request_redraw();
+}
+
+fn start_parent_bridge_reader(sender: mpsc::Sender<OsrHostEvent>, proxy: EventLoopProxy) {
+    std::thread::spawn(move || {
+        let input = std::io::stdin();
+        for line in input.lock().lines().map_while(std::result::Result::ok) {
+            if let Some((command, value)) = crate::parse_host_control(&line) {
+                if let Some(control) = super::events::host_control_from_parts(command, value) {
+                    if sender.send(OsrHostEvent::HostControl(control)).is_err() {
+                        break;
+                    }
+                    proxy.wake_up();
+                    continue;
+                }
+            }
+            if sender.send(OsrHostEvent::ControlLine(line)).is_err() {
+                break;
+            }
+            proxy.wake_up();
+        }
+    });
 }

@@ -161,9 +161,9 @@ impl OsrLayerHost {
 
     pub(super) fn begin_close(&mut self) {
         self.send_control("close\n");
-        if let Some(child) = self.child.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
+        // Detach CEF — shared process-singleton windows must survive sibling close.
+        if let Some(mut child) = self.child.take() {
+            let _ = child.try_wait();
         }
     }
 }

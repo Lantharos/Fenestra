@@ -86,6 +86,7 @@ pub(super) enum LayerLifecycleState {
 
 impl OsrLayerHost {
     pub(super) fn new(config: OsrHostConfig, sender: Sender<LayerHostEvent>) -> Self {
+        super::socket::start_layer_parent_bridge_reader(sender.clone());
         let surface_size = (config.width.max(1), config.height.max(1));
         let visible = config.visible;
         let surface_alpha = if visible {
@@ -136,9 +137,10 @@ impl OsrLayerHost {
 
 impl Drop for OsrLayerHost {
     fn drop(&mut self) {
-        if let Some(child) = self.child.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
+        // Leave CEF running if other OSR handlers still need the process.
+        // Socket EOF closes this browser; last handler quits the message loop.
+        if let Some(mut child) = self.child.take() {
+            let _ = child.try_wait();
         }
     }
 }

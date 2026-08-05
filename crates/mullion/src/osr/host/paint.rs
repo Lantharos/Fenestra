@@ -24,8 +24,9 @@ impl OsrNativeHost {
     pub(super) fn queue_resize_paint(&mut self) {
         let size = self.content_surface_size();
         if self.main_frame_matches(size) {
+            // Content size unchanged — do not poke CEF (WasResized/Invalidate
+            // blanks OSR until the next paint, which shows as a drag-end flash).
             self.pending_resize_paint = None;
-            self.send_resize();
             return;
         }
         let now = Instant::now();
@@ -87,7 +88,13 @@ impl OsrNativeHost {
     }
 
     pub(super) fn accepts_paint(&self) -> bool {
-        self.config.visible && self.lifecycle_state == LifecycleState::Active
+        // Keep compositing while FPS-throttled (blur/occlusion suspend). Only
+        // stop accepting paints when the view is actually gone.
+        self.config.visible
+            && !matches!(
+                self.lifecycle_state,
+                LifecycleState::Hibernating | LifecycleState::Hibernated
+            )
     }
 
     pub(super) fn update_frame_texture(&mut self, frame: OsrFrame) -> bool {
@@ -128,7 +135,6 @@ impl OsrNativeHost {
                     bytes: Vec::new(),
                 });
                 self.clear_pending_resize_paint();
-                self.update_effect_regions();
             }
             OsrSurface::Popup | OsrSurface::Guest(_) => {
                 let Some(overlay_id) = overlay_id_for_surface(&frame.surface) else {
@@ -233,7 +239,6 @@ impl OsrNativeHost {
                 if batch_size == content_size {
                     self.clear_pending_resize_paint();
                 }
-                self.update_effect_regions();
             }
             OsrSurface::Popup | OsrSurface::Guest(_) => {
                 let Some(overlay_id) = overlay_id_for_surface(&batch.surface) else {
@@ -335,6 +340,11 @@ impl OsrNativeHost {
         };
         if let Err(error) = renderer.render(&list) {
             eprintln!("Mullion OSR render failed: {error}");
+            return;
+        }
+        if self.effect_regions_dirty {
+            self.effect_regions_dirty = false;
+            self.update_effect_regions();
         }
     }
 

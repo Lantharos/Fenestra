@@ -1,11 +1,14 @@
 use std::time::Instant;
 
+use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::monitor::MonitorHandle;
 
 use crate::osr::protocol::encode_component;
 
 use super::native::OsrNativeHost;
-use super::types::{FALLBACK_ACTIVE_FRAME_RATE, HostActivity, LifecycleState};
+use super::types::{
+    FALLBACK_ACTIVE_FRAME_RATE, HostActivity, LIFECYCLE_SUSPEND_DEBOUNCE, LifecycleState,
+};
 
 impl OsrNativeHost {
     pub(super) fn send_lifecycle(&self, state: LifecycleState, reason: &str) {
@@ -41,20 +44,55 @@ impl OsrNativeHost {
             .unwrap_or(FALLBACK_ACTIVE_FRAME_RATE)
     }
 
+    fn should_suspend(&self) -> bool {
+        (self.occluded && self.config.lifecycle.suspend_on_occluded)
+            || (!self.focused && self.config.lifecycle.suspend_on_blur)
+    }
+
     pub(super) fn sync_lifecycle(&mut self, reason: &str) {
         if self.closing_deadline.is_some() {
             return;
         }
-        let should_suspend = (self.occluded && self.config.lifecycle.suspend_on_occluded)
-            || (!self.focused && self.config.lifecycle.suspend_on_blur);
-        if should_suspend {
+        if self.should_suspend() {
             self.suspend(reason);
         } else {
             self.resume(reason);
         }
     }
 
+    pub(super) fn schedule_lifecycle_sync(&mut self, reason: &str) {
+        if self.closing_deadline.is_some() {
+            return;
+        }
+        if self.should_suspend() {
+            // Debounce blur/occlusion — interactive move briefly unfocuses the
+            // secondary window and suspending immediately causes a drag-end flash.
+            self.pending_suspend_at = Some(Instant::now() + LIFECYCLE_SUSPEND_DEBOUNCE);
+            return;
+        }
+        self.pending_suspend_at = None;
+        self.sync_lifecycle(reason);
+    }
+
+    pub(super) fn drive_pending_suspend(&mut self, event_loop: &dyn ActiveEventLoop) -> bool {
+        let Some(deadline) = self.pending_suspend_at else {
+            return false;
+        };
+        if !self.should_suspend() {
+            self.pending_suspend_at = None;
+            return false;
+        }
+        if Instant::now() >= deadline {
+            self.pending_suspend_at = None;
+            self.suspend("debounced");
+            return false;
+        }
+        event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+        true
+    }
+
     pub(super) fn suspend(&mut self, reason: &str) {
+        self.pending_suspend_at = None;
         if matches!(
             self.lifecycle_state,
             LifecycleState::Suspended | LifecycleState::Hibernating | LifecycleState::Hibernated
@@ -68,6 +106,7 @@ impl OsrNativeHost {
     }
 
     pub(super) fn resume(&mut self, reason: &str) {
+        self.pending_suspend_at = None;
         if self.lifecycle_state == LifecycleState::Active {
             return;
         }
@@ -78,10 +117,12 @@ impl OsrNativeHost {
             self.launch_child();
         }
         self.send_lifecycle(LifecycleState::Active, reason);
-        if self.config.visible
-            && let Some(window) = &self.window
-        {
-            window.request_redraw();
+        // Avoid redraw-on-focus after interactive move: Wayland often marks the
+        // surface outdated and a bare redraw flashes transparent glass.
+        if self.config.visible && self.main_frame.is_none() {
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
         }
     }
 

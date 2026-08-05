@@ -274,23 +274,47 @@ impl ApplicationHandler for OsrNativeHost {
             }
             WindowEvent::Destroyed => self.drop_hidden_window(),
             WindowEvent::SurfaceResized(size) => {
-                self.surface_size = size;
-                if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.resize(size.width, size.height, window.scale_factor() as f32);
+                if size.width == 0 || size.height == 0 {
+                    return;
                 }
-                self.update_effect_regions();
+                let scale = window.scale_factor();
+                // Wayland emits a configure after interactive move even when the
+                // size did not change. Reconfiguring wgpu / Invalidating CEF
+                // flashes — especially noticeable on the handed-off second window.
+                if size == self.surface_size && (scale - self.scale_factor).abs() < f64::EPSILON {
+                    return;
+                }
+                self.surface_size = size;
+                self.scale_factor = scale;
+                if let Some(renderer) = self.renderer.as_mut() {
+                    renderer.resize(size.width, size.height, scale as f32);
+                }
+                // Defer glass region commit until after a successful present —
+                // committing without a buffer flashes transparent windows.
+                self.effect_regions_dirty = true;
                 self.queue_resize_paint();
-                window.request_redraw();
+                // Fill the new swapchain immediately — configure leaves empty
+                // buffers until the next redraw, which flashes transparent glass.
+                if self.presented {
+                    self.render();
+                } else {
+                    window.request_redraw();
+                }
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 let size = window.surface_size();
                 self.surface_size = size;
+                self.scale_factor = scale_factor;
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size.width, size.height, scale_factor as f32);
                 }
-                self.update_effect_regions();
+                self.effect_regions_dirty = true;
                 self.queue_resize_paint();
-                window.request_redraw();
+                if self.presented {
+                    self.render();
+                } else {
+                    window.request_redraw();
+                }
             }
             WindowEvent::Focused(focused) => {
                 self.focused = focused;
@@ -298,12 +322,12 @@ impl ApplicationHandler for OsrNativeHost {
                 if !focused && self.config.hide_on_blur && self.config.visible {
                     self.hide_window("blur");
                 } else {
-                    self.sync_lifecycle(if focused { "focus" } else { "blur" });
+                    self.schedule_lifecycle_sync(if focused { "focus" } else { "blur" });
                 }
             }
             WindowEvent::Occluded(occluded) => {
                 self.occluded = occluded;
-                self.sync_lifecycle(if occluded { "occluded" } else { "visible" });
+                self.schedule_lifecycle_sync(if occluded { "occluded" } else { "visible" });
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
@@ -452,7 +476,12 @@ impl ApplicationHandler for OsrNativeHost {
                 // launch args to that process, which creates a browser on our OSR
                 // endpoint — keep the native window and socket listener alive.
                 self.cef_handed_off = true;
+                self.handoff_deadline =
+                    Some(Instant::now() + Duration::from_secs(HANDOFF_CONNECT_TIMEOUT_SECS));
                 super::trace_host(&self.config, "cef.handed_off.waiting_for_primary");
+                if let Some(deadline) = self.handoff_deadline {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+                }
                 return;
             }
             eprintln!("Mullion OSR host: CEF child exited ({status}); shutting down host");
@@ -473,6 +502,9 @@ impl ApplicationHandler for OsrNativeHost {
                 return;
             }
             event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            return;
+        }
+        if self.drive_pending_suspend(event_loop) {
             return;
         }
         if let Some(deadline) = self.hibernate_commit_deadline {
@@ -499,13 +531,23 @@ impl ApplicationHandler for OsrNativeHost {
             return;
         }
         if self.cef_handed_off && self.socket.is_none() {
-            if self.started.elapsed() > Duration::from_secs(10) {
+            let deadline = *self.handoff_deadline.get_or_insert_with(|| {
+                Instant::now() + Duration::from_secs(HANDOFF_CONNECT_TIMEOUT_SECS)
+            });
+            if Instant::now() >= deadline {
                 eprintln!(
-                    "Mullion OSR host: profile handoff succeeded but primary CEF never connected"
+                    "Mullion OSR host: profile handoff succeeded but primary CEF never connected within {HANDOFF_CONNECT_TIMEOUT_SECS}s"
                 );
                 event_loop.exit();
+                return;
             }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(250),
+            ));
             return;
+        }
+        if self.cef_handed_off && self.socket.is_some() {
+            self.handoff_deadline = None;
         }
         if self.started.elapsed() > Duration::from_secs(2)
             && self.child.is_none()
@@ -521,6 +563,7 @@ impl ApplicationHandler for OsrNativeHost {
 /// CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED — second process for the same
 /// root_cache_path notified the primary and exited.
 const CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED: i32 = 24;
+const HANDOFF_CONNECT_TIMEOUT_SECS: u64 = 15;
 
 fn cef_mouse_button(button: Option<MouseButton>) -> Option<&'static str> {
     match button {

@@ -18,6 +18,34 @@ This dispatches internal child modes without requiring an additional app-specifi
 The CEF helper is built from the C++ source embedded in the `mullion` crate. It always enables
 windowless rendering and always creates `MullionOsrHandler`; there is no windowed CEF handler.
 
+### App identity and windows
+
+Every launch requires a non-empty `app_id` (via `.app_id(...)` or `with_manifest`). That id selects
+the CEF profile directory and the private IPC directory under `$XDG_RUNTIME_DIR/mullion/<app_id>/`
+(mode `0700`, sockets `0600`).
+
+- **Different `app_id`**: separate CEF processes and profiles; no handoff between apps.
+- **Same `app_id`**: windows share one CEF browser process (process-singleton handoff). Each window
+  still has its own OSR host and authenticated Unix socket. Paint, input, and bridge
+  request/response/events all travel on that per-window socket so invokes reach the owning app
+  process. Closing one window closes only that browser; CEF quits when the last OSR handler is gone.
+  Separate top-level launches therefore close independently while still being able to talk through
+  the shared profile/CEF process when the app wants that.
+- **Same-process multi-window**: call `MullionProcess::open_window` to spawn another OSR host with
+  the same handlers and `app_id` without a second top-level `wait()` island. Use
+  `close_window(WindowId)` to tear down one surface; `wait()` returns only after every OSR window
+  has exited. If the parent app process exits, its OSR children are terminated; closing a child
+  window does not exit the parent.
+- **Second OS launch**: optional `single_instance` still focuses an existing process when enabled.
+  Without it, a second launch of the same app uses CEF handoff plus a new per-window socket.
+  After exit-24 handoff the secondary host waits up to 15s for the primary CEF process to connect.
+
+OSR authentication uses a first-line token plus same-UID `SO_PEERCRED` checks on Unix. The token
+is written to a `0600` file beside the socket and referenced by `--mullion-osr-token-file=` on the
+CEF command line (path is not secret; this survives process-singleton handoff). `MULLION_OSR_TOKEN`
+remains an optional fallback. Child OSR/CEF processes set `PR_SET_PDEATHSIG` on Linux so they do
+not outlive a crashed parent.
+
 ## Paint and composition
 
 CEF emits BGRA dirty rectangles. The native host retains a backing store per surface and patches only
@@ -30,7 +58,9 @@ the changed ranges. Each surface is then uploaded to an independent GPU texture:
 The display list damages the union of the old and new bounds when a primitive changes. Resize waits
 for a correctly sized CEF paint rather than stretching a stale frame indefinitely.
 
-Transport is platform-specific without changing the protocol:
+Transport is platform-specific without changing the protocol. On Unix, sockets live under
+`$XDG_RUNTIME_DIR/mullion/<app_id>/` (mode `0700`) with socket mode `0600`, and each window
+authenticates with a first-line token delivered via `MULLION_OSR_TOKEN` (not argv).
 
 | Platform | Transport | Large paint path |
 | --- | --- | --- |
@@ -108,6 +138,9 @@ window.mullion.guest
 
 Mullion distinguishes active, background, suspended, hibernating, and hibernated states. Activity
 leases allow durable Rust work or page work to block hibernation while it is genuinely active.
+Blur and occlusion suspend only lower the windowless frame rate; they do not call CEF `WasHidden`,
+so brief focus loss during interactive move does not blank the surface. Hibernation is what actually
+hides the view and tears down the renderer.
 
 Rules for renderer changes:
 

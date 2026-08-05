@@ -15,6 +15,9 @@ pub(super) const CLOSE_GRACE: Duration = Duration::from_millis(300);
 pub(super) const RESIZE_REPAINT_RETRY: Duration = Duration::from_millis(8);
 pub(super) const RESIZE_REPAINT_GRACE: Duration = Duration::from_millis(900);
 pub(super) const FALLBACK_ACTIVE_FRAME_RATE: u32 = 60;
+/// Wayland briefly drops focus/occlusion around interactive move. Suspending
+/// immediately thrashes lifecycle on the secondary (handed-off) window.
+pub(super) const LIFECYCLE_SUSPEND_DEBOUNCE: Duration = Duration::from_millis(200);
 
 pub(super) const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;
 pub(super) const EVENTFLAG_CONTROL_DOWN: u32 = 1 << 2;
@@ -51,6 +54,8 @@ pub(super) enum OsrHostEvent {
     Connected(IpcStream),
     Message(OsrMessage),
     HostControl(HostControl),
+    /// Forward a bridge or guest-control line to the owning CEF handler socket.
+    ControlLine(String),
     Disconnected,
 }
 

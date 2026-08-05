@@ -8,7 +8,7 @@ mod render;
 mod window;
 
 pub use error::{MullionError, MullionResult};
-pub use host::MullionProcess;
+pub use host::{MullionProcess, WindowId};
 pub use launch::run_mullion_host_from_args;
 pub use window::{
     AppChrome, GlassSpec, MullionLifecyclePolicy, MullionWindow, MullionWindowChrome,
@@ -63,11 +63,8 @@ pub use mullion_service::{
     set_login_autostart,
 };
 
-#[cfg(target_os = "linux")]
-pub(crate) use bridge::parse_host_control;
 pub(crate) use bridge::{
-    prepare_bridge_command, spawn_bridge_dispatch, spawn_native_host_bridge_proxy,
+    parse_host_control, prepare_bridge_command, spawn_bridge_dispatch,
+    spawn_bridge_dispatch_for_window,
 };
-#[cfg(target_os = "linux")]
-pub(crate) use launch::HOST_CONTROL_PREFIX;
 pub(crate) use launch::{apply_browser_launch_args, centered_window_position};

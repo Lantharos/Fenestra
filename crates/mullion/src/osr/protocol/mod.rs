@@ -42,6 +42,8 @@ pub(crate) enum OsrMessage {
     HideRequested,
     FocusRequested,
     FileDragRequested(FileDragRequest),
+    /// Full `MULLION_BRIDGE_REQUEST\t...` line from the owning CEF handler.
+    BridgeRequest(String),
 }
 
 #[derive(Clone, Debug)]

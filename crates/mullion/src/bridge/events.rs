@@ -1,5 +1,5 @@
 use std::{
-    io::{self, BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Write},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
@@ -12,6 +12,11 @@ use crate::launch::browser::HOST_CONTROL_PREFIX;
 
 #[derive(Clone)]
 pub struct BridgeEventEmitter {
+    targets: Arc<Mutex<Vec<BridgeTarget>>>,
+}
+
+struct BridgeTarget {
+    window_id: u32,
     stdin: Arc<Mutex<std::process::ChildStdin>>,
 }
 
@@ -22,6 +27,19 @@ impl BridgeEventEmitter {
             payload,
         };
         self.write_line(event)
+    }
+
+    pub(crate) fn attach(&self, window_id: u32, stdin: Arc<Mutex<std::process::ChildStdin>>) {
+        if let Ok(mut targets) = self.targets.lock() {
+            targets.retain(|target| target.window_id != window_id);
+            targets.push(BridgeTarget { window_id, stdin });
+        }
+    }
+
+    pub(crate) fn detach(&self, window_id: u32) {
+        if let Ok(mut targets) = self.targets.lock() {
+            targets.retain(|target| target.window_id != window_id);
+        }
     }
 
     pub fn set_visible(&self, visible: bool) -> bool {
@@ -88,13 +106,23 @@ impl BridgeEventEmitter {
     }
 
     fn write_line(&self, line: impl std::fmt::Display) -> bool {
-        let Ok(mut stdin) = self.stdin.lock() else {
+        let Ok(mut targets) = self.targets.lock() else {
             return false;
         };
-        if writeln!(stdin, "{line}").is_err() {
+        if targets.is_empty() {
             return false;
         }
-        stdin.flush().is_ok()
+        let message = line.to_string();
+        targets.retain(|target| {
+            let Ok(mut stdin) = target.stdin.lock() else {
+                return false;
+            };
+            if writeln!(stdin, "{message}").is_err() {
+                return false;
+            }
+            stdin.flush().is_ok()
+        });
+        !targets.is_empty()
     }
 }
 
@@ -156,16 +184,22 @@ pub(crate) fn spawn_bridge_dispatch(
         };
     };
     let stdin = Arc::new(Mutex::new(stdin));
-    let emitter = Some(BridgeEventEmitter {
-        stdin: Arc::clone(&stdin),
-    });
+    let window_id = child.id();
+    let emitter = BridgeEventEmitter {
+        targets: Arc::new(Mutex::new(vec![BridgeTarget {
+            window_id,
+            stdin: Arc::clone(&stdin),
+        }])),
+    };
     let Some(stdout) = child.stdout.take() else {
         return BridgeDispatch {
             thread: None,
-            emitter,
+            emitter: Some(emitter),
         };
     };
-    let activity_emitter = emitter.clone();
+    let activity_emitter = Some(emitter.clone());
+    let response_stdin = Arc::clone(&stdin);
+    let detach_emitter = emitter.clone();
     let thread = thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(std::result::Result::ok) {
@@ -187,6 +221,53 @@ pub(crate) fn spawn_bridge_dispatch(
                 bridge_runtime.dispatch(request.command)
             };
             let line = BridgeIpcResponse::from_result(request.browser_id, request.id, response);
+            let Ok(mut stdin) = response_stdin.lock() else {
+                break;
+            };
+            if writeln!(stdin, "{line}").is_err() {
+                break;
+            }
+            let _ = stdin.flush();
+        }
+        detach_emitter.detach(window_id);
+    });
+    BridgeDispatch {
+        thread: Some(thread),
+        emitter: Some(emitter),
+    }
+}
+
+/// Attach another OSR-host child to an existing bridge emitter and dispatch
+/// that window's bridge requests through the same handlers.
+pub(crate) fn spawn_bridge_dispatch_for_window(
+    child: &mut Child,
+    bridge_runtime: mullion_bridge::BridgeRuntime,
+    activity: mullion_bridge::ActivityRegistry,
+    emitter: &BridgeEventEmitter,
+) -> Option<JoinHandle<()>> {
+    let stdin = child.stdin.take()?;
+    let stdin = Arc::new(Mutex::new(stdin));
+    let window_id = child.id();
+    emitter.attach(window_id, Arc::clone(&stdin));
+    let stdout = child.stdout.take()?;
+    let activity_emitter = emitter.clone();
+    Some(thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(std::result::Result::ok) {
+            let Some(request) = BridgeIpcRequest::parse(&line) else {
+                continue;
+            };
+            let response = if let Some((response, update)) =
+                activity.dispatch_bridge_command(&request.command)
+            {
+                if let (Ok(_), Some(update)) = (response.as_ref(), update.as_ref()) {
+                    let _ = activity_emitter.emit_activity_update(update);
+                }
+                response
+            } else {
+                bridge_runtime.dispatch(request.command)
+            };
+            let line = BridgeIpcResponse::from_result(request.browser_id, request.id, response);
             let Ok(mut stdin) = stdin.lock() else {
                 break;
             };
@@ -195,48 +276,8 @@ pub(crate) fn spawn_bridge_dispatch(
             }
             let _ = stdin.flush();
         }
-    });
-    BridgeDispatch {
-        thread: Some(thread),
-        emitter,
-    }
-}
-
-pub(crate) fn spawn_native_host_bridge_proxy<F>(child: &mut Child, mut host_control: F)
-where
-    F: FnMut(String, String) + Send + 'static,
-{
-    if let Some(stdout) = child.stdout.take() {
-        thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            let mut output = io::stdout();
-            for line in reader.lines().map_while(std::result::Result::ok) {
-                if writeln!(output, "{line}").is_err() {
-                    break;
-                }
-                let _ = output.flush();
-            }
-        });
-    }
-
-    if let Some(mut stdin) = child.stdin.take() {
-        thread::spawn(move || {
-            let input = io::stdin();
-            for line in input.lock().lines().map_while(std::result::Result::ok) {
-                if let Some((command, value)) = parse_host_control(&line) {
-                    host_control(command.to_string(), value.to_string());
-                    continue;
-                }
-                if line.starts_with(HOST_CONTROL_PREFIX) {
-                    continue;
-                }
-                if writeln!(stdin, "{line}").is_err() {
-                    break;
-                }
-                let _ = stdin.flush();
-            }
-        });
-    }
+        activity_emitter.detach(window_id);
+    }))
 }
 
 pub(crate) fn parse_host_control(line: &str) -> Option<(&str, &str)> {
@@ -320,5 +361,31 @@ impl std::fmt::Display for BridgeIpcEvent {
         let name = serde_json::to_string(&self.name).unwrap_or_else(|_| "\"event\"".to_string());
         let payload = serde_json::to_string(&self.payload).unwrap_or_else(|_| "null".to_string());
         write!(formatter, "MULLION_BRIDGE_EVENT\t{name}\t{payload}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::{Command, Stdio};
+
+    #[test]
+    fn emitter_detach_stops_broadcast() {
+        let mut child = Command::new("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("cat");
+        let stdin = Arc::new(Mutex::new(child.stdin.take().expect("stdin")));
+        let emitter = BridgeEventEmitter {
+            targets: Arc::new(Mutex::new(vec![BridgeTarget {
+                window_id: child.id(),
+                stdin,
+            }])),
+        };
+        assert!(emitter.emit("ping", serde_json::json!({})));
+        emitter.detach(child.id());
+        assert!(!emitter.emit("ping", serde_json::json!({})));
+        let _ = child.kill();
     }
 }

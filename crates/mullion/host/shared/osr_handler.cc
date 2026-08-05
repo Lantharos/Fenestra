@@ -1,12 +1,14 @@
 #include "osr_handler.h"
 
 #include <algorithm>
-#include <atomic>
 #include <cctype>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <sstream>
@@ -42,7 +44,6 @@ namespace {
 MullionOsrHandler* g_instance = nullptr;
 std::mutex g_handlers_mutex;
 std::vector<MullionOsrHandler*> g_handlers;
-std::atomic<bool> g_bridge_reader_started{false};
 constexpr size_t kSharedPaintThreshold = 256 * 1024;
 constexpr size_t kBatchEntryLen = 28;
 #ifndef MFD_CLOEXEC
@@ -249,96 +250,6 @@ bool ParseHostControl(const std::string& line,
   return !command->empty();
 }
 
-class BridgeResponseTask : public CefTask {
- public:
-  BridgeResponseTask(std::string browser_id,
-                     std::string request_id,
-                     bool ok,
-                     std::string payload)
-      : browser_id_(std::move(browser_id)),
-        request_id_(std::move(request_id)),
-        ok_(ok),
-        payload_(std::move(payload)) {}
-
-  void Execute() override {
-    if (MullionOsrHandler* handler =
-            MullionOsrHandler::FindByBrowserId(browser_id_)) {
-      handler->ResolveBridgeResponse(browser_id_, request_id_, ok_, payload_);
-    }
-  }
-
- private:
-  const std::string browser_id_;
-  const std::string request_id_;
-  const bool ok_;
-  const std::string payload_;
-
-  IMPLEMENT_REFCOUNTING(BridgeResponseTask);
-};
-
-class BridgeEventTask : public CefTask {
- public:
-  BridgeEventTask(std::string name_json, std::string payload)
-      : name_json_(std::move(name_json)), payload_(std::move(payload)) {}
-
-  void Execute() override {
-    for (MullionOsrHandler* handler : MullionOsrHandler::AllHandlers()) {
-      handler->EmitBridgeEvent(name_json_, payload_);
-    }
-  }
-
- private:
-  const std::string name_json_;
-  const std::string payload_;
-
-  IMPLEMENT_REFCOUNTING(BridgeEventTask);
-};
-
-class HostControlTask : public CefTask {
- public:
-  HostControlTask(std::string command, std::string value)
-      : command_(std::move(command)), value_(std::move(value)) {}
-
-  void Execute() override {
-    if (MullionOsrHandler* handler = MullionOsrHandler::GetInstance()) {
-      handler->ApplyHostControl(command_, value_);
-    }
-  }
-
- private:
-  const std::string command_;
-  const std::string value_;
-
-  IMPLEMENT_REFCOUNTING(HostControlTask);
-};
-
-void StartBridgeReader() {
-  bool expected = false;
-  if (!g_bridge_reader_started.compare_exchange_strong(expected, true)) {
-    return;
-  }
-  std::thread([] {
-    std::string line;
-    while (std::getline(std::cin, line)) {
-      std::string browser_id;
-      std::string request_id;
-      std::string name_json;
-      std::string payload;
-      std::string command;
-      std::string value;
-      bool ok = false;
-      if (ParseHostControl(line, &command, &value)) {
-        CefPostTask(TID_UI, new HostControlTask(command, value));
-      } else if (ParseBridgeResponse(line, &browser_id, &request_id, &ok, &payload)) {
-        CefPostTask(TID_UI,
-                    new BridgeResponseTask(browser_id, request_id, ok, payload));
-      } else if (ParseBridgeEvent(line, &name_json, &payload)) {
-        CefPostTask(TID_UI, new BridgeEventTask(name_json, payload));
-      }
-    }
-  }).detach();
-}
-
 class OsrCommandTask : public CefTask {
  public:
   OsrCommandTask(CefRefPtr<MullionOsrHandler> handler, std::string line)
@@ -355,14 +266,19 @@ class OsrCommandTask : public CefTask {
   IMPLEMENT_REFCOUNTING(OsrCommandTask);
 };
 
-class QuitTask : public CefTask {
+class CloseOnDisconnectTask : public CefTask {
  public:
+  explicit CloseOnDisconnectTask(CefRefPtr<MullionOsrHandler> handler)
+      : handler_(std::move(handler)) {}
+
   void Execute() override {
-    CefQuitMessageLoop();
+    handler_->CloseFromNativeDisconnect();
   }
 
  private:
-  IMPLEMENT_REFCOUNTING(QuitTask);
+  CefRefPtr<MullionOsrHandler> handler_;
+
+  IMPLEMENT_REFCOUNTING(CloseOnDisconnectTask);
 };
 
 void PutU32(std::vector<char>* buffer, size_t offset, uint32_t value) {
@@ -650,11 +566,8 @@ MullionOsrHandler::MullionOsrHandler(std::string endpoint,
   }
   RegisterHandler(this);
   ConnectSocket();
-  StartCommandReader();
-  if (!bridge_commands_.empty()) {
-    StartBridgeReader();
-  }
-}
+	  StartCommandReader();
+	}
 
 MullionOsrHandler::~MullionOsrHandler() {
   if (socket_fd_ >= 0) {
@@ -677,30 +590,6 @@ MullionOsrHandler::~MullionOsrHandler() {
 
 MullionOsrHandler* MullionOsrHandler::GetInstance() {
   return g_instance;
-}
-
-MullionOsrHandler* MullionOsrHandler::FindByBrowserId(
-    const std::string& browser_id) {
-  const int expected_id = std::atoi(browser_id.c_str());
-  for (MullionOsrHandler* handler : SnapshotHandlers()) {
-    if (handler->OwnsBrowserId(expected_id)) {
-      return handler;
-    }
-  }
-  return nullptr;
-}
-
-std::vector<MullionOsrHandler*> MullionOsrHandler::AllHandlers() {
-  return SnapshotHandlers();
-}
-
-bool MullionOsrHandler::OwnsBrowserId(int browser_id) const {
-  for (const auto& browser : browsers_) {
-    if (browser && browser->GetIdentifier() == browser_id) {
-      return true;
-    }
-  }
-  return false;
 }
 
 bool MullionOsrHandler::ConnectSocket() {
@@ -792,6 +681,9 @@ void MullionOsrHandler::StartCommandReader() {
 #endif
           buffer, sizeof(buffer), 0);
       if (n <= 0) {
+        // Native host exited or crashed — close this browser only so sibling
+        // OSR windows sharing the process singleton keep running.
+        CefPostTask(TID_UI, new CloseOnDisconnectTask(self));
         break;
       }
       pending.append(buffer, static_cast<size_t>(n));
@@ -1285,7 +1177,7 @@ void MullionOsrHandler::OnPaint(CefRefPtr<CefBrowser> browser,
     }
     return;
   }
-  if (suspended_ || !browser_ || !browser_->IsSame(browser)) {
+  if (view_hidden_ || !browser_ || !browser_->IsSame(browser)) {
     return;
   }
   const uint32_t kind = type == PET_POPUP ? kPopupFrame : kMainFrame;
@@ -1463,10 +1355,21 @@ void MullionOsrHandler::HandleControlLine(const std::string& line) {
   CEF_REQUIRE_UI_THREAD();
   std::string browser_id;
   std::string request_id;
+  std::string name_json;
   std::string payload;
+  std::string command;
+  std::string value;
   bool ok = false;
   if (ParseBridgeResponse(line, &browser_id, &request_id, &ok, &payload)) {
     ResolveBridgeResponse(browser_id, request_id, ok, payload);
+    return;
+  }
+  if (ParseBridgeEvent(line, &name_json, &payload)) {
+    EmitBridgeEvent(name_json, payload);
+    return;
+  }
+  if (ParseHostControl(line, &command, &value)) {
+    ApplyHostControl(command, value);
     return;
   }
   const auto parts = Split(line, '\t');
@@ -1500,9 +1403,19 @@ void MullionOsrHandler::HandleControlLine(const std::string& line) {
   }
   CefRefPtr<CefBrowserHost> host = target_browser->GetHost();
   if (parts[0] == "resize" && parts.size() >= 4) {
-    width_ = std::max(1, std::atoi(parts[1].c_str()));
-    height_ = std::max(1, std::atoi(parts[2].c_str()));
-    scale_ = std::max(0.25f, static_cast<float>(std::atof(parts[3].c_str())));
+    const int width = std::max(1, std::atoi(parts[1].c_str()));
+    const int height = std::max(1, std::atoi(parts[2].c_str()));
+    const float scale =
+        std::max(0.25f, static_cast<float>(std::atof(parts[3].c_str())));
+    // Same-size configures after interactive move must not Invalidate — that
+    // flashes the OSR surface until the next paint lands.
+    if (width == width_ && height == height_ &&
+        std::fabs(scale - scale_) < 0.0001f) {
+      return;
+    }
+    width_ = width;
+    height_ = height;
+    scale_ = scale;
     host->NotifyScreenInfoChanged();
     host->WasResized();
     host->Invalidate(PET_VIEW);
@@ -1607,8 +1520,13 @@ void MullionOsrHandler::HandleControlLine(const std::string& line) {
 	    ApplyLifecycle(parts[1], std::max(1, std::atoi(parts[2].c_str())),
 	                   reason);
 	  } else if (parts[0] == "close") {
+    // Close only this browser. CefQuitMessageLoop runs from OnBeforeClose
+    // when the last OSR handler is gone so sibling windows stay alive.
+    if (close_requested_) {
+      return;
+    }
+    close_requested_ = true;
     host->CloseBrowser(false);
-    CefPostDelayedTask(TID_UI, new QuitTask, 250);
 	  } else if (parts[0] == "file_drag_ended" && parts.size() >= 4) {
 	    FinishNativeFileDrag(std::atoi(parts[1].c_str()),
 	                         std::atoi(parts[2].c_str()), parts[3]);
@@ -1624,11 +1542,15 @@ void MullionOsrHandler::ApplyLifecycle(const std::string& state,
   }
   CefRefPtr<CefBrowserHost> host = browser_->GetHost();
   if (state == "active") {
+    const bool was_hidden = view_hidden_;
     suspended_ = false;
-    host->WasHidden(false);
+    view_hidden_ = false;
     host->SetWindowlessFrameRate(std::max(1, frame_rate));
-    host->WasResized();
-    host->Invalidate(PET_VIEW);
+    if (was_hidden) {
+      host->WasHidden(false);
+      host->WasResized();
+      host->Invalidate(PET_VIEW);
+    }
     ApplyGuestLifecycle();
     DispatchLifecycle("active", reason);
     return;
@@ -1636,14 +1558,16 @@ void MullionOsrHandler::ApplyLifecycle(const std::string& state,
   if (state == "hibernate") {
     DispatchLifecycle("hibernate", reason);
     suspended_ = true;
+    view_hidden_ = true;
     host->SetWindowlessFrameRate(std::max(1, background_frame_rate_));
     host->WasHidden(true);
     ApplyGuestLifecycle();
     return;
   }
+  // Suspend: throttle only. Do not WasHidden — Wayland fires brief blur /
+  // occlusion around interactive move, and hiding blanks the OSR surface.
   suspended_ = true;
   host->SetWindowlessFrameRate(std::max(1, frame_rate));
-  host->WasHidden(true);
   ApplyGuestLifecycle();
   DispatchLifecycle("suspended", reason);
 }
@@ -1672,9 +1596,9 @@ bool MullionOsrHandler::HandleWindowCommand(CefRefPtr<CefBrowser> browser,
     command = command.substr(0, query);
   }
   if (command == "close") {
+    // Ask the native host to tear down its window; it replies with "close\n"
+    // which CloseBrowsers this surface. Do not quit the shared CEF process.
     RequestNativeClose();
-    browser->GetHost()->CloseBrowser(false);
-    CefPostDelayedTask(TID_UI, new QuitTask, 250);
   } else if (command == "start-drag" || command == "drag") {
     SendMessage(6, 0, 0, 0, 0, nullptr, 0);
   } else if (command == "minimize") {
@@ -1995,7 +1919,7 @@ void MullionOsrHandler::ApplyGuestVisibility(GuestView& guest) {
     return;
   }
   CefRefPtr<CefBrowserHost> host = guest.browser->GetHost();
-  const bool hidden = !guest.visible || suspended_ || guests_.Covered();
+  const bool hidden = !guest.visible || view_hidden_ || guests_.Covered();
   host->WasHidden(hidden);
   if (!hidden) {
     host->Invalidate(PET_VIEW);
@@ -2323,7 +2247,7 @@ bool MullionOsrHandler::HandleGuestBridgeCommand(const std::string& command,
                             JsonMessage("unknown guest id"));
       return true;
     }
-    if (!guest->visible || suspended_ || guests_.Covered()) {
+    if (!guest->visible || view_hidden_ || guests_.Covered()) {
       ResolveBridgeResponse(browser_id, request_id, false,
                             JsonMessage("guest browser is not visible"));
       return true;
@@ -2538,15 +2462,27 @@ bool MullionOsrHandler::HandleBridgeCommand(CefRefPtr<CefBrowser> browser,
         "{\"message\":\"Mullion bridge command is not allowlisted\"}");
     return true;
   }
-  std::cout << "MULLION_BRIDGE_REQUEST\t" << browser_id << "\t" << request_id
-            << "\t" << origin << "\t" << command << "\t"
-            << (payload.empty() ? "{}" : payload)
-            << std::endl;
+  const std::string request_line =
+      "MULLION_BRIDGE_REQUEST\t" + browser_id + "\t" + request_id + "\t" +
+      origin + "\t" + command + "\t" + (payload.empty() ? "{}" : payload);
+  SendMessage(kBridgeRequest, 0, 0, 0, 0, request_line.data(),
+              static_cast<uint32_t>(request_line.size()));
   return true;
 }
 
 void MullionOsrHandler::RequestNativeClose() {
   SendMessage(5, 0, 0, 0, 0, nullptr, 0);
+}
+
+void MullionOsrHandler::CloseFromNativeDisconnect() {
+  CEF_REQUIRE_UI_THREAD();
+  if (close_requested_) {
+    return;
+  }
+  close_requested_ = true;
+  if (browser_) {
+    browser_->GetHost()->CloseBrowser(false);
+  }
 }
 
 void MullionOsrHandler::InstallBridge(CefRefPtr<CefBrowser> browser,
@@ -2625,8 +2561,40 @@ void CreateMullionOsrBrowser(CefRefPtr<CefCommandLine> command_line) {
 	  const int background_frame_rate =
 	      std::max(1, SwitchInt(command_line, "mullion-background-frame-rate", 5));
 	  const std::string endpoint = command_line->GetSwitchValue("mullion-osr-endpoint");
-	  const std::string authentication_token =
-	      command_line->GetSwitchValue("mullion-osr-token");
+	  std::string authentication_token;
+	  const std::string token_file =
+	      command_line->GetSwitchValue("mullion-osr-token-file");
+	  if (!token_file.empty()) {
+	    std::ifstream input(token_file.c_str(), std::ios::in | std::ios::binary);
+	    if (input) {
+	      std::getline(input, authentication_token);
+	      // Strip trailing CR from Windows files.
+	      while (!authentication_token.empty() &&
+	             (authentication_token.back() == '\r' ||
+	              authentication_token.back() == '\n')) {
+	        authentication_token.pop_back();
+	      }
+	    }
+	    // Remove after read so the secret does not linger. Handoff still works
+	    // because the secondary process writes a fresh file and the primary
+	    // reads it from the relaunch command line before this unlink.
+	    std::remove(token_file.c_str());
+	  }
+	  if (authentication_token.empty()) {
+	    if (const char* token_env = std::getenv("MULLION_OSR_TOKEN")) {
+	      authentication_token = token_env;
+#if defined(_WIN32)
+	      _putenv_s("MULLION_OSR_TOKEN", "");
+#else
+	      unsetenv("MULLION_OSR_TOKEN");
+#endif
+	    }
+	  }
+	  if (authentication_token.empty()) {
+	    std::cerr << "Mullion OSR: missing authentication token "
+	                 "(expected --mullion-osr-token-file or MULLION_OSR_TOKEN)"
+	              << std::endl;
+	  }
 
 	  CefBrowserSettings browser_settings;
 	  browser_settings.windowless_frame_rate = active_frame_rate;

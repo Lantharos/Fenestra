@@ -26,6 +26,7 @@ fn main() {
     let entry = mode.entry(&manifest_dir);
     let mut window = mode.apply(
         MullionWindow::new()
+            .app_id("com.mullion.notes")
             .title("Mullion Notes")
             .size(900, 640)
             .entry(entry)

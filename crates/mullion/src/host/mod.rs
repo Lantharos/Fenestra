@@ -12,8 +12,10 @@ use mullion_bridge::INSTALL_SCRIPT;
 mod process;
 mod process_tree;
 
-pub use process::MullionProcess;
-pub(crate) use process_tree::{ManagedChild, prepare_child_command};
+pub use process::{MullionProcess, WindowId};
+pub(crate) use process_tree::{
+    ManagedChild, prepare_child_command, prepare_detachable_child_command,
+};
 
 const HOST_CMAKE: &str = include_str!("../../host/shared/CMakeLists.txt");
 const HOST_MAIN: &str = include_str!("../../host/shared/main.cc");

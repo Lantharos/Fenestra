@@ -3,12 +3,13 @@ use std::{sync::mpsc, thread};
 use winit::event_loop::EventLoopProxy;
 
 use crate::osr::protocol::read_message;
-use crate::osr::transport::IpcListener;
+use crate::osr::transport::{IpcEndpoint, IpcListener};
 
 use super::types::OsrHostEvent;
 
 pub(super) fn start_socket_reader(
     listener: IpcListener,
+    endpoint: IpcEndpoint,
     authentication_token: String,
     sender: mpsc::Sender<OsrHostEvent>,
     proxy: EventLoopProxy,
@@ -16,10 +17,14 @@ pub(super) fn start_socket_reader(
     thread::spawn(move || {
         let mut stream = loop {
             let Ok((mut candidate, _)) = listener.accept() else {
+                endpoint.unlink();
                 return;
             };
-            if crate::osr::transport::authenticate(&mut candidate, &authentication_token).is_ok() {
-                break candidate;
+            match crate::osr::transport::authenticate(&mut candidate, &authentication_token) {
+                Ok(()) => break candidate,
+                Err(error) => {
+                    eprintln!("Mullion OSR reject connect: {error}");
+                }
             }
         };
         if let Ok(writer) = stream.try_clone() {
@@ -49,6 +54,7 @@ pub(super) fn start_socket_reader(
                 }
             }
         }
+        endpoint.unlink();
         let _ = sender.send(OsrHostEvent::Disconnected);
         proxy.wake_up();
     });

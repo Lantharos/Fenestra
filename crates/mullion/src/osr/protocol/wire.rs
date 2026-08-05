@@ -36,6 +36,7 @@ const KIND_GUEST_SHARED_BATCH: u32 = 19;
 const KIND_GUEST_HIDDEN: u32 = 20;
 const KIND_DRAGGABLE_REGIONS_CHANGED: u32 = 21;
 const KIND_GUEST_CAPTURE_REQUESTED: u32 = 22;
+const KIND_BRIDGE_REQUEST: u32 = 23;
 const BATCH_ENTRY_LEN: usize = 28;
 
 pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessage>> {
@@ -181,6 +182,10 @@ pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessa
                     ));
                 }
             }
+        }
+        KIND_BRIDGE_REQUEST => {
+            close_optional_fd(fd);
+            OsrMessage::BridgeRequest(String::from_utf8(payload).unwrap_or_default())
         }
         _ => {
             close_optional_fd(fd);

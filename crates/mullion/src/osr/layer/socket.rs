@@ -1,17 +1,15 @@
 use std::{
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead},
     net::Shutdown,
     os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
-    process::Child,
     thread,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use layershellev::calloop::channel::Sender;
 
+use crate::ShellSurfaceMargin;
 use crate::osr::protocol::{OsrMessage, read_message};
-use crate::{HOST_CONTROL_PREFIX, ShellSurfaceMargin};
 
 pub(super) enum LayerHostEvent {
     Connected(UnixStream),
@@ -19,86 +17,74 @@ pub(super) enum LayerHostEvent {
     Visible(bool),
     Alpha(f32),
     Margin(ShellSurfaceMargin),
+    ControlLine(String),
     Disconnected,
 }
 
-pub(super) fn spawn_layer_bridge_proxy(child: &mut Child, sender: Sender<LayerHostEvent>) {
-    if let Some(stdout) = child.stdout.take() {
-        thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            let mut output = io::stdout();
-            for line in reader.lines().map_while(std::result::Result::ok) {
-                if writeln!(output, "{line}").is_err() {
+pub(super) fn start_layer_parent_bridge_reader(sender: Sender<LayerHostEvent>) {
+    thread::spawn(move || {
+        let input = io::stdin();
+        for line in input.lock().lines().map_while(std::result::Result::ok) {
+            if let Some(visible) = parse_visibility_control(&line) {
+                if sender.send(LayerHostEvent::Visible(visible)).is_err() {
                     break;
                 }
-                let _ = output.flush();
+                continue;
             }
-        });
-    }
-
-    if let Some(mut stdin) = child.stdin.take() {
-        thread::spawn(move || {
-            let input = io::stdin();
-            for line in input.lock().lines().map_while(std::result::Result::ok) {
-                if let Some(visible) = parse_visibility_control(&line) {
-                    if sender.send(LayerHostEvent::Visible(visible)).is_err() {
-                        break;
-                    }
-                    continue;
-                }
-                if let Some(alpha) = parse_alpha_control(&line) {
-                    if sender.send(LayerHostEvent::Alpha(alpha)).is_err() {
-                        break;
-                    }
-                    continue;
-                }
-                if let Some(margin) = parse_margin_control(&line) {
-                    if sender.send(LayerHostEvent::Margin(margin)).is_err() {
-                        break;
-                    }
-                    continue;
-                }
-                if line.starts_with(HOST_CONTROL_PREFIX) {
-                    continue;
-                }
-                if writeln!(stdin, "{line}").is_err() {
+            if let Some(alpha) = parse_alpha_control(&line) {
+                if sender.send(LayerHostEvent::Alpha(alpha)).is_err() {
                     break;
                 }
-                let _ = stdin.flush();
+                continue;
             }
-        });
-    }
+            if let Some(margin) = parse_margin_control(&line) {
+                if sender.send(LayerHostEvent::Margin(margin)).is_err() {
+                    break;
+                }
+                continue;
+            }
+            if sender.send(LayerHostEvent::ControlLine(line)).is_err() {
+                break;
+            }
+        }
+    });
 }
 
 pub(super) fn open_socket_reader(
     sender: Sender<LayerHostEvent>,
     authentication_token: String,
+    app_id: &str,
 ) -> Option<PathBuf> {
-    let socket_path = osr_socket_path();
-    let _ = std::fs::remove_file(&socket_path);
-    let listener = match UnixListener::bind(&socket_path) {
-        Ok(listener) => listener,
+    let (endpoint, listener) = match crate::osr::transport::IpcEndpoint::bind(app_id) {
+        Ok(connection) => connection,
         Err(error) => {
             eprintln!("failed to bind Mullion layer OSR socket: {error}");
             return None;
         }
     };
-    start_socket_reader(listener, authentication_token, sender);
-    Some(socket_path)
+    let crate::osr::transport::IpcEndpoint::Unix(ref socket_path) = endpoint;
+    let path = socket_path.clone();
+    start_socket_reader(listener, endpoint, authentication_token, sender);
+    Some(path)
 }
 
 fn start_socket_reader(
     listener: UnixListener,
+    endpoint: crate::osr::transport::IpcEndpoint,
     authentication_token: String,
     sender: Sender<LayerHostEvent>,
 ) {
     thread::spawn(move || {
         let mut stream = loop {
             let Ok((mut candidate, _)) = listener.accept() else {
+                endpoint.unlink();
                 return;
             };
-            if crate::osr::transport::authenticate(&mut candidate, &authentication_token).is_ok() {
-                break candidate;
+            match crate::osr::transport::authenticate(&mut candidate, &authentication_token) {
+                Ok(()) => break candidate,
+                Err(error) => {
+                    eprintln!("Mullion layer OSR reject connect: {error}");
+                }
             }
         };
         if let Ok(writer) = stream.try_clone() {
@@ -126,20 +112,10 @@ fn start_socket_reader(
                 }
             }
         }
+        endpoint.unlink();
         let _ = stream.shutdown(Shutdown::Both);
         let _ = sender.send(LayerHostEvent::Disconnected);
     });
-}
-
-fn osr_socket_path() -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    std::env::temp_dir().join(format!(
-        "mullion-layer-osr-{}-{nanos}.sock",
-        std::process::id()
-    ))
 }
 
 fn parse_visibility_control(line: &str) -> Option<bool> {

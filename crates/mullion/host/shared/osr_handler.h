@@ -34,6 +34,7 @@ constexpr uint32_t kGuestSharedBatch = 19;
 constexpr uint32_t kGuestHidden = 20;
 constexpr uint32_t kDraggableRegionsChanged = 21;
 constexpr uint32_t kGuestCaptureRequested = 22;
+constexpr uint32_t kBridgeRequest = 23;
 
 class MullionOsrHandler : public CefClient,
                        public CefContextMenuHandler,
@@ -57,9 +58,6 @@ class MullionOsrHandler : public CefClient,
   ~MullionOsrHandler() override;
 
   static MullionOsrHandler* GetInstance();
-  static MullionOsrHandler* FindByBrowserId(const std::string& browser_id);
-  static std::vector<MullionOsrHandler*> AllHandlers();
-  bool OwnsBrowserId(int browser_id) const;
 
   CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
@@ -157,6 +155,7 @@ class MullionOsrHandler : public CefClient,
                         DragOperation operation) override;
 
   void HandleControlLine(const std::string& line);
+  void CloseFromNativeDisconnect();
   void FinishNativeFileDrag(int x, int y, const std::string& operation);
   void ApplyHostControl(const std::string& command, const std::string& value);
   void ResolveBridgeResponse(const std::string& browser_id,
@@ -271,10 +270,15 @@ class MullionOsrHandler : public CefClient,
 	  std::set<std::string> bridge_commands_;
 	  bool transparent_background_ = false;
 	  bool suspended_ = false;
+	  // True only when the view is actually taken off-screen (hibernate).
+	  // Blur/occlusion suspend only throttles frame rate — WasHidden there
+	  // blanks OSR and flickers on resume (common after interactive move).
+	  bool view_hidden_ = false;
 	  bool pending_guest_cover_ = false;
 	  int active_frame_rate_ = 60;
 	  int background_frame_rate_ = 5;
 	  bool closing_ = false;
+	  bool close_requested_ = false;
   CefRefPtr<CefBrowser> drag_source_browser_;
 
   IMPLEMENT_REFCOUNTING(MullionOsrHandler);

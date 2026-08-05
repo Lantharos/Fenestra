@@ -22,13 +22,24 @@ impl ManagedChild {
         self.child.id()
     }
 
+    pub(crate) fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        match self.child.try_wait()? {
+            Some(status) => {
+                self.group.unregister();
+                Ok(Some(status))
+            }
+            None => Ok(None),
+        }
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn wait(&mut self) -> std::io::Result<ExitStatus> {
         let status = self.child.wait();
         self.group.unregister();
         status
     }
 
-    pub(crate) fn terminate(&mut self) {
+    pub(crate) fn terminate(&mut self) -> Option<ExitStatus> {
         self.group.terminate();
         for _ in 0..10 {
             if !matches!(self.child.try_wait(), Ok(None)) {
@@ -37,8 +48,9 @@ impl ManagedChild {
             thread::sleep(Duration::from_millis(25));
         }
         self.group.kill();
-        let _ = self.child.wait();
+        let status = self.child.wait().ok();
         self.group.unregister();
+        status
     }
 }
 
@@ -49,7 +61,13 @@ impl Drop for ManagedChild {
 }
 
 pub(crate) fn prepare_child_command(command: &mut Command) {
-    platform::prepare_child_command(command);
+    platform::prepare_child_command(command, true);
+}
+
+/// Prepare a child that may outlive this process when siblings still need it
+/// (shared CEF process-singleton). Still gets a fresh process group.
+pub(crate) fn prepare_detachable_child_command(command: &mut Command) {
+    platform::prepare_child_command(command, false);
 }
 
 struct ProcessGroup {
@@ -110,11 +128,36 @@ mod platform {
         fn _exit(status: i32) -> !;
     }
 
-    pub(super) fn prepare_child_command(command: &mut Command) {
+    pub(super) fn prepare_child_command(command: &mut Command, die_with_parent: bool) {
         use std::os::unix::process::CommandExt;
 
         install_signal_cleanup();
         command.process_group(0);
+        #[cfg(target_os = "linux")]
+        {
+            use std::io;
+            if !die_with_parent {
+                return;
+            }
+            // DIE if the parent process exits unexpectedly so OSR hosts do not
+            // outlive a crashed Mullion app. CEF itself is detachable so closing
+            // one window does not SIGTERM the shared browser process.
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    if libc::getppid() == 1 {
+                        libc::raise(libc::SIGTERM);
+                    }
+                    Ok(())
+                });
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = die_with_parent;
+        }
     }
 
     pub(super) fn install_signal_cleanup() {
@@ -194,7 +237,7 @@ mod platform {
 mod platform {
     use std::process::Command;
 
-    pub(super) fn prepare_child_command(_command: &mut Command) {}
+    pub(super) fn prepare_child_command(_command: &mut Command, _die_with_parent: bool) {}
 
     pub(super) fn register_process_group(_id: u32) {}
 

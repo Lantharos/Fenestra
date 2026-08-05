@@ -577,6 +577,15 @@ impl MullionWindow {
         self.launch_with_runtime(runtime)
     }
 
+    /// Resolve entry URL and config for [`MullionProcess::open_window`].
+    /// Does not start desktop services or a second process island.
+    pub(crate) fn into_open_window_parts(mut self) -> MullionResult<(MullionWindowConfig, String)> {
+        self.ensure_default_bridge_handlers();
+        self.allow_configured_url_origins();
+        let url = self.entry_url()?;
+        Ok((self.config, url))
+    }
+
     pub(crate) fn launch_with_runtime(
         mut self,
         runtime: RuntimeInfo,
@@ -619,7 +628,7 @@ impl MullionWindow {
                     }
                     Err(error) => {
                         if let Some(child) = dev_server {
-                            ManagedChild::new(child).terminate();
+                            let _ = ManagedChild::new(child).terminate();
                         }
                         return Err(error);
                     }

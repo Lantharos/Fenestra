@@ -15,6 +15,7 @@ impl OsrNativeHost {
             match event {
                 super::types::OsrHostEvent::Connected(stream) => {
                     self.socket = Some(std::sync::Arc::new(std::sync::Mutex::new(stream)));
+                    self.handoff_deadline = None;
                     self.send_resize();
                     self.send_current_lifecycle();
                 }
@@ -64,7 +65,7 @@ impl OsrNativeHost {
                     self.set_content_cursor(cursor_for_cef(&cursor));
                 }
                 super::types::OsrHostEvent::Message(OsrMessage::CloseRequested) => {
-                    self.force_close(event_loop);
+                    self.begin_close(event_loop);
                     return;
                 }
                 super::types::OsrHostEvent::Message(OsrMessage::StartDragRequested) => {
@@ -104,6 +105,14 @@ impl OsrNativeHost {
                     self.ensure_window(event_loop);
                     self.focus_window("focus");
                 }
+                super::types::OsrHostEvent::Message(OsrMessage::BridgeRequest(line)) => {
+                    if !line.is_empty() {
+                        let mut output = std::io::stdout();
+                        use std::io::Write;
+                        let _ = writeln!(output, "{line}");
+                        let _ = output.flush();
+                    }
+                }
                 super::types::OsrHostEvent::HostControl(HostControl::Show) => {
                     self.ensure_window(event_loop);
                     self.show_window("show");
@@ -126,6 +135,13 @@ impl OsrNativeHost {
                 }
                 super::types::OsrHostEvent::HostControl(HostControl::ActivityEnd(activity)) => {
                     self.end_activity(activity)
+                }
+                super::types::OsrHostEvent::ControlLine(line) => {
+                    let mut line = line;
+                    if !line.ends_with('\n') {
+                        line.push('\n');
+                    }
+                    self.send_control(&line);
                 }
                 super::types::OsrHostEvent::Disconnected => {
                     self.socket = None;
