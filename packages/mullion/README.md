@@ -1,12 +1,14 @@
 # `@lantharos/mullion`
 
-Typed helpers for the Mullion page bridge that the host injects as `window.mullion`.
+TypeScript helpers for the Mullion page bridge (`window.mullion`).
 
-Install from Git (no npm publish required):
+## Install
 
 ```sh
 bun add github:Lantharos/Mullion#path:packages/mullion
 ```
+
+## Usage
 
 ```js
 import { invoke, listen, mullion } from "@lantharos/mullion";
@@ -15,5 +17,5 @@ const version = await invoke("app.version");
 listen("tray.click", () => mullion().window.show());
 ```
 
-The runtime bridge still comes from the Mullion host. This package is a thin typed
-facade for app UI code.
+These helpers call into the bridge Mullion injects into your page. Use them from UI code that
+runs inside a Mullion window.
