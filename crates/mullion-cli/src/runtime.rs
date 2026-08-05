@@ -51,7 +51,7 @@ pub fn ensure_runtime_ready() -> Result<std::path::PathBuf, String> {
     let runtime = resolve_runtime(&config).map_err(|error| {
         format!("failed to resolve the Mullion runtime: {error}\ninstall it with `mullion runtime install`")
     })?;
-    mullion::ensure_host(runtime.location.path())
+    mullion_host::ensure_host(runtime.location.path())
         .map_err(|error| format!("failed to prepare the Mullion CEF host: {error}"))
 }
 
@@ -215,7 +215,7 @@ fn doctor_runtime(json: bool) -> ExitCode {
     let has_compatible = resolved.is_some();
     let host_ready = resolved
         .as_ref()
-        .map(|runtime| mullion::host_release_binary(runtime.location.path()))
+        .map(|runtime| mullion_host::host_release_binary(runtime.location.path()))
         .is_some_and(|path| path.is_file());
     let status = if has_compatible {
         "ok"

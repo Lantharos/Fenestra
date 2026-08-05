@@ -1953,6 +1953,7 @@ dependencies = [
  "layershellev",
  "libc",
  "mullion-bridge",
+ "mullion-host",
  "mullion-platform",
  "mullion-runtime",
  "mullion-service",
@@ -1985,12 +1986,19 @@ name = "mullion-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
- "mullion",
+ "mullion-host",
  "mullion-runtime",
  "mullion-service",
  "serde",
  "serde_json",
  "toml 1.1.2+spec-1.1.0",
+]
+
+[[package]]
+name = "mullion-host"
+version = "0.1.0"
+dependencies = [
+ "mullion-bridge",
 ]
 
 [[package]]

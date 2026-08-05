@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-mullion.workspace = true
+mullion-host.workspace = true
 mullion-runtime.workspace = true
 mullion-service.workspace = true
 serde.workspace = true

@@ -5,7 +5,6 @@ keywords = ["mullion", "desktop", "chromium", "osr", "webview"]
 categories = ["gui", "rendering", "web-programming"]
 include = [
     "src/**/*",
-    "host/shared/**/*",
     "README.md",
     "LICENSE-MIT",
     "LICENSE-APACHE",
@@ -22,6 +21,7 @@ readme = "README.md"
 [dependencies]
 mullion-runtime.workspace = true
 mullion-bridge.workspace = true
+mullion-host.workspace = true
 mullion-platform.workspace = true
 mullion-service.workspace = true
 bytemuck.workspace = true

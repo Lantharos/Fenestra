@@ -4,6 +4,7 @@ members = [
     "crates/mullion-platform",
     "crates/mullion-runtime",
     "crates/mullion-bridge",
+    "crates/mullion-host",
     "crates/mullion",
     "crates/mullion-service",
     "crates/mullion-cli",
@@ -13,6 +14,7 @@ default-members = [
     "crates/mullion-platform",
     "crates/mullion-runtime",
     "crates/mullion-bridge",
+    "crates/mullion-host",
     "crates/mullion",
     "crates/mullion-service",
     "crates/mullion-cli",
@@ -34,6 +36,7 @@ categories = ["gui", "rendering"]
 mullion-runtime = { path = "crates/mullion-runtime", version = "0.1.0" }
 mullion-platform = { path = "crates/mullion-platform", version = "0.1.0" }
 mullion-bridge = { path = "crates/mullion-bridge", version = "0.1.0" }
+mullion-host = { path = "crates/mullion-host", version = "0.1.0" }
 mullion = { path = "crates/mullion", version = "0.1.0" }
 mullion-service = { path = "crates/mullion-service", version = "0.1.0" }
 

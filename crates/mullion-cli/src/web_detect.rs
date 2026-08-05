@@ -3,7 +3,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use mullion::{parse_localhost_port, vite_dev_url};
 use serde::Deserialize;
 
 #[derive(Debug, Clone)]
@@ -274,4 +273,22 @@ fn dunce_simplify(path: PathBuf) -> PathBuf {
     } else {
         out
     }
+}
+
+fn vite_dev_url(port: u16) -> String {
+    format!("http://localhost:{port}")
+}
+
+fn parse_localhost_port(url: &str) -> Option<u16> {
+    let url = url.trim();
+    let rest = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))?;
+    let host_port = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    if let Some((host, port)) = host_port.rsplit_once(':') {
+        if matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1") {
+            return port.parse().ok();
+        }
+    }
+    None
 }
