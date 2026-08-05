@@ -28,7 +28,16 @@ pub enum RuntimeCommand {
 
 pub fn run_runtime(command: RuntimeCommand) -> ExitCode {
     match command {
-        RuntimeCommand::Prepare => prepare_runtime(),
+        RuntimeCommand::Prepare => match ensure_runtime_ready() {
+            Ok(host) => {
+                println!("{}", host.display());
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(1)
+            }
+        },
         RuntimeCommand::List { json } => list_runtimes(json),
         RuntimeCommand::Install { package } => install_runtime(&package),
         RuntimeCommand::Remove { version, package } => remove_runtime(version.as_deref(), &package),
@@ -37,26 +46,13 @@ pub fn run_runtime(command: RuntimeCommand) -> ExitCode {
     }
 }
 
-fn prepare_runtime() -> ExitCode {
+pub fn ensure_runtime_ready() -> Result<std::path::PathBuf, String> {
     let config = RuntimeConfig::default();
-    let runtime = match resolve_runtime(&config) {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            eprintln!("failed to resolve the Mullion runtime: {error}");
-            eprintln!("install it with `mullion runtime install`");
-            return ExitCode::from(1);
-        }
-    };
-    match mullion::ensure_host(runtime.location.path()) {
-        Ok(host) => {
-            println!("{}", host.display());
-            ExitCode::SUCCESS
-        }
-        Err(error) => {
-            eprintln!("failed to prepare the Mullion CEF host: {error}");
-            ExitCode::from(1)
-        }
-    }
+    let runtime = resolve_runtime(&config).map_err(|error| {
+        format!("failed to resolve the Mullion runtime: {error}\ninstall it with `mullion runtime install`")
+    })?;
+    mullion::ensure_host(runtime.location.path())
+        .map_err(|error| format!("failed to prepare the Mullion CEF host: {error}"))
 }
 
 fn list_runtimes(json: bool) -> ExitCode {

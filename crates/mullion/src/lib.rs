@@ -12,7 +12,8 @@ pub use host::{MullionProcess, WindowId};
 pub use launch::run_mullion_host_from_args;
 pub use window::{
     AppChrome, GlassSpec, MullionLifecyclePolicy, MullionWindow, MullionWindowChrome,
-    MullionWindowConfig, MullionWindowControlAction,
+    MullionWindowConfig, MullionWindowControlAction, parse_localhost_port, vite_dev_command,
+    vite_dev_url,
 };
 
 /// Common imports for app authors.

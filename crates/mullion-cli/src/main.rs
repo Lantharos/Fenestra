@@ -1,10 +1,12 @@
 mod bundle;
+mod dev;
 mod icon_assets;
 mod runtime;
 mod source_assets;
 mod source_desktop;
 mod source_install;
 mod template;
+mod web_detect;
 
 use std::{path::PathBuf, process::ExitCode};
 
@@ -26,6 +28,18 @@ enum Command {
         name: String,
         #[arg(long, default_value = "app")]
         template: String,
+    },
+    Dev {
+        #[arg(default_value = ".")]
+        source: PathBuf,
+        #[arg(long)]
+        release: bool,
+        #[arg(long)]
+        no_install: bool,
+        #[arg(long)]
+        web_only: bool,
+        #[arg(long)]
+        no_runtime_prepare: bool,
     },
     Runtime {
         #[command(subcommand)]
@@ -113,6 +127,25 @@ enum RuntimeSubcommand {
 fn main() -> ExitCode {
     match Cli::parse().command {
         Command::New { name, template } => template::new_app(&name, &template),
+        Command::Dev {
+            source,
+            release,
+            no_install,
+            web_only,
+            no_runtime_prepare,
+        } => match dev::run_dev(dev::DevOptions {
+            source,
+            release,
+            no_install,
+            web_only,
+            no_runtime_prepare,
+        }) {
+            Ok(code) => code,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(1)
+            }
+        },
         Command::Runtime { command } => runtime::run_runtime(match command {
             RuntimeSubcommand::Prepare => RuntimeCommand::Prepare,
             RuntimeSubcommand::List { json } => RuntimeCommand::List { json },

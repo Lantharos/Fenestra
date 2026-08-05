@@ -41,8 +41,7 @@ bun add github:Lantharos/Mullion#path:packages/mullion
 ```sh
 mullion new my-app
 cd my-app
-bun install
-cargo run
+mullion dev
 ```
 
 Generated apps look like this:
@@ -66,7 +65,6 @@ fn main() {
             .with_manifest(manifest)?
             .app()
             .size(960, 640)
-            .vite_dev_server(5173)
             .bridge_typed("app.version", |_request: VersionRequest| {
                 Ok(VersionResponse {
                     version: env!("CARGO_PKG_VERSION"),

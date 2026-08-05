@@ -17,6 +17,8 @@ use crate::launch::{
     metrics_label, shell_command, split_entry_suffix,
 };
 use crate::osr;
+use crate::window::config::env_flag;
+use crate::window::dev::{parse_localhost_port, vite_dev_command};
 
 impl MullionWindow {
     pub fn launch(self) -> MullionResult<MullionProcess> {
@@ -64,6 +66,7 @@ impl MullionWindow {
             let desktop_services = None;
             metrics.mark("desktop_services.ready");
             self.ensure_default_bridge_handlers();
+            self.apply_dev_env_overrides();
             self.allow_configured_url_origins();
             let mut dev_server = self.start_dev_command(&metrics)?;
             let mut url = self.entry_url()?;
@@ -101,6 +104,9 @@ impl MullionWindow {
     }
 
     fn start_dev_command(&self, metrics: &LaunchMetrics) -> MullionResult<Option<Child>> {
+        if env_flag("MULLION_SKIP_DEV_COMMAND") {
+            return Ok(None);
+        }
         let Some(command) = &self.config.dev_command else {
             return Ok(None);
         };
@@ -120,6 +126,31 @@ impl MullionWindow {
             })?;
         metrics.mark("dev_command.spawned");
         Ok(Some(child))
+    }
+
+    fn apply_dev_env_overrides(&mut self) {
+        if let Ok(url) = std::env::var("MULLION_DEV_URL") {
+            let url = url.trim();
+            if !url.is_empty() {
+                allow_dev_origins(&mut self.config.security, url);
+                self.config.dev_url = Some(url.to_string());
+            }
+        }
+        if let Ok(command) = std::env::var("MULLION_DEV_COMMAND") {
+            let command = command.trim();
+            if !command.is_empty() {
+                self.config.dev_command = Some(command.to_string());
+            }
+        } else if self.config.dev_command.is_none() {
+            if let Some(port) = self
+                .config
+                .dev_url
+                .as_deref()
+                .and_then(parse_localhost_port)
+            {
+                self.config.dev_command = Some(vite_dev_command(port, "bun"));
+            }
+        }
     }
 
     fn wait_for_dev_server(

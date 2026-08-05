@@ -11,6 +11,7 @@ use mullion_platform::{
 };
 use mullion_runtime::RuntimeConfig;
 
+use super::dev::{vite_dev_command, vite_dev_url};
 use super::{
     GlassSpec, MullionLifecyclePolicy, MullionWindow, MullionWindowChrome,
     MullionWindowControlAction, MullionWindowControlRegion,
@@ -38,14 +39,14 @@ impl MullionWindow {
     }
 
     pub fn vite_dev_server(self, port: u16) -> Self {
-        self.dev_url(format!("http://localhost:{port}"))
-            .dev_command(format!("bun run dev -- --port {port} --strictPort"))
+        self.dev_url(vite_dev_url(port))
+            .dev_command(vite_dev_command(port, "bun"))
     }
 
     pub fn vite_dev_server_with_query(self, port: u16, query: impl AsRef<str>) -> Self {
         let query = query.as_ref().trim_start_matches('?');
-        self.dev_url(format!("http://localhost:{port}?{query}"))
-            .dev_command(format!("bun run dev -- --port {port} --strictPort"))
+        self.dev_url(format!("{}?{query}", vite_dev_url(port)))
+            .dev_command(vite_dev_command(port, "bun"))
     }
 
     pub fn dev_command(mut self, command: impl Into<String>) -> Self {

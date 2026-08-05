@@ -31,7 +31,7 @@ version = "0.1.0"
 root = "ui"
 dist = "ui/dist"
 entry = "ui/dist/index.html"
-dev_url = "http://localhost:5173"
+dev_port = 5173
 build = "bun run build"
 allowed_origins = ["http://localhost:5173"]
 "#
@@ -115,7 +115,6 @@ fn main() {
             .with_manifest(manifest)?
             .app()
             .size(960, 640)
-            .vite_dev_server(5173)
             .bridge_typed("app.version", |_request: VersionRequest| {
                 Ok(VersionResponse {
                     version: env!("CARGO_PKG_VERSION"),

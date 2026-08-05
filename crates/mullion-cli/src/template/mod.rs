@@ -31,12 +31,7 @@ pub fn new_app(name: &str, template: &str) -> ExitCode {
     match result {
         Ok(()) => {
             println!("Created Mullion app at {}", root.display());
-            if template == "app" {
-                println!("Install UI deps with: cd {name} && bun install");
-                println!("Run it with: cargo run");
-            } else {
-                println!("Run it with: cargo run");
-            }
+            println!("Run it with: cd {name} && mullion dev");
             ExitCode::SUCCESS
         }
         Err(error) => {

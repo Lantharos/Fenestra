@@ -3,6 +3,7 @@ use std::{fs, path::Path};
 use serde::Deserialize;
 
 use super::MullionWindow;
+use super::dev::{parse_localhost_port, vite_dev_command, vite_dev_url};
 use crate::error::{MullionError, MullionResult};
 
 #[derive(Debug, Default, Deserialize)]
@@ -25,6 +26,8 @@ struct WebSection {
     entry: Option<String>,
     url: Option<String>,
     dev_url: Option<String>,
+    dev_port: Option<u16>,
+    dev_command: Option<String>,
     #[serde(default)]
     allowed_origins: Vec<String>,
 }
@@ -69,10 +72,43 @@ impl MullionWindow {
         if let Some(url) = file.web.url {
             self = self.url(url);
         }
-        if let Some(dev_url) = file.web.dev_url {
-            self = self.dev_url(dev_url);
+
+        let mut allowed_origins = file.web.allowed_origins;
+        let explicit_dev_command = file
+            .web
+            .dev_command
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let mut dev_url = file
+            .web
+            .dev_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        if dev_url.is_none() {
+            if let Some(port) = file.web.dev_port {
+                dev_url = Some(vite_dev_url(port));
+            }
         }
-        for origin in file.web.allowed_origins {
+        let port = file
+            .web
+            .dev_port
+            .or_else(|| dev_url.as_deref().and_then(parse_localhost_port));
+        if let Some(url) = &dev_url {
+            if allowed_origins.is_empty() {
+                allowed_origins.push(url.clone());
+            }
+            self = self.dev_url(url.clone());
+        }
+        if let Some(command) = explicit_dev_command {
+            self = self.dev_command(command);
+        } else if let Some(port) = port {
+            self = self.dev_command(vite_dev_command(port, "bun"));
+        }
+        for origin in allowed_origins {
             self = self.allowed_origin(origin);
         }
         Ok(self)

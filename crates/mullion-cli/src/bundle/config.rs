@@ -211,10 +211,7 @@ fn read_mullion_file(source_dir: &Path) -> Result<MullionFile, String> {
 }
 
 fn detect_package_root(source_dir: &Path) -> Option<PathBuf> {
-    ["ui", "frontend", "web", "."]
-        .iter()
-        .map(|candidate| source_dir.join(candidate))
-        .find(|candidate| candidate.join("package.json").is_file())
+    crate::web_detect::detect_package_root(source_dir)
 }
 
 fn default_web_entry(source_dir: &Path) -> Option<PathBuf> {
@@ -249,42 +246,7 @@ fn detect_icon(source_dir: &Path) -> Option<PathBuf> {
 }
 
 fn detect_web_build_command(root: &Path) -> Option<String> {
-    let package_json = root.join("package.json");
-    if !package_json.is_file() {
-        return None;
-    }
-    let text = fs::read_to_string(package_json).ok()?;
-    let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
-    value
-        .get("scripts")
-        .and_then(|scripts| scripts.get("build"))
-        .and_then(serde_json::Value::as_str)?;
-    Some(format!("{} run build", package_manager(root, &value)))
-}
-
-fn package_manager(root: &Path, package: &serde_json::Value) -> &'static str {
-    if root.join("bun.lock").exists() || root.join("bun.lockb").exists() {
-        return "bun";
-    }
-    if root.join("pnpm-lock.yaml").exists() {
-        return "pnpm";
-    }
-    if root.join("yarn.lock").exists() {
-        return "yarn";
-    }
-    if package
-        .get("packageManager")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|value| value.starts_with("bun@"))
-    {
-        return "bun";
-    }
-    if command_exists("bun") { "bun" } else { "npm" }
-}
-
-fn command_exists(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|path| path.join(name).is_file()))
+    crate::web_detect::detect_web_build_command(root)
 }
 
 fn cargo_package_name(path: &Path) -> Option<String> {

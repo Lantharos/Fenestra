@@ -3,6 +3,7 @@ use mullion_bridge::BridgeHandlers;
 pub mod app_chrome;
 mod builder;
 pub mod config;
+mod dev;
 pub mod glass;
 mod launch;
 pub mod manifest;
@@ -13,6 +14,7 @@ pub use config::{
     DesktopServiceConfig, MullionLifecyclePolicy, MullionWindowChrome, MullionWindowConfig,
     MullionWindowControlAction, MullionWindowControlRegion,
 };
+pub use dev::{parse_localhost_port, vite_dev_command, vite_dev_url};
 pub use glass::GlassSpec;
 
 use crate::error::MullionResult;
