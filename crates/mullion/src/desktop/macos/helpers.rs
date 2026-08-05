@@ -32,233 +32,9 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
 };
 
-type EventQueue = Arc<Mutex<Vec<PlatformEvent>>>;
+pub(super) use super::{EventQueue, HotkeyRuntime, MacosPollHandle, TrayRuntime};
 
-pub struct DesktopServiceState {
-    events: EventQueue,
-    _tray: Option<TrayRuntime>,
-    _hotkeys: Option<HotkeyRuntime>,
-    _single_instance: Option<SingleInstanceGuard>,
-    menu_actions: Arc<Mutex<HashMap<String, (String, String, Option<String>)>>>,
-    shortcut_actions: Arc<Mutex<HashMap<u32, (String, String)>>>,
-    tray_id: Option<String>,
-}
-
-impl std::fmt::Debug for DesktopServiceState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DesktopServiceState")
-            .field(
-                "queued_events",
-                &self.events.lock().map(|events| events.len()).ok(),
-            )
-            .finish()
-    }
-}
-
-impl DesktopServiceState {
-    pub fn take_events(&self) -> Vec<PlatformEvent> {
-        self.events
-            .lock()
-            .map(|mut events| events.drain(..).collect())
-            .unwrap_or_default()
-    }
-
-    pub fn poll_native_events(&self) {
-        if let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            match event {
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                } => {
-                    if let Some(tray_id) = &self.tray_id {
-                        push_event(
-                            &self.events,
-                            PlatformEvent::Tray(TrayActivation::new(tray_id.clone())),
-                        );
-                    }
-                }
-                _ => {}
-            }
-        }
-        if let Ok(event) = MenuEvent::receiver().try_recv()
-            && let Ok(actions) = self.menu_actions.lock()
-            && let Some((tray_id, item_id, action)) = actions.get(&event.id.0)
-        {
-            push_event(
-                &self.events,
-                PlatformEvent::Tray(TrayActivation::item(
-                    tray_id.clone(),
-                    item_id.clone(),
-                    action.clone(),
-                )),
-            );
-        }
-        if let Ok(event) = GlobalHotKeyEvent::receiver().try_recv()
-            && event.state == HotKeyState::Pressed
-            && let Ok(actions) = self.shortcut_actions.lock()
-            && let Some((id, action)) = actions.get(&event.id())
-        {
-            push_event(
-                &self.events,
-                PlatformEvent::GlobalShortcut(GlobalShortcutActivation::new(
-                    id.clone(),
-                    action.clone(),
-                )),
-            );
-        }
-    }
-}
-
-pub fn apply_desktop_services(
-    tray_icon: Option<&TrayIcon>,
-    autostart: &[AutostartEntry],
-    global_shortcuts: &[GlobalShortcutRegistration],
-    deep_links: &[DeepLinkRegistration],
-    native_messaging_hosts: &[NativeMessagingHost],
-    single_instance_id: Option<&str>,
-    single_instance_policy: Option<SingleInstancePolicy>,
-) -> Result<DesktopServiceState, String> {
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let mut state = DesktopServiceState {
-        events: Arc::clone(&events),
-        _tray: None,
-        _hotkeys: None,
-        _single_instance: None,
-        menu_actions: Arc::new(Mutex::new(HashMap::new())),
-        shortcut_actions: Arc::new(Mutex::new(HashMap::new())),
-        tray_id: tray_icon.map(|icon| icon.id.clone()),
-    };
-
-    if let Some(policy) = single_instance_policy
-        && policy != SingleInstancePolicy::AllowMultiple
-    {
-        state._single_instance = Some(SingleInstanceGuard::acquire(
-            single_instance_id,
-            policy,
-            Arc::clone(&events),
-        )?);
-    }
-
-    for entry in autostart {
-        write_autostart_entry(entry)?;
-    }
-    for registration in deep_links {
-        register_deep_links(registration)?;
-    }
-    for host in native_messaging_hosts {
-        register_native_messaging_host(host)?;
-    }
-
-    if let Some(icon) = tray_icon {
-        let (tray, actions) = spawn_tray_icon(icon)?;
-        *state.menu_actions.lock().unwrap() = actions;
-        state._tray = Some(tray);
-    }
-    if !global_shortcuts.is_empty() {
-        let (hotkeys, actions) = spawn_global_shortcuts(global_shortcuts)?;
-        *state.shortcut_actions.lock().unwrap() = actions;
-        state._hotkeys = Some(hotkeys);
-    }
-
-    Ok(state)
-}
-
-pub fn start_desktop_event_forwarder<F>(
-    state: &DesktopServiceState,
-    running: Arc<AtomicBool>,
-    mut forwarder: F,
-) -> JoinHandle<()>
-where
-    F: FnMut(PlatformEvent) + Send + 'static,
-{
-    let events = Arc::clone(&state.events);
-    let services = MacosPollHandle {
-        menu_actions: Arc::clone(&state.menu_actions),
-        shortcut_actions: Arc::clone(&state.shortcut_actions),
-        tray_id: state.tray_id.clone(),
-        events: Arc::clone(&state.events),
-    };
-    thread::spawn(move || {
-        while running.load(Ordering::Relaxed) {
-            services.poll();
-            let batch = events
-                .lock()
-                .map(|mut events| events.drain(..).collect::<Vec<_>>())
-                .unwrap_or_default();
-            for event in batch {
-                forwarder(event);
-            }
-            thread::sleep(Duration::from_millis(16));
-        }
-    })
-}
-
-struct MacosPollHandle {
-    menu_actions: Arc<Mutex<HashMap<String, (String, String, Option<String>)>>>,
-    shortcut_actions: Arc<Mutex<HashMap<u32, (String, String)>>>,
-    tray_id: Option<String>,
-    events: EventQueue,
-}
-
-impl MacosPollHandle {
-    fn poll(&self) {
-        if let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            match event {
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                } => {
-                    if let Some(tray_id) = &self.tray_id {
-                        push_event(
-                            &self.events,
-                            PlatformEvent::Tray(TrayActivation::new(tray_id.clone())),
-                        );
-                    }
-                }
-                _ => {}
-            }
-        }
-        if let Ok(event) = MenuEvent::receiver().try_recv()
-            && let Ok(actions) = self.menu_actions.lock()
-            && let Some((tray_id, item_id, action)) = actions.get(&event.id.0)
-        {
-            push_event(
-                &self.events,
-                PlatformEvent::Tray(TrayActivation::item(
-                    tray_id.clone(),
-                    item_id.clone(),
-                    action.clone(),
-                )),
-            );
-        }
-        if let Ok(event) = GlobalHotKeyEvent::receiver().try_recv()
-            && event.state == HotKeyState::Pressed
-            && let Ok(actions) = self.shortcut_actions.lock()
-            && let Some((id, action)) = actions.get(&event.id())
-        {
-            push_event(
-                &self.events,
-                PlatformEvent::GlobalShortcut(GlobalShortcutActivation::new(
-                    id.clone(),
-                    action.clone(),
-                )),
-            );
-        }
-    }
-}
-
-struct TrayRuntime {
-    _icon: tray_icon::TrayIcon,
-}
-
-struct HotkeyRuntime {
-    _manager: GlobalHotKeyManager,
-    _keys: Vec<HotKey>,
-}
-
-fn spawn_tray_icon(
+pub(super) fn spawn_tray_icon(
     icon: &TrayIcon,
 ) -> Result<
     (
@@ -293,7 +69,7 @@ fn spawn_tray_icon(
     Ok((TrayRuntime { _icon: tray }, actions))
 }
 
-fn load_tray_icon(icon: &TrayIcon) -> Result<Icon, String> {
+pub(super) fn load_tray_icon(icon: &TrayIcon) -> Result<Icon, String> {
     if let Some(path) = &icon.icon_path
         && path.exists()
     {
@@ -313,7 +89,7 @@ fn load_tray_icon(icon: &TrayIcon) -> Result<Icon, String> {
     Icon::from_rgba(rgba, 16, 16).map_err(|error| error.to_string())
 }
 
-fn spawn_global_shortcuts(
+pub(super) fn spawn_global_shortcuts(
     registrations: &[GlobalShortcutRegistration],
 ) -> Result<(HotkeyRuntime, HashMap<u32, (String, String)>), String> {
     let manager = GlobalHotKeyManager::new().map_err(|error| error.to_string())?;
@@ -339,7 +115,7 @@ fn spawn_global_shortcuts(
     ))
 }
 
-fn shortcut_to_hotkey(shortcut: &Shortcut) -> Result<HotKey, String> {
+pub(super) fn shortcut_to_hotkey(shortcut: &Shortcut) -> Result<HotKey, String> {
     let mut modifiers = Modifiers::empty();
     if shortcut.modifiers.ctrl {
         modifiers |= Modifiers::CONTROL;
@@ -357,7 +133,7 @@ fn shortcut_to_hotkey(shortcut: &Shortcut) -> Result<HotKey, String> {
     Ok(HotKey::new(Some(modifiers), code))
 }
 
-fn parse_key_code(key: &str) -> Result<Code, String> {
+pub(super) fn parse_key_code(key: &str) -> Result<Code, String> {
     let normalized = key.trim().to_ascii_uppercase();
     match normalized.as_str() {
         "A" => Ok(Code::KeyA),
@@ -416,7 +192,7 @@ fn parse_key_code(key: &str) -> Result<Code, String> {
     }
 }
 
-fn write_autostart_entry(entry: &AutostartEntry) -> Result<(), String> {
+pub(super) fn write_autostart_entry(entry: &AutostartEntry) -> Result<(), String> {
     let agents = home_dir()?.join("Library").join("LaunchAgents");
     fs::create_dir_all(&agents).map_err(|error| error.to_string())?;
     let label = format!("dev.mullion.{}", sanitize_id(&entry.id));
@@ -451,7 +227,7 @@ fn write_autostart_entry(entry: &AutostartEntry) -> Result<(), String> {
     fs::write(plist_path, plist).map_err(|error| error.to_string())
 }
 
-fn register_deep_links(registration: &DeepLinkRegistration) -> Result<(), String> {
+pub(super) fn register_deep_links(registration: &DeepLinkRegistration) -> Result<(), String> {
     // Runtime URL-handler registration on macOS requires an app bundle
     // Info.plist. Persist a helper plist under Application Support so
     // packagers / CI can merge the schemes, and best-effort write a
@@ -476,7 +252,7 @@ fn register_deep_links(registration: &DeepLinkRegistration) -> Result<(), String
     Ok(())
 }
 
-fn register_native_messaging_host(host: &NativeMessagingHost) -> Result<(), String> {
+pub(super) fn register_native_messaging_host(host: &NativeMessagingHost) -> Result<(), String> {
     let name = sanitize_id(&host.name.to_ascii_lowercase());
     let manifest_dir = home_dir()?
         .join("Library")
@@ -520,7 +296,7 @@ fn register_native_messaging_host(host: &NativeMessagingHost) -> Result<(), Stri
     Ok(())
 }
 
-struct SingleInstanceGuard {
+pub(super) struct SingleInstanceGuard {
     _listener: Option<JoinHandle<()>>,
     running: Arc<AtomicBool>,
     lock_path: PathBuf,
@@ -528,7 +304,7 @@ struct SingleInstanceGuard {
 }
 
 impl SingleInstanceGuard {
-    fn acquire(
+    pub(super) fn acquire(
         id: Option<&str>,
         policy: SingleInstancePolicy,
         events: EventQueue,
@@ -604,7 +380,7 @@ impl Drop for SingleInstanceGuard {
     }
 }
 
-fn notify_existing_instance(socket_path: &Path) -> Result<(), String> {
+pub(super) fn notify_existing_instance(socket_path: &Path) -> Result<(), String> {
     let mut stream = UnixStream::connect(socket_path).map_err(|error| error.to_string())?;
     let payload = std::env::args().collect::<Vec<_>>().join("\n");
     stream
@@ -613,26 +389,26 @@ fn notify_existing_instance(socket_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn push_event(events: &EventQueue, event: PlatformEvent) {
+pub(super) fn push_event(events: &EventQueue, event: PlatformEvent) {
     if let Ok(mut queue) = events.lock() {
         queue.push(event);
     }
 }
 
-fn home_dir() -> Result<PathBuf, String> {
+pub(super) fn home_dir() -> Result<PathBuf, String> {
     env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| "HOME is required for macOS desktop integration".to_string())
 }
 
-fn runtime_dir() -> Result<PathBuf, String> {
+pub(super) fn runtime_dir() -> Result<PathBuf, String> {
     if let Some(path) = env::var_os("XDG_RUNTIME_DIR") {
         return Ok(PathBuf::from(path).join("mullion"));
     }
     Ok(home_dir()?.join("Library").join("Caches").join("mullion"))
 }
 
-fn sanitize_id(value: &str) -> String {
+pub(super) fn sanitize_id(value: &str) -> String {
     let sanitized = value
         .chars()
         .map(|ch| {
@@ -652,7 +428,7 @@ fn sanitize_id(value: &str) -> String {
     }
 }
 
-fn shell_words(command: &str) -> Vec<String> {
+pub(super) fn shell_words(command: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
@@ -676,7 +452,7 @@ fn shell_words(command: &str) -> Vec<String> {
     words
 }
 
-fn xml_escape(value: &str) -> String {
+pub(super) fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")

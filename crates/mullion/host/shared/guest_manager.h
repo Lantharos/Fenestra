@@ -119,37 +119,6 @@ std::string GuestDownloadJson(const std::string& guest_id,
                               CefRefPtr<CefDownloadItem> item,
                               const std::string& state,
                               const std::string& filename);
-std::string GuestShortcutJson(const std::string& id,
-                              const std::string& accelerator,
-                              const std::string& key,
-                              bool repeat,
-                              uint32_t modifiers);
-std::string GuestWheelJson(const std::string& id,
-                           double delta_x,
-                           double delta_y,
-                           uint32_t modifiers);
-std::string GuestFaviconJson(const std::string& id,
-                             const std::vector<std::string>& favicons);
-
-/// CEF event-flag bits used for guest shortcut / wheel payloads.
-constexpr uint32_t kGuestModShift = 1u << 1;
-constexpr uint32_t kGuestModControl = 1u << 2;
-constexpr uint32_t kGuestModAlt = 1u << 3;
-constexpr uint32_t kGuestModCommand = 1u << 7;
-constexpr uint32_t kGuestModRepeat = 1u << 13;
-constexpr uint32_t kGuestModMask =
-    kGuestModShift | kGuestModControl | kGuestModAlt | kGuestModCommand;
-
-/// Returns the matching accelerator string when |key| + |modifiers| match an
-/// entry in |shortcuts|. |Primary| is Meta on macOS and Control elsewhere.
-const std::string* MatchInterceptedShortcut(
-    const std::vector<std::string>& shortcuts,
-    const std::string& key,
-    uint32_t modifiers);
-
-/// True when a wheel sample is predominantly horizontal (Argent threshold).
-bool IsPredominantlyHorizontalWheel(double delta_x, double delta_y);
-
 /// Guest views keyed by id, with a separate bottom-to-top z-order used for
 /// pointer hit testing and paint ordering.
 class GuestRegistry {

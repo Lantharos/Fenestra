@@ -1,20 +1,22 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::window::style::Color;
 use glyphon::{
-    Attrs, Buffer, Cache, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache, TextArea,
-    TextAtlas, TextBounds, TextRenderer, Viewport, Wrap,
+    Buffer, Cache, FontSystem, Resolution, SwashCache, TextAtlas, TextRenderer, Viewport,
 };
-use image::GenericImageView;
 use thiserror::Error;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
 use crate::render::rect_pipeline::{
-    Globals, ImageVertex, RectVertex, create_image_pipeline, create_rounded_rect_pipeline,
-    push_image_quad, push_rect_command, push_rounded_rect_command, to_wgpu_color,
+    Globals, RectVertex, create_image_pipeline, create_rounded_rect_pipeline, push_rect_command,
+    push_rounded_rect_command, to_wgpu_color,
 };
 use crate::render::{DisplayCommand, DisplayList, TextCommand};
+
+mod images;
+mod text;
+
+use text::text_areas;
 
 #[derive(Debug, Error)]
 pub enum RendererError {
@@ -56,11 +58,16 @@ pub struct GpuRenderer {
 }
 
 #[derive(Clone)]
-struct CachedTexture {
-    texture: wgpu::Texture,
-    bind_group: wgpu::BindGroup,
-    width: u32,
-    height: u32,
+pub(super) struct CachedTexture {
+    pub(super) texture: wgpu::Texture,
+    pub(super) bind_group: wgpu::BindGroup,
+    pub(super) width: u32,
+    pub(super) height: u32,
+}
+
+pub(super) struct TextBufferEntry {
+    pub(super) buffer: Buffer,
+    pub(super) command: TextCommand,
 }
 
 impl GpuRenderer {
@@ -236,135 +243,6 @@ impl GpuRenderer {
         self.surface.configure(&self.device, &self.surface_config);
     }
 
-    pub fn set_dynamic_bgra_image(
-        &mut self,
-        id: impl Into<String>,
-        width: u32,
-        height: u32,
-        bytes: &[u8],
-    ) -> Result<(), RendererError> {
-        let id = id.into();
-        if width == 0 || height == 0 {
-            return Err(RendererError::Texture(
-                "dynamic image has empty size".to_string(),
-            ));
-        }
-        let expected_len = width as usize * height as usize * 4;
-        if bytes.len() != expected_len {
-            return Err(RendererError::Texture(format!(
-                "dynamic image expected {expected_len} bytes, got {}",
-                bytes.len()
-            )));
-        }
-
-        let recreate = self
-            .texture_cache
-            .get(&id)
-            .is_none_or(|entry| entry.width != width || entry.height != height);
-        if recreate {
-            self.create_dynamic_bgra_image(id.clone(), width, height);
-        }
-
-        let Some(entry) = self.texture_cache.get(&id) else {
-            return Err(RendererError::Texture(
-                "dynamic image was not cached".to_string(),
-            ));
-        };
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &entry.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytes,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * width),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        Ok(())
-    }
-
-    pub fn update_dynamic_bgra_image_region(
-        &mut self,
-        id: impl Into<String>,
-        width: u32,
-        height: u32,
-        x: u32,
-        y: u32,
-        region_width: u32,
-        region_height: u32,
-        bytes: &[u8],
-    ) -> Result<(), RendererError> {
-        let id = id.into();
-        if width == 0 || height == 0 {
-            return Err(RendererError::Texture(
-                "dynamic image has empty size".to_string(),
-            ));
-        }
-        if region_width == 0 || region_height == 0 {
-            return Ok(());
-        }
-        if x >= width
-            || y >= height
-            || x.saturating_add(region_width) > width
-            || y.saturating_add(region_height) > height
-        {
-            return Err(RendererError::Texture(format!(
-                "dynamic image region {x},{y} {region_width}x{region_height} exceeds {width}x{height}"
-            )));
-        }
-        let expected_len = width as usize * height as usize * 4;
-        if bytes.len() != expected_len {
-            return Err(RendererError::Texture(format!(
-                "dynamic image expected {expected_len} bytes, got {}",
-                bytes.len()
-            )));
-        }
-
-        let recreate = self
-            .texture_cache
-            .get(&id)
-            .is_none_or(|entry| entry.width != width || entry.height != height);
-        if recreate {
-            self.create_dynamic_bgra_image(id.clone(), width, height);
-            return self.set_dynamic_bgra_image(id, width, height, bytes);
-        }
-
-        let Some(entry) = self.texture_cache.get(&id) else {
-            return Err(RendererError::Texture(
-                "dynamic image was not cached".to_string(),
-            ));
-        };
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &entry.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d { x, y, z: 0 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytes,
-            wgpu::TexelCopyBufferLayout {
-                offset: (u64::from(y) * u64::from(width) + u64::from(x)) * 4,
-                bytes_per_row: Some(4 * width),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width: region_width,
-                height: region_height,
-                depth_or_array_layers: 1,
-            },
-        );
-        Ok(())
-    }
-
     pub fn render(&mut self, display_list: &DisplayList) -> Result<(), RendererError> {
         self.queue.write_buffer(
             &self.globals_buffer,
@@ -518,140 +396,6 @@ impl GpuRenderer {
         Ok(None)
     }
 
-    fn image_draws(&mut self, display_list: &DisplayList) -> Vec<ImageDraw> {
-        let mut draws = Vec::new();
-        for command in &display_list.commands {
-            let DisplayCommand::Image(image) = command else {
-                continue;
-            };
-            let path = image.id.clone();
-            let cached = self.texture_cache.get(&path).cloned();
-            let bind_group = match cached {
-                Some(entry) => entry.bind_group,
-                None => match self.load_image_texture(&path) {
-                    Ok(bind_group) => bind_group,
-                    Err(_) => continue,
-                },
-            };
-            let mut vertices = Vec::new();
-            push_image_quad(
-                &mut vertices,
-                image.x,
-                image.y,
-                image.width,
-                image.height,
-                self.scale_factor,
-            );
-            draws.push(ImageDraw {
-                bind_group,
-                vertices,
-            });
-        }
-        draws
-    }
-
-    fn load_image_texture(&mut self, path: &str) -> Result<wgpu::BindGroup, String> {
-        let img = image::open(path).map_err(|e| format!("failed to load image {path}: {e}"))?;
-        let dimensions = img.dimensions();
-        let rgba = img.to_rgba8();
-        let size = wgpu::Extent3d {
-            width: dimensions.0,
-            height: dimensions.1,
-            depth_or_array_layers: 1,
-        };
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(path),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * dimensions.0),
-                rows_per_image: Some(dimensions.1),
-            },
-            size,
-        );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(path),
-            layout: &self.image_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&self.image_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-            ],
-        });
-        self.texture_cache.insert(
-            path.to_string(),
-            CachedTexture {
-                texture,
-                bind_group: bind_group.clone(),
-                width: dimensions.0,
-                height: dimensions.1,
-            },
-        );
-        Ok(bind_group)
-    }
-
-    fn create_dynamic_bgra_image(&mut self, id: String, width: u32, height: u32) {
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(&id),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&id),
-            layout: &self.image_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&self.image_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-            ],
-        });
-        self.texture_cache.insert(
-            id,
-            CachedTexture {
-                texture,
-                bind_group,
-                width,
-                height,
-            },
-        );
-    }
-
     fn rect_vertices(&self, display_list: &DisplayList) -> Vec<RectVertex> {
         let mut vertices = Vec::new();
         for command in &display_list.commands {
@@ -667,80 +411,4 @@ impl GpuRenderer {
         }
         vertices
     }
-
-    fn rebuild_text_buffers(&mut self, display_list: &DisplayList) {
-        self.text_buffers.clear();
-        for command in &display_list.commands {
-            let DisplayCommand::Text(command) = command else {
-                continue;
-            };
-
-            let scale = self.scale_factor;
-            let mut buffer = Buffer::new(
-                &mut self.font_system,
-                Metrics::new(command.size * scale, command.line_height * scale),
-            );
-            buffer.set_size(
-                &mut self.font_system,
-                Some(command.width * scale),
-                Some(command.height * scale),
-            );
-            buffer.set_wrap(&mut self.font_system, Wrap::WordOrGlyph);
-            buffer.set_text(
-                &mut self.font_system,
-                &command.text,
-                &Attrs::new().family(Family::SansSerif),
-                Shaping::Advanced,
-                Some(glyphon::cosmic_text::Align::Center),
-            );
-            buffer.shape_until_scroll(&mut self.font_system, false);
-            self.text_buffers.push(TextBufferEntry {
-                buffer,
-                command: command.clone(),
-            });
-        }
-    }
-}
-
-struct TextBufferEntry {
-    buffer: Buffer,
-    command: TextCommand,
-}
-
-fn text_areas(text_buffers: &[TextBufferEntry], scale: f32) -> Vec<TextArea<'_>> {
-    text_buffers
-        .iter()
-        .map(|entry| TextArea {
-            buffer: &entry.buffer,
-            left: entry.command.x * scale,
-            top: entry.command.y * scale,
-            scale: 1.0,
-            bounds: TextBounds {
-                left: (entry.command.x * scale) as i32,
-                top: (entry.command.y * scale) as i32,
-                right: ((entry.command.x + entry.command.width) * scale) as i32,
-                bottom: ((entry.command.y + entry.command.height) * scale) as i32,
-            },
-            default_color: to_glyphon_color(entry.command.color),
-            custom_glyphs: &[],
-        })
-        .collect()
-}
-
-fn to_glyphon_color(color: Color) -> glyphon::Color {
-    glyphon::Color::rgba(
-        to_u8(color.r),
-        to_u8(color.g),
-        to_u8(color.b),
-        to_u8(color.a),
-    )
-}
-
-fn to_u8(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
-struct ImageDraw {
-    bind_group: wgpu::BindGroup,
-    vertices: Vec<ImageVertex>,
 }

@@ -20,12 +20,24 @@ set(MULLION_HOST_SOURCES
   main.cc
   app.cc
   app.h
+  guest_input.cc
+  guest_input.h
   guest_manager.cc
   guest_manager.h
   json_util.cc
   json_util.h
   osr_handler.cc
   osr_handler.h
+  osr_handler_bridge.cc
+  osr_handler_cef.cc
+  osr_handler_downloads.cc
+  osr_handler_drag.cc
+  osr_handler_guest.cc
+  osr_handler_guest_ops.cc
+  osr_handler_input.cc
+  osr_handler_ipc.cc
+  osr_handler_util.cc
+  osr_handler_util.h
 )
 
 if(OS_WINDOWS)

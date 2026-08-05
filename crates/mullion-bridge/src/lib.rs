@@ -12,6 +12,9 @@
 pub mod activity;
 pub mod bridge;
 pub mod guest;
+pub mod guest_create;
+pub mod guest_download;
+pub mod guest_host_control;
 pub mod guest_input;
 pub mod metrics;
 pub mod web_bridge;

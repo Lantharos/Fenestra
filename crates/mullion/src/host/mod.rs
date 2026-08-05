@@ -17,16 +17,84 @@ pub(crate) use process_tree::{
     ManagedChild, prepare_child_command, prepare_detachable_child_command,
 };
 
-const HOST_CMAKE: &str = include_str!("../../host/shared/CMakeLists.txt");
-const HOST_MAIN: &str = include_str!("../../host/shared/main.cc");
-const HOST_APP_H: &str = include_str!("../../host/shared/app.h");
-const HOST_APP_CC: &str = include_str!("../../host/shared/app.cc");
-const HOST_OSR_HANDLER_H: &str = include_str!("../../host/shared/osr_handler.h");
-const HOST_OSR_HANDLER_CC: &str = include_str!("../../host/shared/osr_handler.cc");
-const HOST_GUEST_MANAGER_H: &str = include_str!("../../host/shared/guest_manager.h");
-const HOST_GUEST_MANAGER_CC: &str = include_str!("../../host/shared/guest_manager.cc");
-const HOST_JSON_UTIL_H: &str = include_str!("../../host/shared/json_util.h");
-const HOST_JSON_UTIL_CC: &str = include_str!("../../host/shared/json_util.cc");
+const HOST_SOURCES: &[(&str, &str)] = &[
+    (
+        "CMakeLists.txt",
+        include_str!("../../host/shared/CMakeLists.txt"),
+    ),
+    ("main.cc", include_str!("../../host/shared/main.cc")),
+    ("app.cc", include_str!("../../host/shared/app.cc")),
+    ("app.h", include_str!("../../host/shared/app.h")),
+    (
+        "guest_input.cc",
+        include_str!("../../host/shared/guest_input.cc"),
+    ),
+    (
+        "guest_input.h",
+        include_str!("../../host/shared/guest_input.h"),
+    ),
+    (
+        "guest_manager.cc",
+        include_str!("../../host/shared/guest_manager.cc"),
+    ),
+    (
+        "guest_manager.h",
+        include_str!("../../host/shared/guest_manager.h"),
+    ),
+    (
+        "json_util.cc",
+        include_str!("../../host/shared/json_util.cc"),
+    ),
+    ("json_util.h", include_str!("../../host/shared/json_util.h")),
+    (
+        "osr_handler.cc",
+        include_str!("../../host/shared/osr_handler.cc"),
+    ),
+    (
+        "osr_handler.h",
+        include_str!("../../host/shared/osr_handler.h"),
+    ),
+    (
+        "osr_handler_bridge.cc",
+        include_str!("../../host/shared/osr_handler_bridge.cc"),
+    ),
+    (
+        "osr_handler_cef.cc",
+        include_str!("../../host/shared/osr_handler_cef.cc"),
+    ),
+    (
+        "osr_handler_downloads.cc",
+        include_str!("../../host/shared/osr_handler_downloads.cc"),
+    ),
+    (
+        "osr_handler_drag.cc",
+        include_str!("../../host/shared/osr_handler_drag.cc"),
+    ),
+    (
+        "osr_handler_guest.cc",
+        include_str!("../../host/shared/osr_handler_guest.cc"),
+    ),
+    (
+        "osr_handler_guest_ops.cc",
+        include_str!("../../host/shared/osr_handler_guest_ops.cc"),
+    ),
+    (
+        "osr_handler_input.cc",
+        include_str!("../../host/shared/osr_handler_input.cc"),
+    ),
+    (
+        "osr_handler_ipc.cc",
+        include_str!("../../host/shared/osr_handler_ipc.cc"),
+    ),
+    (
+        "osr_handler_util.cc",
+        include_str!("../../host/shared/osr_handler_util.cc"),
+    ),
+    (
+        "osr_handler_util.h",
+        include_str!("../../host/shared/osr_handler_util.h"),
+    ),
+];
 const HOST_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const HOST_BUILD_LOCK_STALE_AFTER: Duration = Duration::from_secs(30 * 60);
 
@@ -140,18 +208,7 @@ pub fn ld_library_path(release_dir: &Path) -> String {
 }
 
 fn write_host_source(source_dir: &Path) -> Result<(), String> {
-    for (name, body) in [
-        ("CMakeLists.txt", HOST_CMAKE),
-        ("main.cc", HOST_MAIN),
-        ("app.h", HOST_APP_H),
-        ("app.cc", HOST_APP_CC),
-        ("osr_handler.h", HOST_OSR_HANDLER_H),
-        ("osr_handler.cc", HOST_OSR_HANDLER_CC),
-        ("guest_manager.h", HOST_GUEST_MANAGER_H),
-        ("guest_manager.cc", HOST_GUEST_MANAGER_CC),
-        ("json_util.h", HOST_JSON_UTIL_H),
-        ("json_util.cc", HOST_JSON_UTIL_CC),
-    ] {
+    for (name, body) in HOST_SOURCES {
         std::fs::write(source_dir.join(name), body).map_err(|error| error.to_string())?;
     }
     std::fs::write(source_dir.join("mullion_bridge_js.h"), bridge_js_header())
@@ -191,23 +248,15 @@ fn bridge_js_header() -> String {
 
 fn host_source_fingerprint() -> String {
     let mut hash = 0xcbf29ce484222325u64;
-    for body in [
-        HOST_CMAKE,
-        HOST_MAIN,
-        HOST_APP_H,
-        HOST_APP_CC,
-        HOST_OSR_HANDLER_H,
-        HOST_OSR_HANDLER_CC,
-        HOST_GUEST_MANAGER_H,
-        HOST_GUEST_MANAGER_CC,
-        HOST_JSON_UTIL_H,
-        HOST_JSON_UTIL_CC,
-        INSTALL_SCRIPT,
-    ] {
+    for (_, body) in HOST_SOURCES {
         for byte in body.as_bytes() {
             hash ^= u64::from(*byte);
             hash = hash.wrapping_mul(0x100000001b3);
         }
+    }
+    for byte in INSTALL_SCRIPT.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("{hash:016x}")
 }
@@ -306,4 +355,38 @@ fn stable_hash(parts: &[&str]) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HOST_SOURCES;
+
+    #[test]
+    fn host_sources_match_cmake_lists() {
+        let cmake = HOST_SOURCES
+            .iter()
+            .find(|(name, _)| *name == "CMakeLists.txt")
+            .map(|(_, body)| *body)
+            .expect("CMakeLists.txt embedded");
+        let start = cmake
+            .find("set(MULLION_HOST_SOURCES")
+            .expect("MULLION_HOST_SOURCES");
+        let list = &cmake[start..];
+        let end = list.find(')').expect("closing paren");
+        let listed: Vec<&str> = list[..end]
+            .lines()
+            .skip(1)
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        let embedded: Vec<&str> = HOST_SOURCES
+            .iter()
+            .map(|(name, _)| *name)
+            .filter(|name| *name != "CMakeLists.txt")
+            .collect();
+        assert_eq!(
+            listed, embedded,
+            "HOST_SOURCES must list every CMake host source in the same order"
+        );
+    }
 }
