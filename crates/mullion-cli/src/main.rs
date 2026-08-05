@@ -24,7 +24,7 @@ struct Cli {
 enum Command {
     New {
         name: String,
-        #[arg(long, default_value = "notes")]
+        #[arg(long, default_value = "app")]
         template: String,
     },
     Runtime {

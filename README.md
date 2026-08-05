@@ -69,55 +69,71 @@ cargo install --git https://github.com/Lantharos/Mullion --package mullion-cli
 cargo install --git https://github.com/Lantharos/Mullion --package mullion-service
 mullion new my-app
 cd my-app
+bun install
 cargo run
 ```
 
-The generated host handles Mullion child modes before creating the app window:
+The generated app uses `MullionWindow::main`, loads identity/content from `Mullion.toml`,
+talks to Vite on `:5173` in development, and ships a typed bridge helper from Git:
+
+```toml
+# package.json
+"@lantharos/mullion": "github:Lantharos/Mullion#path:packages/mullion"
+```
 
 ```rust
-use mullion::{BridgeResponse, MullionWindow, run_mullion_host_from_args};
+use mullion::prelude::*;
+use serde::{Deserialize, Serialize};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = std::env::args().collect::<Vec<_>>();
-    if run_mullion_host_from_args(&args) {
-        return Ok(());
-    }
+#[derive(Deserialize)]
+struct VersionRequest {}
 
-    MullionWindow::new()
-        .app_id("com.example.my-app")
-        .title("My App")
-        .entry("ui/index.html")
-        .bridge_handler("app.version", |_| {
-            Ok(BridgeResponse::json(serde_json::json!({ "version": "1.0.0" })))
-        })
-        .launch_or_install()?
-        .wait()?;
-    Ok(())
+#[derive(Serialize)]
+struct VersionResponse {
+    version: &'static str,
+}
+
+fn main() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Mullion.toml");
+    MullionWindow::main(|window| {
+        Ok(window
+            .with_manifest(manifest)?
+            .app()
+            .size(960, 640)
+            .vite_dev_server(5173)
+            .bridge_typed("app.version", |_request: VersionRequest| {
+                Ok(VersionResponse {
+                    version: env!("CARGO_PKG_VERSION"),
+                })
+            }))
+    });
 }
 ```
 
-`launch_or_install` contacts the shared Mullion service, opens a small native bootstrap window when
-the runtime is missing, then downloads, verifies, extracts, and builds the host before the page starts.
+`launch_or_install` (used inside `MullionWindow::main`) contacts the shared Mullion service,
+opens a small native bootstrap window when the runtime is missing, then downloads, verifies,
+extracts, and builds the host before the page starts.
 
 ## Window recipes
 
 ```rust
 // Conventional desktop app
-MullionWindow::new().system_chrome();
-
-// App-drawn titlebar
-MullionWindow::new().mullion_chrome();
+MullionWindow::new().app();
 
 // Transparent palette or launcher
-MullionWindow::new()
-    .frameless()
-    .glass()
-    .hide_on_blur(true);
+MullionWindow::new().palette();
 
 // Warm background/tray window
 MullionWindow::new()
-    .hidden()
-    .lifecycle_policy(mullion::MullionLifecyclePolicy::hidden_window());
+    .tray_app()
+    .tray_icon(/* ... */)
+    .single_instance_id("com.example.my-app");
+
+// App-drawn chrome with titlebar + sidebar glass regions
+MullionWindow::new()
+    .frameless()
+    .glass()
+    .app_chrome(AppChrome::new(38, 260));
 
 // Browser or document tabs that can hibernate
 MullionWindow::new()
@@ -187,8 +203,13 @@ icon = "assets/icon.png"
 root = "ui"
 dist = "ui/dist"
 entry = "ui/dist/index.html"
+dev_url = "http://localhost:5173"
 build = "bun run build"
+allowed_origins = ["http://localhost:5173"]
 ```
+
+Apps can also load the same file at runtime with `MullionWindow::with_manifest(...)`, so identity
+and content paths stay out of Rust while bridge handlers stay in code.
 
 ```sh
 mullion install .

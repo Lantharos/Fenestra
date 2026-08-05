@@ -5,8 +5,8 @@ use std::{
 };
 
 pub fn new_app(name: &str, template: &str) -> ExitCode {
-    if template != "notes" {
-        eprintln!("unknown template `{template}`; available templates: notes");
+    if !matches!(template, "app" | "notes") {
+        eprintln!("unknown template `{template}`; available templates: app, notes");
         return ExitCode::from(1);
     }
     if !is_valid_name(name) {
@@ -20,11 +20,19 @@ pub fn new_app(name: &str, template: &str) -> ExitCode {
         return ExitCode::from(1);
     }
 
-    let result = write_notes_template(&root, name);
+    let result = match template {
+        "notes" => write_notes_template(&root, name),
+        _ => write_app_template(&root, name),
+    };
     match result {
         Ok(()) => {
             println!("Created Mullion app at {}", root.display());
-            println!("Run it with: cargo run");
+            if template == "app" {
+                println!("Install UI deps with: cd {name} && bun install");
+                println!("Run it with: cargo run");
+            } else {
+                println!("Run it with: cargo run");
+            }
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -34,21 +42,35 @@ pub fn new_app(name: &str, template: &str) -> ExitCode {
     }
 }
 
+fn write_app_template(root: &Path, name: &str) -> std::io::Result<()> {
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(root.join("ui/src"))?;
+    fs::write(root.join("Cargo.toml"), cargo_toml(name))?;
+    fs::write(root.join("Mullion.toml"), app_mullion_toml(name))?;
+    fs::write(root.join("package.json"), app_package_json(name))?;
+    fs::write(root.join("vite.config.ts"), app_vite_config())?;
+    fs::write(root.join("tsconfig.json"), app_tsconfig())?;
+    fs::write(root.join("src/main.rs"), app_main_rs())?;
+    fs::write(root.join("ui/index.html"), app_index_html(name))?;
+    fs::write(root.join("ui/src/main.ts"), app_main_ts())?;
+    fs::write(root.join("ui/src/style.css"), app_style_css())?;
+    Ok(())
+}
+
 fn write_notes_template(root: &Path, name: &str) -> std::io::Result<()> {
     fs::create_dir_all(root.join("src"))?;
     fs::create_dir_all(root.join("ui"))?;
     fs::write(root.join("Cargo.toml"), cargo_toml(name))?;
-    fs::write(root.join("Mullion.toml"), mullion_toml(name))?;
-    fs::write(root.join("src/main.rs"), main_rs())?;
-    fs::write(root.join("ui/index.html"), index_html())?;
-    fs::write(root.join("ui/styles.css"), styles_css())?;
-    fs::write(root.join("ui/app.js"), app_js())?;
+    fs::write(root.join("Mullion.toml"), notes_mullion_toml(name))?;
+    fs::write(root.join("src/main.rs"), notes_main_rs())?;
+    fs::write(root.join("ui/index.html"), notes_index_html())?;
+    fs::write(root.join("ui/styles.css"), notes_styles_css())?;
+    fs::write(root.join("ui/app.js"), notes_app_js())?;
     Ok(())
 }
 
-fn mullion_toml(name: &str) -> String {
-    let id = name
-        .chars()
+fn sanitize_id(name: &str) -> String {
+    name.chars()
         .map(|character| {
             if character.is_ascii_alphanumeric() || character == '-' {
                 character.to_ascii_lowercase()
@@ -56,7 +78,30 @@ fn mullion_toml(name: &str) -> String {
                 '-'
             }
         })
-        .collect::<String>();
+        .collect::<String>()
+}
+
+fn app_mullion_toml(name: &str) -> String {
+    let id = sanitize_id(name);
+    format!(
+        r#"[app]
+id = "dev.mullion.{id}"
+name = "{name}"
+version = "0.1.0"
+
+[web]
+root = "ui"
+dist = "ui/dist"
+entry = "ui/dist/index.html"
+dev_url = "http://localhost:5173"
+build = "bun run build"
+allowed_origins = ["http://localhost:5173"]
+"#
+    )
+}
+
+fn notes_mullion_toml(name: &str) -> String {
+    let id = sanitize_id(name);
     format!(
         "[app]\nid = \"dev.mullion.{id}\"\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[web]\nroot = \"ui\"\nentry = \"ui/index.html\"\n"
     )
@@ -70,9 +115,11 @@ fn is_valid_name(name: &str) -> bool {
 }
 
 fn cargo_toml(name: &str) -> String {
-    let mullion_path = mullion_path()
+    let mullion_dep = mullion_path()
         .map(|path| format!("{{ path = \"{}\" }}", path.display()))
-        .unwrap_or_else(|| "\"0.1\"".to_string());
+        .unwrap_or_else(|| {
+            "{ git = \"https://github.com/Lantharos/Mullion\", package = \"mullion\" }".to_string()
+        });
     format!(
         r#"[package]
 name = "{name}"
@@ -80,7 +127,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-mullion = {mullion_path}
+mullion = {mullion_dep}
+serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
 "#
     )
@@ -93,16 +141,187 @@ fn mullion_path() -> Option<PathBuf> {
     path.exists().then_some(path)
 }
 
-fn main_rs() -> &'static str {
+fn app_package_json(name: &str) -> String {
+    format!(
+        r#"{{
+  "name": "{name}",
+  "private": true,
+  "type": "module",
+  "scripts": {{
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  }},
+  "dependencies": {{
+    "@lantharos/mullion": "github:Lantharos/Mullion#path:packages/mullion"
+  }},
+  "devDependencies": {{
+    "typescript": "^5.9.2",
+    "vite": "^7.1.2"
+  }}
+}}
+"#
+    )
+}
+
+fn app_vite_config() -> &'static str {
+    r#"import { defineConfig } from "vite";
+
+export default defineConfig({
+  root: "ui",
+  server: {
+    port: 5173,
+    strictPort: true,
+  },
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+  },
+});
+"#
+}
+
+fn app_tsconfig() -> &'static str {
+    r#"{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["vite/client"]
+  },
+  "include": ["ui/src"]
+}
+"#
+}
+
+fn app_main_rs() -> &'static str {
+    r#"use std::path::PathBuf;
+
+use mullion::prelude::*;
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize)]
+struct VersionRequest {}
+
+#[derive(Serialize)]
+struct VersionResponse {
+    version: &'static str,
+}
+
+fn main() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Mullion.toml");
+    MullionWindow::main(|window| {
+        Ok(window
+            .with_manifest(manifest)?
+            .app()
+            .size(960, 640)
+            .vite_dev_server(5173)
+            .bridge_typed("app.version", |_request: VersionRequest| {
+                Ok(VersionResponse {
+                    version: env!("CARGO_PKG_VERSION"),
+                })
+            }))
+    });
+}
+"#
+}
+
+fn app_index_html(name: &str) -> String {
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{name}</title>
+  </head>
+  <body>
+    <main>
+      <h1>{name}</h1>
+      <p id="status">Loading Mullion bridge…</p>
+      <button id="version" type="button">App version</button>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+"#
+    )
+}
+
+fn app_main_ts() -> &'static str {
+    r##"import { invoke } from "@lantharos/mullion";
+import "./style.css";
+
+const status = document.querySelector("#status");
+const button = document.querySelector("#version");
+
+if (status instanceof HTMLElement) {
+  status.textContent = "Ready.";
+}
+
+button?.addEventListener("click", async () => {
+  try {
+    const result = (await invoke("app.version")) as { version?: string };
+    if (status instanceof HTMLElement) {
+      status.textContent = `Version ${result.version ?? "unknown"}`;
+    }
+  } catch (error) {
+    if (status instanceof HTMLElement) {
+      status.textContent = error instanceof Error ? error.message : String(error);
+    }
+  }
+});
+"##
+}
+
+fn app_style_css() -> &'static str {
+    r#":root {
+  color-scheme: light dark;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem;
+}
+
+h1 {
+  margin: 0 0 0.75rem;
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+button {
+  margin-top: 1rem;
+  border: 0;
+  border-radius: 0.5rem;
+  padding: 0.65rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}
+"#
+}
+
+fn notes_main_rs() -> &'static str {
     r#"use std::path::PathBuf;
 
 use mullion::{
-    BridgeCommandDescriptor, BridgeResponse, MullionWindow, MullionWindowControlAction,
-    RuntimeConfig, RuntimeMode, WindowRegion, WindowRegionRect, run_mullion_host_from_args,
+    AppChrome, BridgeResponse, MullionWindow, run_mullion_host_from_args,
 };
-
-const APP_TITLEBAR_HEIGHT: i32 = 38;
-const SIDEBAR_WIDTH: i32 = 260;
 
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
@@ -111,13 +330,6 @@ fn main() {
     }
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let runtime = RuntimeConfig {
-        mode: RuntimeMode::SharedPreferred,
-        allow_user_install: true,
-        bundled_dir: Some(manifest_dir.clone()),
-        ..RuntimeConfig::default()
-    };
-
     let window = MullionWindow::new()
         .title("Notes")
         .size(900, 640)
@@ -127,39 +339,13 @@ fn main() {
         ))
         .frameless()
         .glass()
-        .blur_region(WindowRegion::adaptive_titlebar_sidebar(
-            SIDEBAR_WIDTH,
-            APP_TITLEBAR_HEIGHT,
-            14,
-        ))
-        .opaque_region(WindowRegion::adaptive_content_after_sidebar(
-            SIDEBAR_WIDTH,
-            APP_TITLEBAR_HEIGHT,
-        ))
-        .input_region(WindowRegion::adaptive_rounded_rect(14))
-        .drag_region(WindowRegionRect::new(0, 0, i32::MAX, APP_TITLEBAR_HEIGHT))
-        .control_region(
-            MullionWindowControlAction::Minimize,
-            WindowRegionRect::new(-138, 0, 46, APP_TITLEBAR_HEIGHT),
-        )
-        .control_region(
-            MullionWindowControlAction::Maximize,
-            WindowRegionRect::new(-92, 0, 46, APP_TITLEBAR_HEIGHT),
-        )
-        .control_region(
-            MullionWindowControlAction::Close,
-            WindowRegionRect::new(-46, 0, 46, APP_TITLEBAR_HEIGHT),
-        )
-        .runtime(runtime)
-        .bridge_descriptor_handler(
-            BridgeCommandDescriptor::new("notes.create").target("desktop"),
-            |command| {
-                Ok(BridgeResponse::json(serde_json::json!({
-                    "ok": true,
-                    "params": command.params
-                })))
-            },
-        );
+        .app_chrome(AppChrome::new(38, 260))
+        .bridge_handler("notes.create", |command| {
+            Ok(BridgeResponse::json(serde_json::json!({
+                "ok": true,
+                "params": command.params
+            })))
+        });
 
     match window.launch_or_install() {
         Ok(process) => {
@@ -174,7 +360,7 @@ fn main() {
 "#
 }
 
-fn index_html() -> &'static str {
+fn notes_index_html() -> &'static str {
     r#"<!doctype html>
 <html lang="en">
   <head>
@@ -219,7 +405,7 @@ fn index_html() -> &'static str {
 "#
 }
 
-fn styles_css() -> &'static str {
+fn notes_styles_css() -> &'static str {
     r#":root {
   --window-radius: 14px;
   --titlebar-height: 38px;
@@ -229,23 +415,17 @@ fn styles_css() -> &'static str {
   color: rgb(244 244 244);
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
-html,
-body {
+html, body {
   width: 100%;
   height: 100%;
   margin: 0;
   overflow: hidden;
   background: transparent;
-  -webkit-font-smoothing: antialiased;
 }
 
-button,
-input,
-textarea {
+button, input, textarea {
   border: 0;
   border-radius: 8px;
   font: inherit;
@@ -261,20 +441,6 @@ button {
   background: rgb(216 216 216);
   color: rgb(34 34 34);
   cursor: pointer;
-  transition:
-    background-color 120ms cubic-bezier(0.2, 0, 0, 1),
-    color 120ms cubic-bezier(0.2, 0, 0, 1);
-}
-
-button:hover {
-  background: rgb(235 235 235);
-}
-
-input,
-textarea {
-  background: rgb(118 118 118);
-  color: rgb(248 248 248);
-  caret-color: rgb(248 248 248);
 }
 
 .app-window {
@@ -285,7 +451,6 @@ textarea {
   overflow: hidden;
   background: transparent;
   border-radius: var(--window-radius);
-  isolation: isolate;
 }
 
 :root[data-chrome="app"] .app-window {
@@ -293,164 +458,61 @@ textarea {
 }
 
 .web-titlebar {
-  position: relative;
   display: none;
-  background: rgb(34 34 34 / 34%);
-  backdrop-filter: blur(20px);
-  box-shadow: inset 0 -1px 0 rgb(255 255 255 / 12%);
-  user-select: none;
-}
-
-:root[data-chrome="app"] .web-titlebar {
-  display: block;
-}
-
-.web-titlebar-title {
-  position: absolute;
-  inset: 0;
-  display: flex;
   align-items: center;
-  justify-content: center;
-  color: rgb(245 245 245);
-  font-size: 14px;
-  font-weight: 600;
-  pointer-events: none;
+  justify-content: space-between;
+  padding: 0 10px 0 16px;
+  -webkit-app-region: drag;
 }
+
+:root[data-chrome="app"] .web-titlebar { display: flex; }
 
 .window-controls {
-  position: absolute;
-  top: 0;
-  right: 0;
   display: flex;
-  height: var(--titlebar-height);
+  gap: 8px;
+  -webkit-app-region: no-drag;
 }
 
 .window-control {
-  position: relative;
-  width: 46px;
-  min-width: 46px;
-  height: 100%;
-  min-height: 0;
+  width: 12px;
+  height: 12px;
+  min-height: 12px;
   padding: 0;
-  border-radius: 0;
-  background: transparent;
-  color: rgb(245 245 245);
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
-}
-
-.window-control:hover,
-.window-control.is-hover {
-  background: rgb(255 255 255 / 8%);
-}
-
-.window-control.close:hover,
-.window-control.close.is-hover {
-  background: #c42b1c;
-  color: #fff;
-}
-
-.window-control::before,
-.window-control::after {
-  position: absolute;
-  content: "";
-  left: 50%;
-  top: 50%;
-  background: currentColor;
-}
-
-.window-control.minimize::before {
-  width: 10px;
-  height: 1px;
-  margin: -0.5px 0 0 -5px;
-  border-radius: 0;
-}
-
-.window-control.maximize::before {
-  width: 10px;
-  height: 10px;
-  margin: -5px 0 0 -5px;
-  box-sizing: border-box;
-  border: 0;
-  background: transparent;
-  box-shadow: inset 0 0 0 1px currentColor;
-  border-radius: 0;
-}
-
-.window-control.close::before,
-.window-control.close::after {
-  width: 10px;
-  height: 1px;
-  margin: -0.5px 0 0 -5px;
-  border-radius: 0;
-}
-
-.window-control.close::before {
-  transform: rotate(45deg);
-}
-
-.window-control.close::after {
-  transform: rotate(-45deg);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 35%);
 }
 
 .shell {
   display: grid;
   grid-template-columns: 260px 1fr;
   min-height: 0;
-  background: transparent;
+  height: 100%;
+  background: rgb(24 24 24 / 92%);
 }
 
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  padding: 22px 18px;
-  background: rgb(32 32 32 / 28%);
-  backdrop-filter: blur(20px);
-  box-shadow: inset -1px 0 0 rgb(255 255 255 / 18%);
+.sidebar, .content {
+  display: grid;
+  gap: 12px;
+  padding: 24px;
+  min-height: 0;
 }
 
-h1 {
-  margin: 0 0 16px;
-  font-size: 22px;
-  font-weight: 500;
-}
+.sidebar { background: rgb(18 18 18 / 98%); }
 
-nav {
+#note-list {
   display: grid;
   gap: 8px;
-  margin-top: 14px;
-  padding-top: 10px;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%);
+  align-content: start;
+  overflow: auto;
 }
 
-nav button {
-  display: inline-flex;
-  align-items: center;
-  width: 100%;
+#note-list button {
   justify-content: flex-start;
-  min-height: 40px;
-  padding: 0 16px;
   background: transparent;
-  color: rgb(242 242 242);
-  text-align: left;
+  color: inherit;
 }
 
-nav button:hover,
-nav button.active {
-  background: rgb(210 210 210);
-  color: rgb(46 46 46);
-}
-
-.content {
-  display: grid;
-  grid-template-rows: 40px 1fr;
-  gap: 14px;
-  min-width: 0;
-  padding: 30px 34px 28px;
-  background: rgb(18 18 18 / 98%);
-  box-shadow: inset 1px 0 0 rgb(255 255 255 / 8%);
-}
+#note-list button.active { background: rgb(255 255 255 / 10%); }
 
 header {
   display: grid;
@@ -458,10 +520,11 @@ header {
   gap: 10px;
 }
 
-input,
-textarea {
+input, textarea {
   width: 100%;
   padding: 0 16px;
+  background: rgb(118 118 118);
+  color: rgb(248 248 248);
 }
 
 textarea {
@@ -469,43 +532,23 @@ textarea {
   min-height: 0;
   padding: 16px;
   resize: none;
-  line-height: 1.45;
-}
-
-#note-count {
-  margin: auto 0 0;
-}
-
-@media (max-width: 720px) {
-  .shell {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
-  }
-
-  .sidebar {
-    box-shadow: inset 0 -1px 0 rgb(255 255 255 / 18%);
-  }
 }
 "#
 }
 
-fn app_js() -> &'static str {
+fn notes_app_js() -> &'static str {
     r##"let notes = [
   { id: "one", title: "Product notes", body: "Keep the app monochrome, calm, and functional." },
   { id: "two", title: "Runtime checklist", body: "Use the shared Mullion runtime." },
-  { id: "three", title: "Design pass", body: "Keep editing fast enough to feel native." },
 ];
 
 let selected = 0;
-
 const list = document.querySelector("#note-list");
 const count = document.querySelector("#note-count");
 const title = document.querySelector("#note-title");
 const body = document.querySelector("#note-body");
 
-function current() {
-  return notes[selected];
-}
+function current() { return notes[selected]; }
 
 function render() {
   list.replaceChildren(
