@@ -40,12 +40,35 @@
 
 namespace {
 MullionOsrHandler* g_instance = nullptr;
+std::mutex g_handlers_mutex;
+std::vector<MullionOsrHandler*> g_handlers;
 std::atomic<bool> g_bridge_reader_started{false};
 constexpr size_t kSharedPaintThreshold = 256 * 1024;
 constexpr size_t kBatchEntryLen = 28;
 #ifndef MFD_CLOEXEC
 constexpr unsigned int MFD_CLOEXEC = 0x0001U;
 #endif
+
+void RegisterHandler(MullionOsrHandler* handler) {
+  std::lock_guard<std::mutex> lock(g_handlers_mutex);
+  g_handlers.push_back(handler);
+}
+
+void UnregisterHandler(MullionOsrHandler* handler) {
+  std::lock_guard<std::mutex> lock(g_handlers_mutex);
+  g_handlers.erase(std::remove(g_handlers.begin(), g_handlers.end(), handler),
+                   g_handlers.end());
+}
+
+bool HasRegisteredHandlers() {
+  std::lock_guard<std::mutex> lock(g_handlers_mutex);
+  return !g_handlers.empty();
+}
+
+std::vector<MullionOsrHandler*> SnapshotHandlers() {
+  std::lock_guard<std::mutex> lock(g_handlers_mutex);
+  return g_handlers;
+}
 
 struct PaintRectBytes {
   int x = 0;
@@ -238,7 +261,8 @@ class BridgeResponseTask : public CefTask {
         payload_(std::move(payload)) {}
 
   void Execute() override {
-    if (MullionOsrHandler* handler = MullionOsrHandler::GetInstance()) {
+    if (MullionOsrHandler* handler =
+            MullionOsrHandler::FindByBrowserId(browser_id_)) {
       handler->ResolveBridgeResponse(browser_id_, request_id_, ok_, payload_);
     }
   }
@@ -258,7 +282,7 @@ class BridgeEventTask : public CefTask {
       : name_json_(std::move(name_json)), payload_(std::move(payload)) {}
 
   void Execute() override {
-    if (MullionOsrHandler* handler = MullionOsrHandler::GetInstance()) {
+    for (MullionOsrHandler* handler : MullionOsrHandler::AllHandlers()) {
       handler->EmitBridgeEvent(name_json_, payload_);
     }
   }
@@ -624,6 +648,7 @@ MullionOsrHandler::MullionOsrHandler(std::string endpoint,
   if (!g_instance) {
     g_instance = this;
   }
+  RegisterHandler(this);
   ConnectSocket();
   StartCommandReader();
   if (!bridge_commands_.empty()) {
@@ -640,13 +665,42 @@ MullionOsrHandler::~MullionOsrHandler() {
     close(socket_fd_);
 #endif
   }
+  UnregisterHandler(this);
   if (g_instance == this) {
     g_instance = nullptr;
+    const auto remaining = SnapshotHandlers();
+    if (!remaining.empty()) {
+      g_instance = remaining.front();
+    }
   }
 }
 
 MullionOsrHandler* MullionOsrHandler::GetInstance() {
   return g_instance;
+}
+
+MullionOsrHandler* MullionOsrHandler::FindByBrowserId(
+    const std::string& browser_id) {
+  const int expected_id = std::atoi(browser_id.c_str());
+  for (MullionOsrHandler* handler : SnapshotHandlers()) {
+    if (handler->OwnsBrowserId(expected_id)) {
+      return handler;
+    }
+  }
+  return nullptr;
+}
+
+std::vector<MullionOsrHandler*> MullionOsrHandler::AllHandlers() {
+  return SnapshotHandlers();
+}
+
+bool MullionOsrHandler::OwnsBrowserId(int browser_id) const {
+  for (const auto& browser : browsers_) {
+    if (browser && browser->GetIdentifier() == browser_id) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool MullionOsrHandler::ConnectSocket() {
@@ -1034,7 +1088,19 @@ void MullionOsrHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     }
   }
   if (browsers_.empty()) {
-    CefQuitMessageLoop();
+    UnregisterHandler(this);
+    if (g_instance == this) {
+      g_instance = nullptr;
+      const auto remaining = SnapshotHandlers();
+      if (!remaining.empty()) {
+        g_instance = remaining.front();
+      }
+    }
+    // Only quit when every OSR window/handler is gone — multi-window apps share
+    // one CEF process via the profile singleton handoff path.
+    if (!HasRegisteredHandlers()) {
+      CefQuitMessageLoop();
+    }
   }
 }
 

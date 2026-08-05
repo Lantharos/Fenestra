@@ -129,6 +129,11 @@ impl OsrNativeHost {
                 }
                 super::types::OsrHostEvent::Disconnected => {
                     self.socket = None;
+                    // Handed-off windows have no local CEF child; a disconnect
+                    // means the shared browser process dropped this surface.
+                    if self.child.is_none() {
+                        event_loop.exit();
+                    }
                 }
             }
         }

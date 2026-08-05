@@ -8,7 +8,8 @@ use std::{
 
 use crate::detect::{detect_package, is_runtime_dir};
 use crate::download::{
-    download_file, extract_archive, first_extracted_runtime_dir, latest_install_plan, verify_sha1,
+    download_file, extract_archive, first_extracted_runtime_dir, latest_install_plan,
+    verify_sha1_with_progress,
 };
 use crate::error::RuntimeError;
 use crate::paths::user_runtime_path;
@@ -60,8 +61,8 @@ fn install_user_runtime_inner(
     }
     progress(RuntimeInstallProgress::new(
         RuntimeInstallStep::Preparing,
-        None,
-        "Preparing runtime install",
+        Some(0.02),
+        "Preparing runtime",
     ));
     remove_user_minimal_runtime_if_client_requested_with_progress(config, &mut progress)?;
 
@@ -85,34 +86,32 @@ fn install_user_runtime_inner(
     download_file(&plan.url, &archive_path, &mut progress)?;
     progress(RuntimeInstallProgress::new(
         RuntimeInstallStep::Verifying,
-        None,
-        "Verifying CEF archive",
+        Some(0.72),
+        "Verifying runtime",
     ));
-    verify_sha1(&archive_path, &plan.sha1)?;
+    verify_sha1_with_progress(&archive_path, &plan.sha1, &mut progress)?;
     progress(RuntimeInstallProgress::new(
         RuntimeInstallStep::Extracting,
-        None,
-        "Extracting CEF runtime",
+        Some(0.78),
+        "Extracting runtime",
     ));
-    extract_archive(&archive_path, &work_dir)?;
+    extract_archive_with_progress(&archive_path, &work_dir, &mut progress)?;
 
     let extracted = first_extracted_runtime_dir(&work_dir).ok_or_else(|| {
-        RuntimeError::InstallationFailed(
-            "download did not contain a CEF runtime directory".to_string(),
-        )
+        RuntimeError::InstallationFailed("download did not contain a runtime directory".to_string())
     })?;
     if plan.install_dir.exists() {
         progress(RuntimeInstallProgress::new(
             RuntimeInstallStep::RemovingOldRuntime,
-            None,
+            Some(0.93),
             "Removing previous runtime",
         ));
         std::fs::remove_dir_all(&plan.install_dir)?;
     }
     progress(RuntimeInstallProgress::new(
         RuntimeInstallStep::Installing,
-        None,
-        "Installing CEF runtime",
+        Some(0.96),
+        "Installing runtime",
     ));
     std::fs::rename(&extracted, &plan.install_dir)?;
     std::fs::write(plan.install_dir.join("VERSION"), &plan.version)?;
@@ -129,6 +128,49 @@ fn install_user_runtime_inner(
         location: RuntimeLocation::UserLocal(plan.install_dir),
         verified: true,
     })
+}
+
+fn extract_archive_with_progress(
+    archive: &std::path::Path,
+    destination: &std::path::Path,
+    progress: &mut impl FnMut(RuntimeInstallProgress),
+) -> Result<(), RuntimeError> {
+    let archive = archive.to_path_buf();
+    let destination = destination.to_path_buf();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = thread::spawn(move || {
+        let result = extract_archive(&archive, &destination);
+        let _ = tx.send(());
+        result
+    });
+
+    let mut fraction = 0.78_f32;
+    loop {
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(()) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                fraction = (fraction + 0.008).min(0.92);
+                progress(RuntimeInstallProgress::new(
+                    RuntimeInstallStep::Extracting,
+                    Some(fraction),
+                    "Extracting runtime",
+                ));
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    worker.join().unwrap_or_else(|_| {
+        Err(RuntimeError::InstallationFailed(
+            "runtime extraction worker failed".to_string(),
+        ))
+    })?;
+    progress(RuntimeInstallProgress::new(
+        RuntimeInstallStep::Extracting,
+        Some(0.93),
+        "Extracting runtime",
+    ));
+    Ok(())
 }
 
 pub fn remove_user_minimal_runtime_if_client_requested(

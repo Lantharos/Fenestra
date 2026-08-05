@@ -353,7 +353,7 @@ checksum = "4dbf9978365bac10f54d1d4b04f7ce4427e51f71d61f2fe15e3fed5166474df7"
 dependencies = [
  "bitflags",
  "polling",
- "rustix",
+ "rustix 1.1.4",
  "slab",
  "tracing",
 ]
@@ -365,7 +365,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "138efcf0940a02ebf0cc8d1eff41a1682a46b431630f4c52450d6265876021fa"
 dependencies = [
  "calloop",
- "rustix",
+ "rustix 1.1.4",
  "wayland-backend",
  "wayland-client",
 ]
@@ -568,6 +568,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctor"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83cf0d42651b16c6dfe68685716d18480d18a9c39c62d76e8cf3eb6ed5d8bcbf"
+dependencies = [
+ "dtor",
+]
+
+[[package]]
 name = "cursor-icon"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -660,6 +669,52 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 name = "dpi"
 version = "0.1.2"
 source = "git+https://github.com/rust-windowing/winit?rev=42366231b0d92480a933339bd5eaa7fba8106f42#42366231b0d92480a933339bd5eaa7fba8106f42"
+
+[[package]]
+name = "drm"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80bc8c5c6c2941f70a55c15f8d9f00f9710ebda3ffda98075f996a0e6c92756f"
+dependencies = [
+ "bitflags",
+ "bytemuck",
+ "drm-ffi",
+ "drm-fourcc",
+ "libc",
+ "rustix 0.38.44",
+]
+
+[[package]]
+name = "drm-ffi"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51a91c9b32ac4e8105dec255e849e0d66e27d7c34d184364fb93e469db08f690"
+dependencies = [
+ "drm-sys",
+ "rustix 1.1.4",
+]
+
+[[package]]
+name = "drm-fourcc"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aafbcdb8afc29c1a7ee5fbe53b5d62f4565b35a042a662ca9fecd0b54dae6f4"
+
+[[package]]
+name = "drm-sys"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecc8e1361066d91f5ffccff060a3c3be9c3ecde15be2959c1937595f7a82a9f8"
+dependencies = [
+ "libc",
+ "linux-raw-sys 0.9.4",
+]
+
+[[package]]
+name = "dtor"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edf234dd1594d6dd434a8fb8cada51ddbbc593e40e4a01556a0b31c62da2775b"
 
 [[package]]
 name = "endi"
@@ -976,7 +1031,7 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1bd49230192a3797a9a4d6abe9b3eed6f7fa4c8a8a4947977c6f80025f92cbd8"
 dependencies = [
- "rustix",
+ "rustix 1.1.4",
  "windows-link",
 ]
 
@@ -1758,6 +1813,18 @@ checksum = "d4a5ff6bcca6c4867b1c4fd4ef63e4db7436ef363e0ad7531d1558856bae64f4"
 
 [[package]]
 name = "linux-raw-sys"
+version = "0.4.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d26c52dbd32dccf2d10cac7725f8eae5296885fb5703b261f7d0a0739ec807ab"
+
+[[package]]
+name = "linux-raw-sys"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd945864f07fe9f5371a27ad7b52a172b4b499999f1d97574c9fa68373937e12"
+
+[[package]]
+name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
@@ -1893,6 +1960,7 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "serde_json",
+ "softbuffer",
  "thiserror 2.0.18",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
@@ -2094,8 +2162,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e022c9d066895efa1345f8e33e584b9f958da2fd4cd116792e15e07e4720a807"
 dependencies = [
  "bitflags",
+ "dispatch2",
  "libc",
+ "objc2",
  "objc2-core-foundation",
+ "objc2-io-surface",
 ]
 
 [[package]]
@@ -2123,6 +2194,17 @@ checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
 dependencies = [
  "bitflags",
  "block2",
+ "objc2",
+ "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-io-surface"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "180788110936d59bab6bd83b6060ffdfffb3b922ba1396b312ae795e1de9d81d"
+dependencies = [
+ "bitflags",
  "objc2",
  "objc2-core-foundation",
 ]
@@ -2346,7 +2428,7 @@ dependencies = [
  "concurrent-queue",
  "hermit-abi",
  "pin-project-lite",
- "rustix",
+ "rustix 1.1.4",
  "windows-sys 0.61.2",
 ]
 
@@ -2621,6 +2703,19 @@ dependencies = [
 
 [[package]]
 name = "rustix"
+version = "0.38.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdb5bc1ae2baa591800df16c9ca78619bf65c0488b41b96ccec5d11220d8c154"
+dependencies = [
+ "bitflags",
+ "errno",
+ "libc",
+ "linux-raw-sys 0.4.15",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "rustix"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
@@ -2628,7 +2723,7 @@ dependencies = [
  "bitflags",
  "errno",
  "libc",
- "linux-raw-sys",
+ "linux-raw-sys 0.12.1",
  "windows-sys 0.61.2",
 ]
 
@@ -2862,7 +2957,7 @@ dependencies = [
  "log",
  "memmap2",
  "pkg-config",
- "rustix",
+ "rustix 1.1.4",
  "thiserror 2.0.18",
  "wayland-backend",
  "wayland-client",
@@ -2889,7 +2984,7 @@ dependencies = [
  "cursor-icon",
  "log",
  "memmap2",
- "rustix",
+ "rustix 1.1.4",
  "thiserror 2.0.18",
  "wayland-client",
  "wayland-csd-frame",
@@ -2920,6 +3015,38 @@ checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "softbuffer"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aac18da81ebbf05109ab275b157c22a653bb3c12cf884450179942f81bcbf6c3"
+dependencies = [
+ "as-raw-xcb-connection",
+ "bytemuck",
+ "drm",
+ "fastrand",
+ "js-sys",
+ "memmap2",
+ "ndk",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "objc2-quartz-core",
+ "raw-window-handle",
+ "redox_syscall 0.5.18",
+ "rustix 1.1.4",
+ "tiny-xlib",
+ "tracing",
+ "wasm-bindgen",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-sys",
+ "web-sys",
+ "windows-sys 0.61.2",
+ "x11rb",
 ]
 
 [[package]]
@@ -3046,7 +3173,7 @@ dependencies = [
  "fastrand",
  "getrandom 0.4.2",
  "once_cell",
- "rustix",
+ "rustix 1.1.4",
  "windows-sys 0.61.2",
 ]
 
@@ -3122,6 +3249,19 @@ dependencies = [
  "arrayref",
  "bytemuck",
  "strict-num",
+]
+
+[[package]]
+name = "tiny-xlib"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a90a0ca3ee6a69f2ad28fd11621a4c3f03b371f366be500b64df260c4ffbafb4"
+dependencies = [
+ "as-raw-xcb-connection",
+ "ctor",
+ "libloading 0.8.9",
+ "pkg-config",
+ "tracing",
 ]
 
 [[package]]
@@ -3588,7 +3728,7 @@ checksum = "2857dd20b54e916ec7253b3d6b4d5c4d7d4ca2c33c2e11c6c76a99bd8744755d"
 dependencies = [
  "cc",
  "downcast-rs",
- "rustix",
+ "rustix 1.1.4",
  "scoped-tls",
  "smallvec",
  "wayland-sys",
@@ -3601,7 +3741,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "645c7c96bb74690c3189b5c9cb4ca1627062bb23693a4fad9d8c3de958260144"
 dependencies = [
  "bitflags",
- "rustix",
+ "rustix 1.1.4",
  "wayland-backend",
  "wayland-scanner",
 ]
@@ -3623,7 +3763,7 @@ version = "0.31.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a52d18780be9b1314328a3de5f930b73d2200112e3849ca6cb11822793fb34d"
 dependencies = [
- "rustix",
+ "rustix 1.1.4",
  "wayland-client",
  "xcursor",
 ]
@@ -4249,7 +4389,7 @@ dependencies = [
  "dpi 0.1.2 (git+https://github.com/rust-windowing/winit?rev=42366231b0d92480a933339bd5eaa7fba8106f42)",
  "libc",
  "raw-window-handle",
- "rustix",
+ "rustix 1.1.4",
  "smol_str",
  "tracing",
  "winit-android",
@@ -4411,7 +4551,7 @@ dependencies = [
  "memmap2",
  "percent-encoding",
  "raw-window-handle",
- "rustix",
+ "rustix 1.1.4",
  "sctk-adwaita",
  "smithay-client-toolkit 0.21.1",
  "smol_str",
@@ -4476,7 +4616,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "raw-window-handle",
- "rustix",
+ "rustix 1.1.4",
  "smol_str",
  "tracing",
  "winit-common 0.31.0-beta.2 (git+https://github.com/rust-windowing/winit?rev=42366231b0d92480a933339bd5eaa7fba8106f42)",
@@ -4636,7 +4776,7 @@ dependencies = [
  "libc",
  "libloading 0.8.9",
  "once_cell",
- "rustix",
+ "rustix 1.1.4",
  "x11rb-protocol",
  "xcursor",
 ]
@@ -4737,7 +4877,7 @@ dependencies = [
  "hex",
  "libc",
  "ordered-stream",
- "rustix",
+ "rustix 1.1.4",
  "serde",
  "serde_repr",
  "tokio",

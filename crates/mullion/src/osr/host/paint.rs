@@ -6,7 +6,7 @@ use winit::event_loop::ControlFlow;
 use crate::osr::protocol::{
     MAIN_TEXTURE_ID, OsrFrame, OsrPaintBatch, OsrSurface, POPUP_OVERLAY_ID,
 };
-use crate::render::{DisplayList, ImageCommand, RoundedRectCommand};
+use crate::render::{DisplayList, ImageCommand, RectCommand, RoundedRectCommand};
 use crate::window::style::Color;
 
 use super::native::OsrNativeHost;
@@ -305,6 +305,9 @@ impl OsrNativeHost {
         };
         self.presented = true;
         super::trace_host(&self.config, "first_paint");
+        // Drop any prior effect before binding a new one; Wayland allows only one
+        // `ext_background_effect` resource per surface.
+        self.effect = None;
         self.effect = request_window_effect(&window, &self.window_options());
         self.update_effect_regions();
         if self.config.visible {
@@ -365,6 +368,23 @@ impl OsrNativeHost {
                     if self.config.transparent { 0.38 } else { 1.0 },
                 ),
             });
+        }
+        // Solid underlay for opaque regions so glass windows only show blur
+        // through the sidebar (or other non-opaque areas), not the content pane.
+        if self.config.transparent
+            && let Some(opaque) = &self.config.regions.opaque
+        {
+            let region_width = width.round().max(1.0) as i32;
+            let region_height = height.round().max(1.0) as i32;
+            for rect in opaque.resolved_rects(region_width, region_height) {
+                list.push(RectCommand {
+                    x: rect.x as f32,
+                    y: rect.y as f32,
+                    width: rect.width as f32,
+                    height: rect.height as f32,
+                    color: Color::WINDOW,
+                });
+            }
         }
         self.draw_titlebar(&mut list, width);
         let y = self.titlebar_height();

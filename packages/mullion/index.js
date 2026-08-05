@@ -71,6 +71,21 @@ export const bridge = {
   listen,
 };
 
+export const events = {
+  /** @param {(payload: import("./index.d.ts").GuestNavigatedEvent) => void} callback */
+  guestNavigated(callback) {
+    return listen("guest.navigated", callback);
+  },
+  /** @param {(payload: import("./index.d.ts").GuestNewWindowEvent) => void} callback */
+  guestNewWindow(callback) {
+    return listen("guest.newWindow", callback);
+  },
+  /** @param {(payload: import("./index.d.ts").GuestDownloadEvent) => void} callback */
+  guestDownload(callback) {
+    return listen("guest.download", callback);
+  },
+};
+
 export const appWindow = {
   show() {
     requireApi().window.show();
@@ -316,6 +331,7 @@ export default {
   invoke,
   listen,
   bridge,
+  events,
   appWindow,
   Guest,
   guest,

@@ -250,7 +250,7 @@ nav button.active {
   gap: 14px;
   min-width: 0;
   padding: 30px 34px 28px;
-  background: rgb(18 18 18 / 86%);
+  background: rgb(18 18 18);
   box-shadow: inset 1px 0 0 rgb(255 255 255 / 8%);
 }
 

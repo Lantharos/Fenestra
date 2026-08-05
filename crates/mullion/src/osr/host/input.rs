@@ -444,9 +444,18 @@ impl ApplicationHandler for OsrNativeHost {
 
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
         if let Some(child) = self.child.as_mut()
-            && matches!(child.try_wait(), Ok(Some(_)))
+            && let Ok(Some(status)) = child.try_wait()
         {
             self.child = None;
+            if status.code() == Some(CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED) {
+                // Another mullion-host already holds this profile. CEF handed our
+                // launch args to that process, which creates a browser on our OSR
+                // endpoint — keep the native window and socket listener alive.
+                self.cef_handed_off = true;
+                super::trace_host(&self.config, "cef.handed_off.waiting_for_primary");
+                return;
+            }
+            eprintln!("Mullion OSR host: CEF child exited ({status}); shutting down host");
             self.socket = None;
             if matches!(
                 self.lifecycle_state,
@@ -489,14 +498,29 @@ impl ApplicationHandler for OsrNativeHost {
             event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
             return;
         }
+        if self.cef_handed_off && self.socket.is_none() {
+            if self.started.elapsed() > Duration::from_secs(10) {
+                eprintln!(
+                    "Mullion OSR host: profile handoff succeeded but primary CEF never connected"
+                );
+                event_loop.exit();
+            }
+            return;
+        }
         if self.started.elapsed() > Duration::from_secs(2)
             && self.child.is_none()
+            && !self.cef_handed_off
             && self.lifecycle_state != LifecycleState::Hibernated
         {
+            eprintln!("Mullion OSR host: no CEF child after 2s; shutting down host");
             event_loop.exit();
         }
     }
 }
+
+/// CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED — second process for the same
+/// root_cache_path notified the primary and exited.
+const CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED: i32 = 24;
 
 fn cef_mouse_button(button: Option<MouseButton>) -> Option<&'static str> {
     match button {

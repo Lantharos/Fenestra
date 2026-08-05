@@ -48,21 +48,46 @@ pub(crate) fn download_file(
     progress(RuntimeInstallProgress::new(
         RuntimeInstallStep::Downloading,
         None,
-        "Downloading CEF runtime",
+        "Downloading runtime",
     ));
     run_download_command(url, Some(destination)).map(|_| ())
 }
 
+#[allow(dead_code)]
 pub(crate) fn verify_sha1(path: &Path, expected: &str) -> Result<(), RuntimeError> {
+    verify_sha1_with_progress(path, expected, &mut |_| {})
+}
+
+pub(crate) fn verify_sha1_with_progress(
+    path: &Path,
+    expected: &str,
+    progress: &mut impl FnMut(RuntimeInstallProgress),
+) -> Result<(), RuntimeError> {
+    let metadata = std::fs::metadata(path)?;
+    let total = metadata.len().max(1);
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha1::new();
     let mut buffer = [0_u8; 64 * 1024];
+    let mut read_total = 0_u64;
+    let mut last_report = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(1))
+        .unwrap_or_else(std::time::Instant::now);
     loop {
         let read = std::io::Read::read(&mut file, &mut buffer)?;
         if read == 0 {
             break;
         }
         hasher.update(&buffer[..read]);
+        read_total = read_total.saturating_add(read as u64);
+        if last_report.elapsed() >= std::time::Duration::from_millis(100) {
+            let portion = (read_total as f32 / total as f32).clamp(0.0, 1.0);
+            progress(RuntimeInstallProgress::new(
+                RuntimeInstallStep::Verifying,
+                Some(0.72 + portion * 0.05),
+                "Verifying runtime",
+            ));
+            last_report = std::time::Instant::now();
+        }
     }
     let actual = hasher
         .finalize()
@@ -74,7 +99,13 @@ pub(crate) fn verify_sha1(path: &Path, expected: &str) -> Result<(), RuntimeErro
         .then_some(())
         .ok_or_else(|| RuntimeError::IntegrityFailed {
             path: path.to_path_buf(),
-        })
+        })?;
+    progress(RuntimeInstallProgress::new(
+        RuntimeInstallStep::Verifying,
+        Some(0.78),
+        "Verifying runtime",
+    ));
+    Ok(())
 }
 
 pub(crate) fn extract_archive(archive: &Path, destination: &Path) -> Result<(), RuntimeError> {
@@ -196,8 +227,8 @@ fn download_file_with_curl_progress(
 ) -> Result<(), RuntimeError> {
     progress(RuntimeInstallProgress::new(
         RuntimeInstallStep::Downloading,
-        Some(0.0),
-        "Downloading CEF runtime",
+        Some(0.05),
+        "Downloading runtime",
     ));
     let mut child = Command::new("curl")
         .args([
@@ -216,8 +247,8 @@ fn download_file_with_curl_progress(
             if let Some(percent) = parse_curl_percent(&line) {
                 progress(RuntimeInstallProgress::new(
                     RuntimeInstallStep::Downloading,
-                    Some(percent / 100.0),
-                    format!("Downloading CEF runtime ({percent:.0}%)"),
+                    Some(0.05 + (percent / 100.0) * 0.65),
+                    format!("Downloading runtime ({percent:.0}%)"),
                 ));
             }
         }

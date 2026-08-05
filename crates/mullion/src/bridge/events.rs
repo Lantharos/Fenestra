@@ -137,7 +137,6 @@ pub(crate) fn platform_event_payload(event: PlatformEvent) -> (&'static str, ser
 pub(crate) fn prepare_bridge_command(command: &mut Command, _bridge_handlers: &BridgeHandlers) {
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
-    command.stderr(Stdio::null());
 }
 
 pub(crate) struct BridgeDispatch {

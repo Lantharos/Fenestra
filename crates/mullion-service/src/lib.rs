@@ -1,8 +1,10 @@
+mod install;
 mod lifecycle;
 mod registry;
 mod types;
 mod updates;
 
+pub use install::{cached_service_path, ensure_service_executable, find_service_executable};
 pub use lifecycle::{
     PrepareProgress, PrepareStage, ServicePolicy, ServiceReadyReport, adopt, ensure_daemon_running,
     ensure_ready, install_login_autostart, install_login_autostart_with, is_daemon_running,

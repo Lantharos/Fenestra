@@ -85,7 +85,7 @@ pub(crate) fn launch_process(
     command
         .arg(OSR_HOST_ARG)
         .arg(&host_config_path)
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     prepare_bridge_command(&mut command, bridge_handlers);
     prepare_child_command(&mut command);
     let mut child = command
@@ -182,7 +182,7 @@ pub(crate) fn cef_osr_command(
     } else {
         command.stdout(Stdio::piped());
     }
-    command.stderr(Stdio::null());
+    command.stderr(Stdio::inherit());
     command
 }
 

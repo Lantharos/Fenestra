@@ -264,7 +264,7 @@ if (status instanceof HTMLElement) {
 
 button?.addEventListener("click", async () => {
   try {
-    const result = (await invoke("app.version")) as { version?: string };
+    const result = await invoke<{ version?: string }>("app.version");
     if (status instanceof HTMLElement) {
       status.textContent = `Version ${result.version ?? "unknown"}`;
     }

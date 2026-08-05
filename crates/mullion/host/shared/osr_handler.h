@@ -57,6 +57,9 @@ class MullionOsrHandler : public CefClient,
   ~MullionOsrHandler() override;
 
   static MullionOsrHandler* GetInstance();
+  static MullionOsrHandler* FindByBrowserId(const std::string& browser_id);
+  static std::vector<MullionOsrHandler*> AllHandlers();
+  bool OwnsBrowserId(int browser_id) const;
 
   CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }

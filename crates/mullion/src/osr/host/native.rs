@@ -75,6 +75,9 @@ pub(super) struct OsrNativeHost {
     pub(super) pending_activation_token: Option<ActivationToken>,
     pub(super) active_file_drag: Option<DataTransferId>,
     pub(super) started: Instant,
+    /// CEF exited with process-singleton handoff (code 24). The existing
+    /// browser process owns this window's OSR endpoint; keep listening.
+    pub(super) cef_handed_off: bool,
 }
 
 impl OsrNativeHost {
@@ -138,6 +141,7 @@ impl OsrNativeHost {
             pending_activation_token: None,
             active_file_drag: None,
             started: Instant::now(),
+            cef_handed_off: false,
         }
     }
 
@@ -294,7 +298,10 @@ impl OsrNativeHost {
         }
         self.send_control("close\n");
         self.closing_deadline = Some(Instant::now() + super::types::CLOSE_GRACE);
-        if self.child.is_none() {
+        // Local CEF child owns the process — exit immediately if it is already
+        // gone. Handed-off windows still need the grace period so the shared
+        // CEF process can close this browser without quitting other windows.
+        if self.child.is_none() && !self.cef_handed_off {
             event_loop.exit();
         }
     }
@@ -338,8 +345,16 @@ impl OsrNativeHost {
             } else {
                 WindowLevel::Normal
             })
-            .with_transparent(self.config.transparent)
-            .with_blur(self.config.background_effect.requires_transparency());
+            .with_transparent(self.config.transparent);
+        // On Linux, Mullion applies `ext_background_effect_v1` itself (with
+        // blur/opaque/input regions). winit's `with_blur(true)` also creates an
+        // effect on the same surface, and a second bind is a protocol error that
+        // kills the Wayland connection.
+        #[cfg(not(target_os = "linux"))]
+        {
+            attributes =
+                attributes.with_blur(self.config.background_effect.requires_transparency());
+        }
         #[cfg(target_os = "linux")]
         {
             let mut wayland_attributes = WindowAttributesWayland::default();
@@ -477,10 +492,9 @@ impl OsrNativeHost {
         let Some(effect) = &self.effect else {
             return;
         };
-        let (width, height) = self.content_surface_size();
-        let width = width as i32;
-        let height = height as i32;
-        let _ = effect.update(&self.window_options(), width.max(1), height.max(1));
+        let width = self.logical_width().round().max(1.0) as i32;
+        let height = self.logical_height().round().max(1.0) as i32;
+        let _ = effect.update(&self.window_options(), width, height);
     }
 }
 

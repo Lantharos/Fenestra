@@ -90,7 +90,8 @@ const tab = await guest.create({
 ```
 
 On first launch, bootstrap prepares the shared Mullion service and Chromium runtime (with
-progress). Later launches adopt that install, register the app, and open immediately.
+progress). Later launches adopt that install, register the app, and open immediately. If the
+service binary is missing, Mullion downloads it from GitHub Releases into the shared data dir.
 
 ## Window recipes
 
@@ -168,14 +169,21 @@ Mullion keeps the Chromium runtime under the platform application-data directory
 
 `mullion-service` owns machine setup for every Mullion app:
 
-1. The first app launches with Mullion bootstrap code.
-2. Bootstrap installs and starts the shared service (with a progress window).
-3. The service installs the latest compatible Chromium runtime, and later shared
-   dependencies such as Mullion media tools.
+1. The first app launches with Mullion bootstrap code and a native progress window.
+2. Bootstrap downloads the service binary from GitHub Releases if needed, then starts it.
+3. The service installs the latest compatible Chromium runtime.
 4. The app registers with the service and starts.
 
 Later apps reuse that service and runtime. By default the service also starts at login so the
 runtime stays warm. Prefer on-demand start with `mullion-service prefer-on-demand`.
+
+Service download URL defaults to:
+
+```text
+https://github.com/Lantharos/Mullion/releases/latest/download/mullion-service-{os}-{arch}
+```
+
+Override with `MULLION_SERVICE_URL` or point at a local binary with `MULLION_SERVICE_PATH`.
 
 ```sh
 mullion runtime doctor

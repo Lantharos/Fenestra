@@ -12,10 +12,14 @@ bun add github:Lantharos/Mullion#path:packages/mullion
 ## Bridge commands
 
 ```js
-import { invoke, listen, appWindow } from "@lantharos/mullion";
+import { invoke, listen, events, appWindow } from "@lantharos/mullion";
 
 const { version } = await invoke("app.version");
 listen("tray.click", () => appWindow.show());
+
+events.guestDownload((download) => {
+  console.log(download.filename, download.state);
+});
 ```
 
 ## Window controls

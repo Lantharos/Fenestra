@@ -1,4 +1,7 @@
-use crate::{AppManifest, MullionService, ServiceError, ServiceResult, service_data_dir};
+use crate::{
+    AppManifest, MullionService, ServiceError, ServiceResult, ensure_service_executable,
+    service_data_dir,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -112,7 +115,6 @@ pub fn adopt(register: Option<AppManifest>) -> ServiceResult<ServiceReadyReport>
 pub enum PrepareStage {
     Service,
     Runtime,
-    Dependencies,
     Register,
 }
 
@@ -134,6 +136,8 @@ pub fn prepare_machine_with_progress(
         fraction: Some(0.05),
     });
 
+    let _ = crate::ensure_service_executable(&mut on_progress)?;
+
     let policy = load_policy();
     let _ = save_policy(&policy);
     if policy.login_autostart {
@@ -143,7 +147,7 @@ pub fn prepare_machine_with_progress(
 
     on_progress(PrepareProgress {
         stage: PrepareStage::Runtime,
-        message: "Installing Chromium runtime".to_string(),
+        message: "Preparing runtime".to_string(),
         fraction: Some(0.1),
     });
 
@@ -151,7 +155,8 @@ pub fn prepare_machine_with_progress(
     let runtime_info = service.ensure_runtime_with_progress(|progress| {
         let fraction = progress
             .fraction
-            .map(|value| 0.1 + value.clamp(0.0, 1.0) * 0.75);
+            .map(|value| 0.1 + value.clamp(0.0, 1.0) * 0.8)
+            .or(Some(0.1));
         on_progress(PrepareProgress {
             stage: PrepareStage::Runtime,
             message: progress.message,
@@ -159,18 +164,11 @@ pub fn prepare_machine_with_progress(
         });
     })?;
 
-    on_progress(PrepareProgress {
-        stage: PrepareStage::Dependencies,
-        message: "Checking Mullion tools".to_string(),
-        fraction: Some(0.9),
-    });
-    ensure_shared_dependencies(&service, register.as_ref(), &mut on_progress)?;
-
     let registered_app = if let Some(manifest) = register {
         on_progress(PrepareProgress {
             stage: PrepareStage::Register,
             message: format!("Registering {}", manifest.name),
-            fraction: Some(0.97),
+            fraction: Some(0.95),
         });
         Some(service.register(manifest)?.manifest.id)
     } else {
@@ -189,15 +187,6 @@ pub fn prepare_machine_with_progress(
         runtime_version: runtime_info.version,
         registered_app,
     })
-}
-
-fn ensure_shared_dependencies(
-    _service: &MullionService,
-    _app: Option<&AppManifest>,
-    _on_progress: &mut impl FnMut(PrepareProgress),
-) -> ServiceResult<()> {
-    // Shared tools (media helpers, etc.) land here later.
-    Ok(())
 }
 
 pub fn ensure_daemon_running() -> ServiceResult<bool> {
@@ -237,7 +226,7 @@ pub fn is_daemon_running() -> bool {
 }
 
 pub fn start_daemon() -> ServiceResult<()> {
-    let executable = resolve_service_executable()?;
+    let executable = ensure_service_executable(|_| {})?;
     let _ = fs::create_dir_all(service_data_dir());
     let child = Command::new(&executable)
         .arg("run")
@@ -256,48 +245,11 @@ pub fn start_daemon() -> ServiceResult<()> {
 }
 
 pub fn resolve_service_executable() -> ServiceResult<PathBuf> {
-    if let Some(path) = std::env::var_os("MULLION_SERVICE_PATH") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
-
-    if let Ok(current) = std::env::current_exe()
-        && let Some(directory) = current.parent()
-    {
-        let candidate = directory.join(service_binary_name());
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-    }
-
-    if let Ok(path) = which(service_binary_name()) {
-        return Ok(path);
-    }
-
-    Err(ServiceError::Update(
-        "mullion-service executable not found; install it with `cargo install --git https://github.com/Lantharos/Mullion --package mullion-service` or set MULLION_SERVICE_PATH".to_string(),
-    ))
-}
-
-fn service_binary_name() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "mullion-service.exe"
-    } else {
-        "mullion-service"
-    }
-}
-
-fn which(name: &str) -> Result<PathBuf, ()> {
-    let path = std::env::var_os("PATH").ok_or(())?;
-    for directory in std::env::split_paths(&path) {
-        let candidate = directory.join(name);
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-    }
-    Err(())
+    crate::find_service_executable().ok_or_else(|| {
+        ServiceError::Update(
+            "mullion-service executable not found; it will be downloaded on first launch, or set MULLION_SERVICE_PATH / MULLION_SERVICE_URL".to_string(),
+        )
+    })
 }
 
 fn process_alive(pid: i32) -> bool {
@@ -329,7 +281,7 @@ fn process_alive(pid: i32) -> bool {
 }
 
 pub fn install_login_autostart() -> ServiceResult<()> {
-    let executable = resolve_service_executable()?;
+    let executable = ensure_service_executable(|_| {})?;
     install_login_autostart_with(&executable)
 }
 

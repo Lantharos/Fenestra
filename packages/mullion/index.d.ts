@@ -49,6 +49,32 @@ export interface GuestInfo {
   [key: string]: JsonValue;
 }
 
+export interface GuestNavigatedEvent {
+  id: string;
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+}
+
+export interface GuestNewWindowEvent {
+  id: string;
+  url: string;
+  disposition: string;
+}
+
+export interface GuestDownloadEvent {
+  guestId: string;
+  downloadId: string;
+  url: string;
+  filename: string;
+  mimeType: string;
+  totalBytes: number;
+  receivedBytes: number;
+  state: string;
+  savePath: string;
+}
+
 export interface MullionGuestApi {
   create(options: GuestCreateOptions): Promise<{ id: string } | string | unknown>;
   destroy(id: string): Promise<unknown>;
@@ -107,19 +133,25 @@ export interface MullionApi {
 
 export declare function isAvailable(): boolean;
 export declare function mullion(): MullionApi;
-export declare function invoke(
+export declare function invoke<T = unknown>(
   name: string,
   params?: Record<string, unknown>,
-): Promise<unknown>;
-export declare function listen(
+): Promise<T>;
+export declare function listen<T = unknown>(
   name: string,
-  callback: (payload: unknown) => void,
+  callback: (payload: T) => void,
 ): () => void;
 
 export declare const bridge: {
   commands(): string[];
   invoke: typeof invoke;
   listen: typeof listen;
+};
+
+export declare const events: {
+  guestNavigated(callback: (payload: GuestNavigatedEvent) => void): () => void;
+  guestNewWindow(callback: (payload: GuestNewWindowEvent) => void): () => void;
+  guestDownload(callback: (payload: GuestDownloadEvent) => void): () => void;
 };
 
 export declare const appWindow: MullionWindowApi;

@@ -183,6 +183,11 @@ impl MullionWindow {
         self
     }
 
+    pub fn app_version(mut self, version: impl Into<String>) -> Self {
+        self.config.app_version = Some(version.into());
+        self
+    }
+
     pub fn size(mut self, width: u32, height: u32) -> Self {
         self.config.width = width;
         self.config.height = height;

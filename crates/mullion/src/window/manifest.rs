@@ -17,6 +17,7 @@ struct MullionFile {
 struct AppSection {
     id: Option<String>,
     name: Option<String>,
+    version: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -57,6 +58,9 @@ impl MullionWindow {
         }
         if let Some(name) = file.app.name {
             self = self.title(name);
+        }
+        if let Some(version) = file.app.version {
+            self = self.app_version(version);
         }
         if let Some(entry) = file.web.entry {
             let entry_path = base.join(&entry);
