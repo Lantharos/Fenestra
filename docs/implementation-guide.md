@@ -7,7 +7,9 @@ This document describes the current architecture and the boundaries contributors
 A Mullion app can run in three modes from the same executable:
 
 1. The normal app process configures `MullionWindow`, native services, bridge commands, and policy.
-2. The bootstrap child displays native progress while installing the shared runtime.
+2. The bootstrap child shows native progress while the shared service starts and installs the
+   Chromium runtime (and later shared tools). App installers ship app code plus this bootstrap so
+   the first launch prepares the machine for every future Mullion app.
 3. The OSR native-host child owns the winit window, wgpu renderer, input, composition, and CEF helper.
 
 Every app must call `run_mullion_host_from_args` before constructing its normal application state.

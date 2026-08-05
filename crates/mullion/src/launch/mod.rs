@@ -26,33 +26,6 @@ pub(crate) fn metrics_label(config: &MullionWindowConfig) -> String {
         .to_string()
 }
 
-pub(crate) fn touch_shared_service(config: &MullionWindowConfig) {
-    let register = config.app_id.as_ref().and_then(|id| {
-        let executable = std::env::current_exe().ok()?;
-        Some(mullion_service::AppManifest {
-            id: id.clone(),
-            name: config.title.clone(),
-            version: "0.0.0".to_string(),
-            executable,
-            args: Vec::new(),
-            update: None,
-        })
-    });
-    match mullion_service::ensure_ready(register) {
-        Ok(report) => {
-            if std::env::var_os("MULLION_TRACE").is_some() {
-                eprintln!(
-                    "mullion-service ready runtime={} daemon={} login_autostart={}",
-                    report.runtime_version, report.daemon_running, report.login_autostart
-                );
-            }
-        }
-        Err(error) => {
-            eprintln!("mullion-service: {error}");
-        }
-    }
-}
-
 pub(crate) fn shell_command(command: &str) -> Command {
     #[cfg(target_os = "windows")]
     {

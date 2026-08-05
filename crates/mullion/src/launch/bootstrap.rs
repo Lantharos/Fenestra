@@ -1,8 +1,7 @@
+use crate::window::MullionWindowConfig;
 use crate::{MullionError, MullionResult};
-use mullion_runtime::{
-    RuntimeConfig, RuntimeInstallProgress, RuntimeMode, RuntimePackage,
-    install_user_runtime_with_progress, resolve_runtime,
-};
+use mullion_runtime::{RuntimeConfig, RuntimeMode, RuntimePackage, resolve_runtime};
+use mullion_service::{AppManifest, PrepareProgress, prepare_machine_with_progress};
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
@@ -29,8 +28,8 @@ pub(crate) fn run_from_args(args: &[String]) -> bool {
         eprintln!("missing Mullion bootstrap config");
         std::process::exit(1);
     };
-    let config = match read_config(&path) {
-        Ok(config) => config,
+    let (config, register) = match read_bootstrap(path) {
+        Ok(value) => value,
         Err(error) => {
             eprintln!("{error}");
             std::process::exit(1);
@@ -41,16 +40,19 @@ pub(crate) fn run_from_args(args: &[String]) -> bool {
         std::process::exit(1);
     });
     let proxy = event_loop.create_proxy();
-    let state = Arc::new(Mutex::new(BootstrapState::default()));
+    let state = Arc::new(Mutex::new(BootstrapState {
+        message: "Preparing Mullion".to_string(),
+        ..BootstrapState::default()
+    }));
     let worker_state = Arc::clone(&state);
     let worker_proxy = proxy.clone();
     thread::spawn(move || {
-        let result = install_user_runtime_with_progress(&config, |progress| {
-            update_progress(&worker_state, progress);
+        let result = prepare_machine_with_progress(config, register, |progress| {
+            update_progress(&worker_state, &progress);
             worker_proxy.wake_up();
         });
         if let Ok(mut state) = worker_state.lock() {
-            state.done = Some(result.map(|runtime| runtime.location.path().to_path_buf()));
+            state.done = Some(result.map(|report| report.runtime_version));
         }
         worker_proxy.wake_up();
     });
@@ -73,13 +75,28 @@ pub(crate) fn run_from_args(args: &[String]) -> bool {
     true
 }
 
-pub(crate) fn install(config: &RuntimeConfig) -> MullionResult<()> {
-    if resolve_runtime(config).is_ok() {
+pub(crate) fn prepare(config: &MullionWindowConfig) -> MullionResult<()> {
+    let register = app_manifest(config);
+    if resolve_runtime(&config.runtime).is_ok() {
+        match mullion_service::adopt(register) {
+            Ok(report) => {
+                if std::env::var_os("MULLION_TRACE").is_some() {
+                    eprintln!(
+                        "mullion-service ready runtime={} daemon={} login_autostart={}",
+                        report.runtime_version, report.daemon_running, report.login_autostart
+                    );
+                }
+            }
+            Err(error) => eprintln!("mullion-service: {error}"),
+        }
         return Ok(());
     }
+
     let config_path = bootstrap_config_path();
-    write_config(&config_path, config).map_err(|error| MullionError::CreationFailed {
-        message: format!("failed to prepare Mullion bootstrap: {error}"),
+    write_bootstrap(&config_path, &config.runtime, register.as_ref()).map_err(|error| {
+        MullionError::CreationFailed {
+            message: format!("failed to prepare Mullion bootstrap: {error}"),
+        }
     })?;
     let executable = std::env::current_exe().map_err(|error| MullionError::CreationFailed {
         message: format!("failed to locate app executable: {error}"),
@@ -97,16 +114,29 @@ pub(crate) fn install(config: &RuntimeConfig) -> MullionResult<()> {
         Ok(())
     } else {
         Err(MullionError::CreationFailed {
-            message: "Mullion runtime installation did not complete".to_string(),
+            message: "Mullion setup did not complete".to_string(),
         })
     }
+}
+
+pub(crate) fn app_manifest(config: &MullionWindowConfig) -> Option<AppManifest> {
+    let id = config.app_id.as_ref()?;
+    let executable = std::env::current_exe().ok()?;
+    Some(AppManifest {
+        id: id.clone(),
+        name: config.title.clone(),
+        version: "0.0.0".to_string(),
+        executable,
+        args: Vec::new(),
+        update: None,
+    })
 }
 
 #[derive(Default)]
 struct BootstrapState {
     message: String,
     fraction: Option<f32>,
-    done: Option<Result<PathBuf, mullion_runtime::RuntimeError>>,
+    done: Option<Result<String, mullion_service::ServiceError>>,
 }
 
 struct BootstrapApp {
@@ -164,7 +194,7 @@ impl BootstrapApp {
         };
         if let Some(done) = &state.done {
             if let Err(error) = done {
-                eprintln!("Mullion runtime installation failed: {error}");
+                eprintln!("Mullion setup failed: {error}");
             }
             event_loop.exit();
             return;
@@ -184,14 +214,18 @@ impl BootstrapApp {
     }
 }
 
-fn update_progress(state: &Mutex<BootstrapState>, progress: RuntimeInstallProgress) {
+fn update_progress(state: &Mutex<BootstrapState>, progress: &PrepareProgress) {
     if let Ok(mut state) = state.lock() {
-        state.message = progress.message;
+        state.message = progress.message.clone();
         state.fraction = progress.fraction;
     }
 }
 
-fn write_config(path: &Path, config: &RuntimeConfig) -> std::io::Result<()> {
+fn write_bootstrap(
+    path: &Path,
+    config: &RuntimeConfig,
+    register: Option<&AppManifest>,
+) -> std::io::Result<()> {
     let mode = match config.mode {
         RuntimeMode::SystemRequired => "system-required",
         RuntimeMode::SystemPreferred => "system-preferred",
@@ -200,25 +234,34 @@ fn write_config(path: &Path, config: &RuntimeConfig) -> std::io::Result<()> {
         RuntimeMode::Bundled => "bundled",
         RuntimeMode::Disabled => "disabled",
     };
+    let mut body = serde_json::json!({
+        "mode": mode,
+        "package": config.package.as_str(),
+        "min_version": config.min_version,
+        "index_url": config.index_url,
+        "allow_user_install": config.allow_user_install,
+        "allow_bundled": false,
+    });
+    if let Some(manifest) = register {
+        body["register"] = serde_json::json!({
+            "id": manifest.id,
+            "name": manifest.name,
+            "version": manifest.version,
+            "executable": manifest.executable,
+            "args": manifest.args,
+        });
+    }
     std::fs::write(
         path,
-        serde_json::to_vec(&serde_json::json!({
-            "mode": mode,
-            "package": config.package.as_str(),
-            "min_version": config.min_version,
-            "index_url": config.index_url,
-            "allow_user_install": config.allow_user_install,
-            "allow_bundled": false,
-        }))
-        .expect("bootstrap config is serializable"),
+        serde_json::to_vec(&body).expect("bootstrap config is serializable"),
     )
 }
 
-fn read_config(path: &Path) -> Result<RuntimeConfig, String> {
-    let value = serde_json::from_slice::<Value>(&std::fs::read(path).map_err(|e| e.to_string())?)
+fn read_bootstrap(path: PathBuf) -> Result<(RuntimeConfig, Option<AppManifest>), String> {
+    let value = serde_json::from_slice::<Value>(&std::fs::read(&path).map_err(|e| e.to_string())?)
         .map_err(|error| error.to_string())?;
     let _ = std::fs::remove_file(path);
-    Ok(RuntimeConfig {
+    let config = RuntimeConfig {
         mode: value
             .get("mode")
             .and_then(Value::as_str)
@@ -245,7 +288,31 @@ fn read_config(path: &Path) -> Result<RuntimeConfig, String> {
         allow_bundled: false,
         bundled_dir: None,
         ..RuntimeConfig::default()
-    })
+    };
+    let register = value.get("register").and_then(|entry| {
+        Some(AppManifest {
+            id: entry.get("id")?.as_str()?.to_string(),
+            name: entry.get("name")?.as_str()?.to_string(),
+            version: entry
+                .get("version")
+                .and_then(Value::as_str)
+                .unwrap_or("0.0.0")
+                .to_string(),
+            executable: PathBuf::from(entry.get("executable")?.as_str()?),
+            args: entry
+                .get("args")
+                .and_then(Value::as_array)
+                .map(|args| {
+                    args.iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            update: None,
+        })
+    });
+    Ok((config, register))
 }
 
 fn bootstrap_config_path() -> PathBuf {

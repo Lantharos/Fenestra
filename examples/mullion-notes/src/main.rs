@@ -53,7 +53,7 @@ fn main() {
     println!("Mullion standalone notes example");
     println!("chrome mode: {}", mode.label());
     println!("user runtime dir: {}", user_runtime_path().display());
-    match window.launch_or_install() {
+    match window.launch() {
         Ok(process) => {
             println!("launched Mullion process {}", process.id());
             let _ = process.wait();

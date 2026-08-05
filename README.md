@@ -30,10 +30,11 @@ bun add github:Lantharos/Mullion#path:packages/mullion
 - Native windows with GPU composition, glass materials, trays, and palettes
 - Guests for embedded tabs, previews, auth flows, and untrusted pages
 - Typed Rust ↔ web bridge with explicit command and origin permissions
-- Automatic first-run runtime install before any page loads
-- Shared service for runtime updates, app registration, and update policy
+- Shared service that owns first-run setup, the Chromium runtime, and future tools
+- Visible progress while the first app prepares the machine for every Mullion app
 - One `Mullion.toml` for app identity, web assets, and packaging
 - Lifecycle controls for background windows, tray apps, and browser-style workloads
+- TypeScript package for invoke, guests, window controls, activity, and popups
 
 ## Quick start
 
@@ -76,13 +77,20 @@ fn main() {
 ```
 
 ```js
-import { invoke } from "@lantharos/mullion";
+import { invoke, guest, appWindow, listen } from "@lantharos/mullion";
 
 const { version } = await invoke("app.version");
+listen("tray.click", () => appWindow.show());
+
+const tab = await guest.create({
+  url: "https://example.com",
+  bounds: { x: 16, y: 64, width: 900, height: 600 },
+  partition: "persist:browser",
+});
 ```
 
-On first launch, Mullion contacts the shared service, installs the Chromium runtime if needed,
-then opens your window.
+On first launch, bootstrap prepares the shared Mullion service and Chromium runtime (with
+progress). Later launches adopt that install, register the app, and open immediately.
 
 ## Window recipes
 
@@ -109,12 +117,15 @@ MullionWindow::new()
 Embed another page as a guest surface:
 
 ```js
-const guest = await window.mullion.guest.create({
+import { guest } from "@lantharos/mullion";
+
+const surface = await guest.create({
   url: "https://example.com",
   bounds: { x: 16, y: 64, width: 900, height: 600 },
   partition: "persist:browser",
   allowBridge: false,
 });
+await surface.setBounds({ x: 16, y: 64, width: 1100, height: 700 });
 ```
 
 ## Configuration
@@ -155,9 +166,16 @@ Mullion keeps the Chromium runtime under the platform application-data directory
 ~/.local/share/mullion/runtimes/cef/
 ```
 
-`mullion-service` manages that runtime and every registered Mullion app. By default it starts at
-login so the runtime is ready when you open an app. Prefer on-demand start with
-`mullion-service prefer-on-demand`.
+`mullion-service` owns machine setup for every Mullion app:
+
+1. The first app launches with Mullion bootstrap code.
+2. Bootstrap installs and starts the shared service (with a progress window).
+3. The service installs the latest compatible Chromium runtime, and later shared
+   dependencies such as Mullion media tools.
+4. The app registers with the service and starts.
+
+Later apps reuse that service and runtime. By default the service also starts at login so the
+runtime stays warm. Prefer on-demand start with `mullion-service prefer-on-demand`.
 
 ```sh
 mullion runtime doctor

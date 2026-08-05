@@ -4,10 +4,10 @@ mod types;
 mod updates;
 
 pub use lifecycle::{
-    ServicePolicy, ServiceReadyReport, ensure_daemon_running, ensure_ready,
-    install_login_autostart, install_login_autostart_with, is_daemon_running, load_policy,
-    policy_path, resolve_service_executable, save_policy, set_login_autostart, start_daemon,
-    uninstall_login_autostart,
+    PrepareProgress, PrepareStage, ServicePolicy, ServiceReadyReport, adopt, ensure_daemon_running,
+    ensure_ready, install_login_autostart, install_login_autostart_with, is_daemon_running,
+    load_policy, policy_path, prepare_machine_with_progress, resolve_service_executable,
+    save_policy, set_login_autostart, start_daemon, uninstall_login_autostart,
 };
 pub use registry::MullionService;
 pub use types::{

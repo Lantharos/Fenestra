@@ -35,7 +35,7 @@ use crate::error::{MullionError, MullionResult};
 use crate::host::{ManagedChild, MullionProcess, prepare_child_command};
 use crate::launch::{
     allow_dev_origins, allow_origin, allow_url_origin, bootstrap, canonical_entry,
-    dev_server_candidates, metrics_label, shell_command, split_entry_suffix, touch_shared_service,
+    dev_server_candidates, metrics_label, shell_command, split_entry_suffix,
 };
 use crate::osr;
 
@@ -69,7 +69,7 @@ impl MullionWindow {
                 std::process::exit(1);
             }
         };
-        match window.launch_or_install() {
+        match window.launch() {
             Ok(process) => match process.wait() {
                 Ok(status) => std::process::exit(status.code().unwrap_or(1)),
                 Err(error) => {
@@ -567,19 +567,15 @@ impl MullionWindow {
     }
 
     pub fn launch(self) -> MullionResult<MullionProcess> {
-        touch_shared_service(&self.config);
+        bootstrap::prepare(&self.config)?;
         let runtime = resolve_runtime(&self.config.runtime)?;
         self.launch_with_runtime(runtime)
     }
 
-    pub fn launch_or_install(self) -> MullionResult<MullionProcess> {
-        touch_shared_service(&self.config);
-        bootstrap::install(&self.config.runtime)?;
-        let runtime = resolve_runtime(&self.config.runtime)?;
-        self.launch_with_runtime(runtime)
-    }
-
-    pub fn launch_with_runtime(mut self, runtime: RuntimeInfo) -> MullionResult<MullionProcess> {
+    pub(crate) fn launch_with_runtime(
+        mut self,
+        runtime: RuntimeInfo,
+    ) -> MullionResult<MullionProcess> {
         #[cfg(any(target_os = "android", target_os = "ios"))]
         {
             let _ = runtime;

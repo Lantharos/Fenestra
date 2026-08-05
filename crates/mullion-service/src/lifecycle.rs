@@ -12,8 +12,6 @@ const PID_FILE: &str = "service.pid";
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ServicePolicy {
-    /// When true, Mullion installs a login/startup entry for the background service.
-    /// When false, the service is started on demand by the first Mullion app.
     pub login_autostart: bool,
 }
 
@@ -65,12 +63,6 @@ pub fn set_login_autostart(enabled: bool) -> ServiceResult<ServicePolicy> {
     Ok(policy)
 }
 
-/// Make sure the shared Mullion service is available for this machine.
-///
-/// - Respects login-autostart policy (default on).
-/// - Starts the daemon if it is not already running.
-/// - Refreshes the shared runtime to the newest compatible build.
-/// - Optionally registers the calling app in the service catalog.
 pub fn ensure_ready(register: Option<AppManifest>) -> ServiceResult<ServiceReadyReport> {
     let policy = load_policy();
     let _ = save_policy(&policy);
@@ -95,6 +87,117 @@ pub fn ensure_ready(register: Option<AppManifest>) -> ServiceResult<ServiceReady
         runtime_version: report.runtime.version,
         registered_app,
     })
+}
+
+pub fn adopt(register: Option<AppManifest>) -> ServiceResult<ServiceReadyReport> {
+    let policy = load_policy();
+    let daemon_running = ensure_daemon_running().unwrap_or(false);
+    let service = MullionService::default();
+    let runtime = service.runtime()?;
+    let registered_app = if let Some(manifest) = register {
+        Some(service.register(manifest)?.manifest.id)
+    } else {
+        None
+    };
+
+    Ok(ServiceReadyReport {
+        login_autostart: policy.login_autostart,
+        daemon_running,
+        runtime_version: runtime.version,
+        registered_app,
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrepareStage {
+    Service,
+    Runtime,
+    Dependencies,
+    Register,
+}
+
+#[derive(Clone, Debug)]
+pub struct PrepareProgress {
+    pub stage: PrepareStage,
+    pub message: String,
+    pub fraction: Option<f32>,
+}
+
+pub fn prepare_machine_with_progress(
+    runtime: mullion_runtime::RuntimeConfig,
+    register: Option<AppManifest>,
+    mut on_progress: impl FnMut(PrepareProgress),
+) -> ServiceResult<ServiceReadyReport> {
+    on_progress(PrepareProgress {
+        stage: PrepareStage::Service,
+        message: "Starting Mullion service".to_string(),
+        fraction: Some(0.05),
+    });
+
+    let policy = load_policy();
+    let _ = save_policy(&policy);
+    if policy.login_autostart {
+        let _ = install_login_autostart();
+    }
+    let daemon_running = ensure_daemon_running().unwrap_or(false);
+
+    on_progress(PrepareProgress {
+        stage: PrepareStage::Runtime,
+        message: "Installing Chromium runtime".to_string(),
+        fraction: Some(0.1),
+    });
+
+    let service = MullionService::default().with_runtime(runtime);
+    let runtime_info = service.ensure_runtime_with_progress(|progress| {
+        let fraction = progress
+            .fraction
+            .map(|value| 0.1 + value.clamp(0.0, 1.0) * 0.75);
+        on_progress(PrepareProgress {
+            stage: PrepareStage::Runtime,
+            message: progress.message,
+            fraction,
+        });
+    })?;
+
+    on_progress(PrepareProgress {
+        stage: PrepareStage::Dependencies,
+        message: "Checking Mullion tools".to_string(),
+        fraction: Some(0.9),
+    });
+    ensure_shared_dependencies(&service, register.as_ref(), &mut on_progress)?;
+
+    let registered_app = if let Some(manifest) = register {
+        on_progress(PrepareProgress {
+            stage: PrepareStage::Register,
+            message: format!("Registering {}", manifest.name),
+            fraction: Some(0.97),
+        });
+        Some(service.register(manifest)?.manifest.id)
+    } else {
+        None
+    };
+
+    on_progress(PrepareProgress {
+        stage: PrepareStage::Register,
+        message: "Mullion is ready".to_string(),
+        fraction: Some(1.0),
+    });
+
+    Ok(ServiceReadyReport {
+        login_autostart: policy.login_autostart,
+        daemon_running,
+        runtime_version: runtime_info.version,
+        registered_app,
+    })
+}
+
+fn ensure_shared_dependencies(
+    _service: &MullionService,
+    _app: Option<&AppManifest>,
+    _on_progress: &mut impl FnMut(PrepareProgress),
+) -> ServiceResult<()> {
+    // Shared tools (media helpers, etc.) land here later.
+    Ok(())
 }
 
 pub fn ensure_daemon_running() -> ServiceResult<bool> {

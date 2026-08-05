@@ -347,7 +347,7 @@ fn main() {
             })))
         });
 
-    match window.launch_or_install() {
+    match window.launch() {
         Ok(process) => {
             let _ = process.wait();
         }
