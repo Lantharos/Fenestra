@@ -64,8 +64,8 @@ void SabineApp::OnBeforeCommandLineProcessing(
   const bool software_osr = command_line->HasSwitch("sabine-software-osr");
   const std::string ozone_platform =
       command_line->GetSwitchValue("sabine-ozone-platform");
-  // Chromium: Wayland ozone cannot use Vulkan. Keep GL/ANGLE so shared-texture
-  // OSR (DMA-BUF) still works; only software OSR needs the extra feature cuts.
+  // Chromium rejects Wayland ozone + Vulkan. Prefer X11 ozone for OSR; if a
+  // caller still forces Wayland, disable Vulkan so GPU init can proceed.
   const bool disable_vulkan =
       software_osr || ozone_platform == "wayland";
   if (disable_vulkan) {
@@ -75,14 +75,27 @@ void SabineApp::OnBeforeCommandLineProcessing(
     command_line->AppendSwitchWithValue("ozone-platform", ozone_platform);
     command_line->AppendSwitchWithValue("ozone-platform-hint", ozone_platform);
   }
-  if (disable_vulkan) {
-    command_line->AppendSwitchWithValue(
-        "disable-features",
-        "Vulkan,DefaultANGLEVulkan,VulkanFromANGLE,OptimizationGuideOnDeviceModel");
-  } else {
-    command_line->AppendSwitchWithValue("disable-features",
-                                        "OptimizationGuideOnDeviceModel");
+
+  // Merge into any disable-features already set on the argv (do not replace).
+  std::string disabled =
+      command_line->GetSwitchValue("disable-features").ToString();
+  auto ends_with_comma_or_empty = [&disabled]() {
+    return disabled.empty() || disabled.back() == ',';
+  };
+  auto append_csv = [&disabled, &ends_with_comma_or_empty](const char* csv) {
+    if (!ends_with_comma_or_empty()) {
+      disabled += ",";
+    }
+    disabled += csv;
+  };
+  if (disabled.find("OptimizationGuideOnDeviceModel") == std::string::npos) {
+    append_csv("OptimizationGuideOnDeviceModel");
   }
+  if (disable_vulkan) {
+    append_csv("Vulkan,DefaultANGLEVulkan,VulkanFromANGLE");
+  }
+  command_line->AppendSwitchWithValue("disable-features", disabled);
+
   command_line->AppendSwitchWithValue("password-store", "basic");
   if (command_line->HasSwitch("sabine-transparent")) {
     command_line->AppendSwitch("enable-transparent-visuals");

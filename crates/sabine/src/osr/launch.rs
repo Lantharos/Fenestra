@@ -232,7 +232,9 @@ pub(crate) fn cef_osr_command(
     command
         .arg(format!("--url={}", config.url))
         .arg("--sabine-osr")
-        .arg("--sabine-ozone-platform=wayland")
+        // CEF OSR has no visible window; X11 ozone works under Wayland (XWayland)
+        // and avoids Chromium's Wayland+Vulkan incompatibility.
+        .arg("--sabine-ozone-platform=x11")
         .arg(format!("--sabine-osr-endpoint={}", endpoint.argument()))
         .arg(format!("--sabine-parent-pid={}", std::process::id()));
     if !token_file.as_os_str().is_empty() {
@@ -263,8 +265,8 @@ pub(crate) fn cef_osr_command(
     crate::host::prepare_detachable_child_command(&mut command);
     command
         .current_dir(&release_dir)
-        .env("GDK_BACKEND", "wayland")
-        .env("XDG_SESSION_TYPE", "wayland")
+        .env("GDK_BACKEND", "x11")
+        .env("XDG_SESSION_TYPE", "x11")
         .env("LD_LIBRARY_PATH", ld_library_path(&release_dir));
     // Env remains a fallback for non-handoff launches; the token file is what
     // survives CEF process-singleton relaunch into the primary process.
