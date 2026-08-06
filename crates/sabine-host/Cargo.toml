@@ -1,0 +1,23 @@
+[package]
+name = "sabine-host"
+description = "Sabine CEF host sources and cmake build for the shared Chromium embedder"
+keywords = ["sabine", "cef", "chromium", "host", "osr"]
+categories = ["development-tools", "gui"]
+include = [
+    "src/**/*",
+    "shared/**/*",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+
+[dependencies]
+sabine-bridge.workspace = true

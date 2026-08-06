@@ -1,0 +1,28 @@
+[package]
+name = "sabine-service"
+description = "Shared Sabine runtime and application update service"
+keywords = ["sabine", "cef", "updater", "desktop"]
+categories = ["gui", "web-programming"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[lib]
+name = "sabine_service"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sabine-service"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+sabine-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true

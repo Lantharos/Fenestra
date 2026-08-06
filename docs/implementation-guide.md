@@ -1,27 +1,27 @@
-# Mullion implementation guide
+# Sabine implementation guide
 
 This document describes the current architecture and the boundaries contributors should preserve.
 
 ## Process model
 
-A Mullion app can run in three modes from the same executable:
+A Sabine app can run in three modes from the same executable:
 
-1. The normal app process configures `MullionWindow`, native services, bridge commands, and policy.
+1. The normal app process configures `SabineWindow`, native services, bridge commands, and policy.
 2. The bootstrap child shows a native progress window while the shared service is downloaded (if
    needed) and the Chromium runtime is installed. App installers ship app code plus this bootstrap so
-   the first launch prepares the machine for every future Mullion app.
+   the first launch prepares the machine for every future Sabine app.
 3. The OSR native-host child owns the winit window, wgpu renderer, input, composition, and CEF helper.
 
-Every app must call `run_mullion_host_from_args` before constructing its normal application state.
+Every app must call `run_sabine_host_from_args` before constructing its normal application state.
 This dispatches internal child modes without requiring an additional app-specific executable.
 
-The CEF helper is built from the C++ source embedded in the `mullion` crate. It always enables
-windowless rendering and always creates `MullionOsrHandler`; there is no windowed CEF handler.
+The CEF helper is built from the C++ source embedded in the `sabine` crate. It always enables
+windowless rendering and always creates `SabineOsrHandler`; there is no windowed CEF handler.
 
 ### App identity and windows
 
 Every launch requires a non-empty `app_id` (via `.app_id(...)` or `with_manifest`). That id selects
-the CEF profile directory and the private IPC directory under `$XDG_RUNTIME_DIR/mullion/<app_id>/`
+the CEF profile directory and the private IPC directory under `$XDG_RUNTIME_DIR/sabine/<app_id>/`
 (mode `0700`, sockets `0600`).
 
 - **Different `app_id`**: separate CEF processes and profiles; no handoff between apps.
@@ -31,7 +31,7 @@ the CEF profile directory and the private IPC directory under `$XDG_RUNTIME_DIR/
   process. Closing one window closes only that browser; CEF quits when the last OSR handler is gone.
   Separate top-level launches therefore close independently while still being able to talk through
   the shared profile/CEF process when the app wants that.
-- **Same-process multi-window**: call `MullionProcess::open_window` to spawn another OSR host with
+- **Same-process multi-window**: call `SabineProcess::open_window` to spawn another OSR host with
   the same handlers and `app_id` without a second top-level `wait()` island. Use
   `close_window(WindowId)` to tear down one surface; `wait()` returns only after every OSR window
   has exited. If the parent app process exits, its OSR children are terminated; closing a child
@@ -41,8 +41,8 @@ the CEF profile directory and the private IPC directory under `$XDG_RUNTIME_DIR/
   After exit-24 handoff the secondary host waits up to 15s for the primary CEF process to connect.
 
 OSR authentication uses a first-line token plus same-UID `SO_PEERCRED` checks on Unix. The token
-is written to a `0600` file beside the socket and referenced by `--mullion-osr-token-file=` on the
-CEF command line (path is not secret; this survives process-singleton handoff). `MULLION_OSR_TOKEN`
+is written to a `0600` file beside the socket and referenced by `--sabine-osr-token-file=` on the
+CEF command line (path is not secret; this survives process-singleton handoff). `SABINE_OSR_TOKEN`
 remains an optional fallback. Child OSR/CEF processes set `PR_SET_PDEATHSIG` on Linux so they do
 not outlive a crashed parent.
 
@@ -59,8 +59,8 @@ The display list damages the union of the old and new bounds when a primitive ch
 for a correctly sized CEF paint rather than stretching a stale frame indefinitely.
 
 Transport is platform-specific without changing the protocol. On Unix, sockets live under
-`$XDG_RUNTIME_DIR/mullion/<app_id>/` (mode `0700`) with socket mode `0600`, and each window
-authenticates with a first-line token delivered via `MULLION_OSR_TOKEN` (not argv).
+`$XDG_RUNTIME_DIR/sabine/<app_id>/` (mode `0700`) with socket mode `0600`, and each window
+authenticates with a first-line token delivered via `SABINE_OSR_TOKEN` (not argv).
 
 | Platform | Transport | Large paint path |
 | --- | --- | --- |
@@ -77,7 +77,7 @@ frameless, always-on-top, hide-on-blur window.
 
 ## Runtime ownership
 
-`mullion-runtime` is the only crate allowed to decide runtime locations, versions, download archives,
+`sabine-runtime` is the only crate allowed to decide runtime locations, versions, download archives,
 integrity, install locks, and pruning. The runtime is always CEF. WebView2 is not an alternate backend or a
 fallback.
 
@@ -91,13 +91,13 @@ The Spotify CEF index supplies archive metadata and checksums. Runtime versions 
 directories, allowing existing apps to finish on an older version while the service installs a newer
 one. Runtime and CEF-host builds have independent stale-aware locks.
 
-`mullion-service` owns the machine/user-level catalog. Its registry writes use a temporary file,
+`sabine-service` owns the machine/user-level catalog. Its registry writes use a temporary file,
 `sync_all`, and atomic rename. Re-registering an app preserves its original registration timestamp.
 The maintenance loop updates CEF to the newest compatible archive and keeps two runtime versions.
 
 ## Public API
 
-The primary API is a fluent `MullionWindow` builder. Configuration is grouped by concern even though
+The primary API is a fluent `SabineWindow` builder. Configuration is grouped by concern even though
 the builder keeps common cases one method away:
 
 - content: local entry, production URL, dev URL and command
@@ -109,7 +109,7 @@ the builder keeps common cases one method away:
 - runtime: package, minimum version, bundled/shared policy
 
 The API deliberately avoids backend types. `BrowserOptions` contains browser-process tuning; apps do
-not select a renderer. Mullion always uses the shared OSR host.
+not select a renderer. Sabine always uses the shared OSR host.
 
 ## Bridge security
 
@@ -132,16 +132,16 @@ forwarded to the guest. Favicon URL changes emit `guest.favicon`.
 The web bridge exposes:
 
 ```text
-window.mullion.bridge
-window.mullion.window
-window.mullion.lifecycle
-window.mullion.activity
-window.mullion.guest
+window.sabine.bridge
+window.sabine.window
+window.sabine.lifecycle
+window.sabine.activity
+window.sabine.guest
 ```
 
 ## Lifecycle and performance
 
-Mullion distinguishes active, background, suspended, hibernating, and hibernated states. Activity
+Sabine distinguishes active, background, suspended, hibernating, and hibernated states. Activity
 leases allow durable Rust work or page work to block hibernation while it is genuinely active.
 Blur and occlusion suspend only lower the windowless frame rate; they do not call CEF `WasHidden`,
 so brief focus loss during interactive move does not blank the surface. Hibernation is what actually
@@ -163,17 +163,17 @@ model.
 
 Current primitives cover tray menus, autostart, global shortcuts, deep links, native messaging,
 single-instance activation, hidden windows, always-on-top windows, and palette behavior. Native
-platform registration belongs in `mullion-platform` or `mullion-service`; CEF code must not own it.
+platform registration belongs in `sabine-platform` or `sabine-service`; CEF code must not own it.
 
 ## Bundles and installs
 
-The CLI reads `Mullion.toml`, builds web assets, builds the selected Rust package, stages the runtime
+The CLI reads `Sabine.toml`, builds web assets, builds the selected Rust package, stages the runtime
 layout, writes platform metadata, and invokes a local package tool when available.
 
 Supported targets are portable, Linux directory, deb, rpm, AppImage, Windows directory, exe, msi,
 macOS app, and dmg. Cross-host staging is allowed; signing and notarization remain deployment policy.
 
-Source installs are development conveniences. They stage assets and a launcher under the Mullion data
+Source installs are development conveniences. They stage assets and a launcher under the Sabine data
 directory, register the app with the service, and create platform launch metadata.
 
 ## Validation

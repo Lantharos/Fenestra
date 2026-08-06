@@ -1,24 +1,24 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/mullion-platform",
-    "crates/mullion-runtime",
-    "crates/mullion-bridge",
-    "crates/mullion-host",
-    "crates/mullion",
-    "crates/mullion-service",
-    "crates/mullion-cli",
-    "examples/mullion-notes",
+    "crates/sabine-platform",
+    "crates/sabine-runtime",
+    "crates/sabine-bridge",
+    "crates/sabine-host",
+    "crates/sabine",
+    "crates/sabine-service",
+    "crates/sabine-cli",
+    "examples/sabine-notes",
 ]
 default-members = [
-    "crates/mullion-platform",
-    "crates/mullion-runtime",
-    "crates/mullion-bridge",
-    "crates/mullion-host",
-    "crates/mullion",
-    "crates/mullion-service",
-    "crates/mullion-cli",
-    "examples/mullion-notes",
+    "crates/sabine-platform",
+    "crates/sabine-runtime",
+    "crates/sabine-bridge",
+    "crates/sabine-host",
+    "crates/sabine",
+    "crates/sabine-service",
+    "crates/sabine-cli",
+    "examples/sabine-notes",
 ]
 
 [workspace.package]
@@ -26,19 +26,19 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Lantharos/Mullion"
-homepage = "https://github.com/Lantharos/Mullion"
+repository = "https://github.com/Lantharos/Sabine"
+homepage = "https://github.com/Lantharos/Sabine"
 authors = ["Lantharos"]
-keywords = ["mullion", "cef", "webview", "desktop", "chromium"]
+keywords = ["sabine", "cef", "webview", "desktop", "chromium"]
 categories = ["gui", "rendering"]
 
 [workspace.dependencies]
-mullion-runtime = { path = "crates/mullion-runtime", version = "0.1.0" }
-mullion-platform = { path = "crates/mullion-platform", version = "0.1.0" }
-mullion-bridge = { path = "crates/mullion-bridge", version = "0.1.0" }
-mullion-host = { path = "crates/mullion-host", version = "0.1.0" }
-mullion = { path = "crates/mullion", version = "0.1.0" }
-mullion-service = { path = "crates/mullion-service", version = "0.1.0" }
+sabine-runtime = { path = "crates/sabine-runtime", version = "0.1.0" }
+sabine-platform = { path = "crates/sabine-platform", version = "0.1.0" }
+sabine-bridge = { path = "crates/sabine-bridge", version = "0.1.0" }
+sabine-host = { path = "crates/sabine-host", version = "0.1.0" }
+sabine = { path = "crates/sabine", version = "0.1.0" }
+sabine-service = { path = "crates/sabine-service", version = "0.1.0" }
 
 ashpd = { version = "0.13.11", features = ["global_shortcuts"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }

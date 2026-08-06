@@ -1939,109 +1939,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mullion"
-version = "0.1.0"
-dependencies = [
- "ashpd",
- "bytemuck",
- "futures-util",
- "getrandom 0.4.2",
- "global-hotkey",
- "glyphon",
- "image",
- "ksni",
- "layershellev",
- "libc",
- "mullion-bridge",
- "mullion-host",
- "mullion-platform",
- "mullion-runtime",
- "mullion-service",
- "pollster",
- "raw-window-handle",
- "serde",
- "serde_json",
- "softbuffer",
- "thiserror 2.0.18",
- "tokio",
- "toml 1.1.2+spec-1.1.0",
- "tray-icon",
- "wayland-client",
- "wgpu",
- "windows",
- "winit",
-]
-
-[[package]]
-name = "mullion-bridge"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "mullion-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "mullion-host",
- "mullion-runtime",
- "mullion-service",
- "serde",
- "serde_json",
- "toml 1.1.2+spec-1.1.0",
-]
-
-[[package]]
-name = "mullion-host"
-version = "0.1.0"
-dependencies = [
- "mullion-bridge",
-]
-
-[[package]]
-name = "mullion-notes"
-version = "0.1.0"
-dependencies = [
- "mullion",
- "serde_json",
-]
-
-[[package]]
-name = "mullion-platform"
-version = "0.1.0"
-dependencies = [
- "libc",
- "raw-window-handle",
- "window-vibrancy",
- "winit",
-]
-
-[[package]]
-name = "mullion-runtime"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "sha1",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "mullion-service"
-version = "0.1.0"
-dependencies = [
- "clap",
- "mullion-runtime",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "naga"
 version = "29.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2740,6 +2637,109 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+
+[[package]]
+name = "sabine"
+version = "0.1.0"
+dependencies = [
+ "ashpd",
+ "bytemuck",
+ "futures-util",
+ "getrandom 0.4.2",
+ "global-hotkey",
+ "glyphon",
+ "image",
+ "ksni",
+ "layershellev",
+ "libc",
+ "pollster",
+ "raw-window-handle",
+ "sabine-bridge",
+ "sabine-host",
+ "sabine-platform",
+ "sabine-runtime",
+ "sabine-service",
+ "serde",
+ "serde_json",
+ "softbuffer",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 1.1.2+spec-1.1.0",
+ "tray-icon",
+ "wayland-client",
+ "wgpu",
+ "windows",
+ "winit",
+]
+
+[[package]]
+name = "sabine-bridge"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "sabine-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "sabine-host",
+ "sabine-runtime",
+ "sabine-service",
+ "serde",
+ "serde_json",
+ "toml 1.1.2+spec-1.1.0",
+]
+
+[[package]]
+name = "sabine-host"
+version = "0.1.0"
+dependencies = [
+ "sabine-bridge",
+]
+
+[[package]]
+name = "sabine-notes"
+version = "0.1.0"
+dependencies = [
+ "sabine",
+ "serde_json",
+]
+
+[[package]]
+name = "sabine-platform"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "raw-window-handle",
+ "window-vibrancy",
+ "winit",
+]
+
+[[package]]
+name = "sabine-runtime"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha1",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "sabine-service"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "sabine-runtime",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "same-file"

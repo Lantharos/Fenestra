@@ -1,0 +1,22 @@
+[package]
+name = "sabine-platform"
+description = "Window, shell, region, and desktop integration primitives for Sabine"
+keywords = ["sabine", "platform", "window", "desktop"]
+categories = ["gui", "os"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[dependencies]
+raw-window-handle.workspace = true
+winit.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+window-vibrancy.workspace = true

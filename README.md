@@ -1,53 +1,53 @@
-![Mullion](assets/banner.png)
+![Sabine](assets/banner.png)
 
-# Mullion
+# Sabine
 
-Mullion is a native application framework built around one shared Chromium runtime.
+Sabine is a native application framework built around one shared Chromium runtime.
 Write your UI in the web stack you already use, keep a real desktop window, and share one
-browser engine across every Mullion app on the machine.
+browser engine across every Sabine app on the machine.
 
 ## Install
 
 ```toml
 [dependencies]
-mullion = { git = "https://github.com/Lantharos/Mullion" }
+sabine = { git = "https://github.com/Lantharos/Sabine" }
 ```
 
 ```sh
-cargo install --git https://github.com/Lantharos/Mullion mullion-cli
-cargo install --git https://github.com/Lantharos/Mullion mullion-service
+cargo install --git https://github.com/Lantharos/Sabine sabine-cli
+cargo install --git https://github.com/Lantharos/Sabine sabine-service
 ```
 
 For the TypeScript helpers used by the web UI:
 
 ```sh
-bun add github:Lantharos/Mullion#path:packages/mullion
+bun add github:Lantharos/Sabine#path:packages/sabine
 ```
 
-## Why Mullion
+## Why Sabine
 
 - One shared Chromium runtime across Linux, Windows, and macOS
 - Native windows with GPU composition, glass materials, trays, and palettes
 - Guests for embedded tabs, previews, auth flows, and untrusted pages
 - Typed Rust ↔ web bridge with explicit command and origin permissions
 - Shared service that owns first-run setup, the Chromium runtime, and future tools
-- Visible progress while the first app prepares the machine for every Mullion app
-- One `Mullion.toml` for app identity, web assets, and packaging
+- Visible progress while the first app prepares the machine for every Sabine app
+- One `Sabine.toml` for app identity, web assets, and packaging
 - Lifecycle controls for background windows, tray apps, and browser-style workloads
 - TypeScript package for invoke, guests, window controls, activity, and popups
 
 ## Quick start
 
 ```sh
-mullion new my-app
+sabine new my-app
 cd my-app
-mullion dev
+sabine dev
 ```
 
 Generated apps look like this:
 
 ```rust
-use mullion::prelude::*;
+use sabine::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -59,8 +59,8 @@ struct VersionResponse {
 }
 
 fn main() {
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Mullion.toml");
-    MullionWindow::main(|window| {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Sabine.toml");
+    SabineWindow::main(|window| {
         Ok(window
             .with_manifest(manifest)?
             .app()
@@ -75,7 +75,7 @@ fn main() {
 ```
 
 ```js
-import { invoke, guest, appWindow, listen } from "@lantharos/mullion";
+import { invoke, guest, appWindow, listen } from "@lantharos/sabine";
 
 const { version } = await invoke("app.version");
 listen("tray.click", () => appWindow.show());
@@ -87,27 +87,27 @@ const tab = await guest.create({
 });
 ```
 
-On first launch, bootstrap prepares the shared Mullion service and Chromium runtime (with
+On first launch, bootstrap prepares the shared Sabine service and Chromium runtime (with
 progress). Later launches adopt that install, register the app, and open immediately. If the
-service binary is missing, Mullion downloads it from GitHub Releases into the shared data dir.
+service binary is missing, Sabine downloads it from GitHub Releases into the shared data dir.
 
 ## Window recipes
 
 ```rust
 // Standard desktop app
-MullionWindow::new().app();
+SabineWindow::new().app();
 
 // Transparent palette or launcher
-MullionWindow::new().palette();
+SabineWindow::new().palette();
 
 // Background tray app
-MullionWindow::new()
+SabineWindow::new()
     .tray_app()
     .tray_icon(/* ... */)
     .single_instance_id("com.example.my-app");
 
 // Custom titlebar and sidebar glass regions
-MullionWindow::new()
+SabineWindow::new()
     .frameless()
     .glass()
     .app_chrome(AppChrome::new(38, 260));
@@ -116,7 +116,7 @@ MullionWindow::new()
 Embed another page as a guest surface:
 
 ```js
-import { guest } from "@lantharos/mullion";
+import { guest } from "@lantharos/sabine";
 
 const surface = await guest.create({
   url: "https://example.com",
@@ -129,7 +129,7 @@ await surface.setBounds({ x: 16, y: 64, width: 1100, height: 700 });
 
 ## Configuration
 
-`Mullion.toml` describes the app and its web assets. The CLI uses it for install and packaging;
+`Sabine.toml` describes the app and its web assets. The CLI uses it for install and packaging;
 Rust can load the same file with `with_manifest`:
 
 ```toml
@@ -149,58 +149,58 @@ allowed_origins = ["http://localhost:5173"]
 ```
 
 ```sh
-mullion install .
-mullion update
-mullion bundle . --target portable --release
-mullion bundle . --target deb --release
-mullion bundle . --target msi --release
-mullion bundle . --target dmg --release
+sabine install .
+sabine update
+sabine bundle . --target portable --release
+sabine bundle . --target deb --release
+sabine bundle . --target msi --release
+sabine bundle . --target dmg --release
 ```
 
 ## Runtime and service
 
-Mullion keeps the Chromium runtime under the platform application-data directory. On Linux:
+Sabine keeps the Chromium runtime under the platform application-data directory. On Linux:
 
 ```text
-~/.local/share/mullion/runtimes/cef/
+~/.local/share/sabine/runtimes/cef/
 ```
 
-`mullion-service` owns machine setup for every Mullion app:
+`sabine-service` owns machine setup for every Sabine app:
 
-1. The first app launches with Mullion bootstrap code and a native progress window.
+1. The first app launches with Sabine bootstrap code and a native progress window.
 2. Bootstrap downloads the service binary from GitHub Releases if needed, then starts it.
 3. The service installs the latest compatible Chromium runtime.
 4. The app registers with the service and starts.
 
 Later apps reuse that service and runtime. By default the service also starts at login so the
-runtime stays warm. Prefer on-demand start with `mullion-service prefer-on-demand`.
+runtime stays warm. Prefer on-demand start with `sabine-service prefer-on-demand`.
 
 Service download URL defaults to:
 
 ```text
-https://github.com/Lantharos/Mullion/releases/latest/download/mullion-service-{os}-{arch}
+https://github.com/Lantharos/Sabine/releases/latest/download/sabine-service-{os}-{arch}
 ```
 
-Override with `MULLION_SERVICE_URL` or point at a local binary with `MULLION_SERVICE_PATH`.
+Override with `SABINE_SERVICE_URL` or point at a local binary with `SABINE_SERVICE_PATH`.
 
 ```sh
-mullion runtime doctor
-mullion runtime install --package standard
-mullion runtime list
-mullion runtime prune --keep 2
+sabine runtime doctor
+sabine runtime install --package standard
+sabine runtime list
+sabine runtime prune --keep 2
 
-mullion-service install
-mullion-service ensure
-mullion-service list
-mullion-service maintain
+sabine-service install
+sabine-service ensure
+sabine-service list
+sabine-service maintain
 ```
 
 ## Learn more
 
 - [Implementation guide](docs/implementation-guide.md) — process model, bridge, guests, bundling, and platform notes
-- [`@lantharos/mullion`](packages/mullion) — TypeScript helpers for the page bridge
+- [`@lantharos/sabine`](packages/sabine) — TypeScript helpers for the page bridge
 
 ## License
 
-Mullion is dual-licensed under MIT or Apache-2.0. CEF and Chromium keep their own licenses; see
+Sabine is dual-licensed under MIT or Apache-2.0. CEF and Chromium keep their own licenses; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

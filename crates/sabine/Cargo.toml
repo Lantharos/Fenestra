@@ -1,0 +1,61 @@
+[package]
+name = "sabine"
+description = "Cross-platform Sabine application framework and native desktop runtime"
+keywords = ["sabine", "desktop", "chromium", "osr", "webview"]
+categories = ["gui", "rendering", "web-programming"]
+include = [
+    "src/**/*",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme = "README.md"
+
+[dependencies]
+sabine-runtime.workspace = true
+sabine-bridge.workspace = true
+sabine-host.workspace = true
+sabine-platform.workspace = true
+sabine-service.workspace = true
+bytemuck.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+glyphon.workspace = true
+image.workspace = true
+libc.workspace = true
+pollster.workspace = true
+raw-window-handle.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+serde = { workspace = true, features = ["derive"] }
+toml = { workspace = true, features = ["parse"] }
+softbuffer = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd.workspace = true
+ksni.workspace = true
+layershellev.workspace = true
+wayland-client.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+global-hotkey = "0.8"
+tray-icon = "0.24"
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+global-hotkey = "0.8"
+tray-icon = "0.24"
