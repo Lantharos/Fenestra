@@ -69,16 +69,22 @@ fn install_default_runtime(config: &RuntimeConfig) -> Result<sabine_runtime::Run
     let plan = latest_install_plan(config)
         .map_err(|error| format!("failed to plan runtime install: {error}"))?;
     eprintln!(
-        "sabine: downloading {} runtime {}…",
+        "sabine: installing {} runtime {}…",
         plan.package.as_str(),
         plan.version
     );
+    let mut last_message = String::new();
     update_user_runtime_with_progress(config, |progress| {
         let percent = progress
             .fraction
             .map(|fraction| format!(" {:>3}%", (fraction * 100.0).round() as u8))
             .unwrap_or_default();
-        eprintln!("sabine: {}{}", progress.message, percent);
+        let line = format!("{}{}", progress.message, percent);
+        if line == last_message {
+            return;
+        }
+        last_message = line.clone();
+        eprintln!("sabine: {line}");
     })
     .map_err(|error| format!("failed to install runtime: {error}"))
 }
@@ -171,7 +177,7 @@ fn install_runtime(package: &str) -> ExitCode {
             .fraction
             .map(|fraction| format!(" {:>3}%", (fraction * 100.0).round() as u8))
             .unwrap_or_default();
-        eprintln!("{}{}", progress.message, percent);
+        eprintln!("sabine: {}{}", progress.message, percent);
     }) {
         Ok(runtime) => {
             println!(
