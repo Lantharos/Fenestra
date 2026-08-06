@@ -490,6 +490,8 @@ OsrCommandTask::OsrCommandTask(CefRefPtr<SabineOsrHandler> handler,
                                std::string line)
     : handler_(handler), line_(std::move(line)) {}
 
+OsrCommandTask::~OsrCommandTask() = default;
+
 void OsrCommandTask::Execute() {
   handler_->HandleControlLine(line_);
 }
@@ -497,6 +499,8 @@ void OsrCommandTask::Execute() {
 CloseOnDisconnectTask::CloseOnDisconnectTask(
     CefRefPtr<SabineOsrHandler> handler)
     : handler_(std::move(handler)) {}
+
+CloseOnDisconnectTask::~CloseOnDisconnectTask() = default;
 
 void CloseOnDisconnectTask::Execute() {
   handler_->CloseFromNativeDisconnect();

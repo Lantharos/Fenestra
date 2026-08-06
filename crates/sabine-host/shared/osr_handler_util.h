@@ -98,6 +98,7 @@ std::string CursorName(cef_cursor_type_t type);
 class OsrCommandTask : public CefTask {
  public:
   OsrCommandTask(CefRefPtr<SabineOsrHandler> handler, std::string line);
+  ~OsrCommandTask() override;
   void Execute() override;
 
  private:
@@ -109,6 +110,7 @@ class OsrCommandTask : public CefTask {
 class CloseOnDisconnectTask : public CefTask {
  public:
   explicit CloseOnDisconnectTask(CefRefPtr<SabineOsrHandler> handler);
+  ~CloseOnDisconnectTask() override;
   void Execute() override;
 
  private:
