@@ -63,6 +63,9 @@ target_link_libraries(sabine-host libcef_lib libcef_dll_wrapper ${CEF_STANDARD_L
 if(OS_WINDOWS)
   target_link_libraries(sabine-host ws2_32)
 endif()
+if(OS_MAC)
+  target_link_libraries(sabine-host "-framework IOSurface" "-framework CoreFoundation")
+endif()
 
 if(OS_LINUX)
   set_target_properties(sabine-host PROPERTIES INSTALL_RPATH "$ORIGIN")

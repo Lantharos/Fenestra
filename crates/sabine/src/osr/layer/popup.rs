@@ -1,6 +1,7 @@
 use std::fs::File;
 
-use layershellev::{NewPopUpSettings, ReturnData, WindowState, id};
+use layershellev::reexport::xdg_positioner::{Anchor, ConstraintAdjustment, Gravity};
+use layershellev::{NewPopUpSettings, PopupPlacement, ReturnData, WindowState, id};
 use sabine_platform::{WindowBackgroundEffect, WindowOptions, WindowRegion, WindowRegions};
 use wayland_client::{QueueHandle, protocol::wl_buffer::WlBuffer};
 
@@ -153,8 +154,15 @@ impl OsrLayerHost {
         ReturnData::NewPopUp((
             NewPopUpSettings {
                 size,
-                position,
                 id: parent_id,
+                placement: PopupPlacement::Position(position),
+                anchor: Anchor::TopLeft,
+                gravity: Gravity::BottomRight,
+                constraint_adjustment: ConstraintAdjustment::SlideX
+                    | ConstraintAdjustment::SlideY
+                    | ConstraintAdjustment::FlipX
+                    | ConstraintAdjustment::FlipY,
+                grab_serial: None,
             },
             popup_id,
             None,

@@ -18,6 +18,9 @@ struct AccelPaintMeta {
   uint32_t stride = 0;
   uint64_t offset = 0;
   uint64_t size = 0;
+  /// Windows: duplicated HANDLE value in the compositor process.
+  /// macOS: IOSurfaceID. Linux: unused (0); plane travels via SCM_RIGHTS.
+  uint64_t native_handle = 0;
 };
 
 std::string BuildAccelPayload(const std::string& guest_id,

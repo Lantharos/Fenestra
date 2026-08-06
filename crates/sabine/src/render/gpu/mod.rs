@@ -71,22 +71,72 @@ pub(super) struct TextBufferEntry {
     pub(super) command: TextCommand,
 }
 
+fn preferred_backends() -> wgpu::Backends {
+    #[cfg(target_os = "windows")]
+    {
+        // D3D11 shared-handle import needs the Vulkan HAL path.
+        wgpu::Backends::VULKAN | wgpu::Backends::DX12
+    }
+    #[cfg(target_os = "linux")]
+    {
+        wgpu::Backends::VULKAN | wgpu::Backends::GL
+    }
+    #[cfg(target_os = "macos")]
+    {
+        wgpu::Backends::METAL
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        wgpu::Backends::all()
+    }
+}
+
+fn external_memory_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    let supported = adapter.features();
+    let mut features = wgpu::Features::empty();
+    #[cfg(target_os = "linux")]
+    {
+        let dma = wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF;
+        if supported.contains(dma) {
+            features |= dma;
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let win32 = wgpu::Features::VULKAN_EXTERNAL_MEMORY_WIN32;
+        if supported.contains(win32) {
+            features |= win32;
+        }
+    }
+    let _ = supported;
+    features
+}
+
 impl GpuRenderer {
     pub async fn new(window: Arc<dyn Window>) -> Result<Self, RendererError> {
         let size = window.surface_size();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: preferred_backends(),
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
         let surface = instance
             .create_surface(window.clone())
             .map_err(|error| RendererError::Surface(error.to_string()))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 compatible_surface: Some(&surface),
+                power_preference: wgpu::PowerPreference::HighPerformance,
                 ..Default::default()
             })
             .await
             .map_err(|error| RendererError::Adapter(error.to_string()))?;
+        let required_features = external_memory_features(&adapter);
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("sabine-gpu"),
+                required_features,
+                ..Default::default()
+            })
             .await
             .map_err(|error| RendererError::Device(error.to_string()))?;
 
@@ -123,6 +173,7 @@ impl GpuRenderer {
             height: size.height.max(1),
             present_mode,
             alpha_mode,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 1,
         };
@@ -351,7 +402,7 @@ impl GpuRenderer {
         }
 
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        self.queue.present(frame);
         self.atlas.trim();
         Ok(())
     }

@@ -6,8 +6,13 @@
 
 #include "osr_handler.h"
 #include "osr_handler_accel_ipc.h"
+#include "osr_handler_util.h"
 
-#ifndef _WIN32
+#if defined(OS_WIN)
+#include <windows.h>
+#elif defined(OS_MAC)
+#include <IOSurface/IOSurface.h>
+#elif defined(OS_LINUX)
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -18,13 +23,7 @@ bool PreferSharedTexture(CefRefPtr<CefCommandLine> command_line) {
   if (!command_line || command_line->HasSwitch("sabine-software-osr")) {
     return false;
   }
-#if defined(__linux__)
   return true;
-#else
-  // Windows/macOS D3D11/IOSurface → compositor import lands later.
-  (void)command_line;
-  return false;
-#endif
 }
 
 void ApplySharedTexture(CefWindowInfo* window_info, bool enabled) {
@@ -75,6 +74,33 @@ bool UnpackAcceleratedPlaneToBgra(const void* src,
   return true;
 }
 
+#if defined(OS_WIN)
+uint64_t DuplicateHandleToParent(HANDLE shared) {
+  if (!shared) {
+    return 0;
+  }
+  CefRefPtr<CefCommandLine> command_line = CefCommandLine::GetGlobalCommandLine();
+  const int parent_pid = SwitchInt(command_line, "sabine-parent-pid", 0);
+  if (parent_pid <= 0) {
+    return 0;
+  }
+  HANDLE parent =
+      OpenProcess(PROCESS_DUP_HANDLE, FALSE, static_cast<DWORD>(parent_pid));
+  if (!parent) {
+    return 0;
+  }
+  HANDLE remote = nullptr;
+  const BOOL ok =
+      DuplicateHandle(GetCurrentProcess(), shared, parent, &remote, 0, FALSE,
+                      DUPLICATE_SAME_ACCESS);
+  CloseHandle(parent);
+  if (!ok || !remote) {
+    return 0;
+  }
+  return reinterpret_cast<uint64_t>(remote);
+}
+#endif
+
 }  // namespace sabine_osr
 
 using namespace sabine_osr;
@@ -84,18 +110,7 @@ void SabineOsrHandler::OnAcceleratedPaint(
     PaintElementType type,
     const RectList& dirtyRects,
     const CefAcceleratedPaintInfo& info) {
-#if !defined(__linux__)
-  (void)browser;
-  (void)type;
-  (void)dirtyRects;
-  (void)info;
-  return;
-#else
-  if (!browser || info.plane_count <= 0) {
-    return;
-  }
-  const auto& plane = info.planes[0];
-  if (plane.fd < 0 || plane.size == 0 || plane.stride == 0) {
+  if (!browser) {
     return;
   }
 
@@ -116,6 +131,15 @@ void SabineOsrHandler::OnAcceleratedPaint(
     return;
   }
 
+#if defined(OS_LINUX)
+  if (info.plane_count <= 0) {
+    return;
+  }
+  const auto& plane = info.planes[0];
+  if (plane.fd < 0 || plane.size == 0 || plane.stride == 0) {
+    return;
+  }
+
   AccelPaintMeta meta;
   meta.format = static_cast<uint32_t>(info.format);
   meta.modifier = info.modifier;
@@ -123,33 +147,37 @@ void SabineOsrHandler::OnAcceleratedPaint(
   meta.offset = plane.offset;
   meta.size = plane.size;
 
+  auto send_fd = [&](uint32_t kind, const std::string& guest_id, int32_t x,
+                     int32_t y) -> bool {
+    const std::string payload = BuildAccelPayload(
+        guest_id, meta, dirtyRects, static_cast<uint32_t>(frame_w),
+        static_cast<uint32_t>(frame_h));
+    return !payload.empty() &&
+           SendMessageWithFd(kind, static_cast<uint32_t>(frame_w),
+                             static_cast<uint32_t>(frame_h), x, y, payload.data(),
+                             static_cast<uint32_t>(payload.size()), plane.fd);
+  };
+
+  auto mmap_bgra = [&](std::vector<uint8_t>* out) -> bool {
+    void* mapped = mmap(nullptr, plane.size, PROT_READ, MAP_SHARED, plane.fd, 0);
+    if (mapped == MAP_FAILED) {
+      return false;
+    }
+    const bool ok = UnpackAcceleratedPlaneToBgra(
+        mapped, plane.size, plane.stride, frame_w, frame_h, src_is_rgba, out);
+    munmap(mapped, plane.size);
+    return ok;
+  };
+
   if (GuestView* guest = GuestForBrowser(browser)) {
     if (type == PET_POPUP) {
       const std::string popup_id = guest->id + "/popup";
-      const std::string payload = BuildAccelPayload(
-          popup_id, meta, dirtyRects, static_cast<uint32_t>(frame_w),
-          static_cast<uint32_t>(frame_h));
-      if (!payload.empty() &&
-          SendMessageWithFd(
-              kGuestAccel, static_cast<uint32_t>(frame_w),
-              static_cast<uint32_t>(frame_h),
-              guest->bounds.x + guest_popup_rect_.x,
-              guest->bounds.y + guest_popup_rect_.y, payload.data(),
-              static_cast<uint32_t>(payload.size()), plane.fd)) {
-        return;
-      }
-      // Host-side mmap bridge if FD IPC fails.
-      void* mapped =
-          mmap(nullptr, plane.size, PROT_READ, MAP_SHARED, plane.fd, 0);
-      if (mapped == MAP_FAILED) {
+      if (send_fd(kGuestAccel, popup_id, guest->bounds.x + guest_popup_rect_.x,
+                  guest->bounds.y + guest_popup_rect_.y)) {
         return;
       }
       std::vector<uint8_t> bgra;
-      const bool ok = UnpackAcceleratedPlaneToBgra(
-          mapped, plane.size, plane.stride, frame_w, frame_h, src_is_rgba,
-          &bgra);
-      munmap(mapped, plane.size);
-      if (ok) {
+      if (mmap_bgra(&bgra)) {
         SendPaintBatch(kGuestFrame, popup_id,
                        guest->bounds.x + guest_popup_rect_.x,
                        guest->bounds.y + guest_popup_rect_.y, bgra.data(),
@@ -157,14 +185,7 @@ void SabineOsrHandler::OnAcceleratedPaint(
       }
       return;
     }
-    const std::string payload = BuildAccelPayload(
-        guest->id, meta, dirtyRects, static_cast<uint32_t>(frame_w),
-        static_cast<uint32_t>(frame_h));
-    if (!payload.empty() &&
-        SendMessageWithFd(kGuestAccel, static_cast<uint32_t>(frame_w),
-                          static_cast<uint32_t>(frame_h), guest->bounds.x,
-                          guest->bounds.y, payload.data(),
-                          static_cast<uint32_t>(payload.size()), plane.fd)) {
+    if (send_fd(kGuestAccel, guest->id, guest->bounds.x, guest->bounds.y)) {
       if (!guest->painted) {
         guest->painted = true;
         if (guest->id == kSabinePopupGuestId) {
@@ -177,27 +198,158 @@ void SabineOsrHandler::OnAcceleratedPaint(
     const uint32_t kind = type == PET_POPUP ? kPopupAccel : kMainAccel;
     const int32_t x = type == PET_POPUP ? popup_rect_.x : 0;
     const int32_t y = type == PET_POPUP ? popup_rect_.y : 0;
-    const std::string payload = BuildAccelPayload(
-        std::string(), meta, dirtyRects, static_cast<uint32_t>(frame_w),
-        static_cast<uint32_t>(frame_h));
-    if (!payload.empty() &&
-        SendMessageWithFd(kind, static_cast<uint32_t>(frame_w),
-                          static_cast<uint32_t>(frame_h), x, y, payload.data(),
-                          static_cast<uint32_t>(payload.size()), plane.fd)) {
+    if (send_fd(kind, std::string(), x, y)) {
       return;
     }
   }
 
-  // mmap → existing dirty-rect paint path when FD IPC fails.
-  void* mapped = mmap(nullptr, plane.size, PROT_READ, MAP_SHARED, plane.fd, 0);
-  if (mapped == MAP_FAILED) {
+  std::vector<uint8_t> bgra;
+  if (!mmap_bgra(&bgra)) {
     EmitBridgeEvent("\"osr.accel_map_failed\"", "{}");
     return;
   }
+  if (GuestView* guest = GuestForBrowser(browser)) {
+    if (type == PET_POPUP) {
+      SendPaintBatch(kGuestFrame, guest->id + "/popup",
+                     guest->bounds.x + guest_popup_rect_.x,
+                     guest->bounds.y + guest_popup_rect_.y, bgra.data(), frame_w,
+                     frame_h, dirtyRects);
+      return;
+    }
+    if (!guest->painted) {
+      guest->painted = true;
+      if (guest->id == kSabinePopupGuestId) {
+        EmitBridgeEvent("\"popup.open\"", "{}");
+      }
+    }
+    if (guest->visible) {
+      SendGuestPaint(*guest, bgra.data(), frame_w, frame_h, dirtyRects);
+    }
+    return;
+  }
+  if (view_hidden_ || !browser_ || !browser_->IsSame(browser)) {
+    return;
+  }
+  const uint32_t kind = type == PET_POPUP ? kPopupFrame : kMainFrame;
+  const int32_t x = type == PET_POPUP ? popup_rect_.x : 0;
+  const int32_t y = type == PET_POPUP ? popup_rect_.y : 0;
+  SendPaintBatch(kind, std::string(), x, y, bgra.data(), frame_w, frame_h,
+                 dirtyRects);
+
+#elif defined(OS_WIN)
+  const uint64_t remote_handle =
+      DuplicateHandleToParent(info.shared_texture_handle);
+  if (remote_handle == 0) {
+    EmitBridgeEvent("\"osr.accel_handle_failed\"", "{}");
+    return;
+  }
+
+  AccelPaintMeta meta;
+  meta.format = static_cast<uint32_t>(info.format);
+  meta.native_handle = remote_handle;
+  meta.stride = static_cast<uint32_t>(frame_w) * 4;
+  meta.size = static_cast<uint64_t>(meta.stride) * static_cast<uint64_t>(frame_h);
+
+  auto send_handle = [&](uint32_t kind, const std::string& guest_id, int32_t x,
+                         int32_t y) -> bool {
+    const std::string payload = BuildAccelPayload(
+        guest_id, meta, dirtyRects, static_cast<uint32_t>(frame_w),
+        static_cast<uint32_t>(frame_h));
+    return !payload.empty() &&
+           SendMessage(kind, static_cast<uint32_t>(frame_w),
+                       static_cast<uint32_t>(frame_h), x, y, payload.data(),
+                       static_cast<uint32_t>(payload.size()));
+  };
+
+  if (GuestView* guest = GuestForBrowser(browser)) {
+    if (type == PET_POPUP) {
+      send_handle(kGuestAccel, guest->id + "/popup",
+                  guest->bounds.x + guest_popup_rect_.x,
+                  guest->bounds.y + guest_popup_rect_.y);
+      return;
+    }
+    if (send_handle(kGuestAccel, guest->id, guest->bounds.x, guest->bounds.y) &&
+        !guest->painted) {
+      guest->painted = true;
+      if (guest->id == kSabinePopupGuestId) {
+        EmitBridgeEvent("\"popup.open\"", "{}");
+      }
+    }
+    return;
+  }
+  if (view_hidden_ || !browser_ || !browser_->IsSame(browser)) {
+    return;
+  }
+  const uint32_t kind = type == PET_POPUP ? kPopupAccel : kMainAccel;
+  const int32_t x = type == PET_POPUP ? popup_rect_.x : 0;
+  const int32_t y = type == PET_POPUP ? popup_rect_.y : 0;
+  send_handle(kind, std::string(), x, y);
+
+#elif defined(OS_MAC)
+  auto* surface =
+      static_cast<IOSurfaceRef>(info.shared_texture_io_surface);
+  if (!surface) {
+    return;
+  }
+
+  AccelPaintMeta meta;
+  meta.format = static_cast<uint32_t>(info.format);
+  meta.native_handle = static_cast<uint64_t>(IOSurfaceGetID(surface));
+  meta.stride = static_cast<uint32_t>(IOSurfaceGetBytesPerRow(surface));
+  meta.size =
+      static_cast<uint64_t>(meta.stride) * static_cast<uint64_t>(frame_h);
+
+  auto send_surface = [&](uint32_t kind, const std::string& guest_id, int32_t x,
+                          int32_t y) -> bool {
+    const std::string payload = BuildAccelPayload(
+        guest_id, meta, dirtyRects, static_cast<uint32_t>(frame_w),
+        static_cast<uint32_t>(frame_h));
+    return !payload.empty() &&
+           SendMessage(kind, static_cast<uint32_t>(frame_w),
+                       static_cast<uint32_t>(frame_h), x, y, payload.data(),
+                       static_cast<uint32_t>(payload.size()));
+  };
+
+  if (GuestView* guest = GuestForBrowser(browser)) {
+    if (type == PET_POPUP) {
+      if (send_surface(kGuestAccel, guest->id + "/popup",
+                       guest->bounds.x + guest_popup_rect_.x,
+                       guest->bounds.y + guest_popup_rect_.y)) {
+        return;
+      }
+    } else if (send_surface(kGuestAccel, guest->id, guest->bounds.x,
+                            guest->bounds.y)) {
+      if (!guest->painted) {
+        guest->painted = true;
+        if (guest->id == kSabinePopupGuestId) {
+          EmitBridgeEvent("\"popup.open\"", "{}");
+        }
+      }
+      return;
+    }
+  } else if (!view_hidden_ && browser_ && browser_->IsSame(browser)) {
+    const uint32_t kind = type == PET_POPUP ? kPopupAccel : kMainAccel;
+    const int32_t x = type == PET_POPUP ? popup_rect_.x : 0;
+    const int32_t y = type == PET_POPUP ? popup_rect_.y : 0;
+    if (send_surface(kind, std::string(), x, y)) {
+      return;
+    }
+  }
+
+  // IPC failed — bridge via locked BGRA into the existing paint path.
+  if (IOSurfaceLock(surface, kIOSurfaceLockReadOnly, nullptr) !=
+      kIOReturnSuccess) {
+    EmitBridgeEvent("\"osr.accel_map_failed\"", "{}");
+    return;
+  }
+  const void* base = IOSurfaceGetBaseAddress(surface);
+  const size_t stride = IOSurfaceGetBytesPerRow(surface);
+  const size_t plane_size = stride * static_cast<size_t>(frame_h);
   std::vector<uint8_t> bgra;
   const bool ok = UnpackAcceleratedPlaneToBgra(
-      mapped, plane.size, plane.stride, frame_w, frame_h, src_is_rgba, &bgra);
-  munmap(mapped, plane.size);
+      base, plane_size, static_cast<uint32_t>(stride), frame_w, frame_h,
+      src_is_rgba, &bgra);
+  IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, nullptr);
   if (!ok) {
     EmitBridgeEvent("\"osr.accel_unpack_failed\"", "{}");
     return;
@@ -229,6 +381,15 @@ void SabineOsrHandler::OnAcceleratedPaint(
   const int32_t x = type == PET_POPUP ? popup_rect_.x : 0;
   const int32_t y = type == PET_POPUP ? popup_rect_.y : 0;
   SendPaintBatch(kind, std::string(), x, y, bgra.data(), frame_w, frame_h,
-                  dirtyRects);
+                 dirtyRects);
+#else
+  (void)type;
+  (void)dirtyRects;
+  (void)info;
+  (void)src_is_rgba;
+  (void)width;
+  (void)height;
+  (void)frame_w;
+  (void)frame_h;
 #endif
 }

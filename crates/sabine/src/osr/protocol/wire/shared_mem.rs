@@ -1,11 +1,10 @@
-use std::io;
 #[cfg(unix)]
 use std::{
     fs::File,
     os::fd::{FromRawFd, IntoRawFd, RawFd},
     ptr,
-    sync::Arc,
 };
+use std::{io, sync::Arc};
 
 /// Owns a mapped shared paint buffer for the lifetime of a batch decode.
 pub(super) struct SharedMapping {

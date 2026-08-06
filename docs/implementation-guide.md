@@ -48,11 +48,20 @@ not outlive a crashed parent.
 
 ## Paint and composition
 
-Accelerated OSR is the preferred path (CEF 151+). On Linux the host enables shared textures and
-sends DMA-BUF file descriptors for `OnAcceleratedPaint`; the compositor imports when possible and
-otherwise maps the plane into the existing dirty-rect framebuffer path. If accelerated paint cannot
-run, Sabine silently relaunches the CEF helper with software `OnPaint` — there is no public
-paint-mode switch or CEF handle exposure.
+Accelerated OSR is the preferred path (CEF 151+). Shared textures are enabled on every desktop
+unless `--sabine-software-osr` is set:
+
+- **Linux** — the host sends DMA-BUF file descriptors for `OnAcceleratedPaint`; the compositor
+  imports them zero-copy into wgpu (Vulkan external memory) when the adapter supports it, otherwise
+  maps the plane into the existing dirty-rect framebuffer path.
+- **Windows** — the host duplicates the D3D11 shared `HANDLE` into the compositor process; wgpu
+  imports it on a Vulkan device when `VULKAN_EXTERNAL_MEMORY_WIN32` is available.
+- **macOS** — the host sends the `IOSurfaceID` for `OnAcceleratedPaint`; the compositor looks
+  it up and wraps a Metal texture into wgpu. If IPC fails, the host locks the surface and bridges
+  BGRA into the paint path.
+
+If accelerated paint cannot run, Sabine silently relaunches the CEF helper with software `OnPaint`
+— there is no public paint-mode switch or CEF handle exposure.
 
 CEF still delivers BGRA dirty rectangles on the software path (and as a CPU bridge after GPU
 raster). The native host retains a backing store per surface and patches only the changed ranges.
@@ -70,14 +79,13 @@ Transport is platform-specific without changing the protocol. On Unix, sockets l
 `$XDG_RUNTIME_DIR/sabine/<app_id>/` (mode `0700`) with socket mode `0600`, and each window
 authenticates with a first-line token delivered via `SABINE_OSR_TOKEN` (not argv).
 
-| Platform | Transport | Large paint path |
+| Platform | Transport | Accelerated paint path |
 | --- | --- | --- |
-| Linux | Unix domain socket | DMA-BUF / memfd plus descriptor passing |
-| macOS | Unix domain socket | inline dirty-rect batch |
-| Windows | localhost TCP | inline dirty-rect batch |
+| Linux | Unix domain socket | DMA-BUF FD + Vulkan → wgpu (mmap fallback) |
+| macOS | Unix domain socket | IOSurfaceID → Metal → wgpu (BGRA bridge if IPC fails) |
+| Windows | localhost TCP | duplicated D3D11 HANDLE → Vulkan → wgpu |
 
-The portable paths still send only dirty rectangles. Native D3D11 / IOSurface → wgpu import can be
-added later behind the same message kinds without changing app code.
+Software `OnPaint` dirty-rect batches remain the silent fallback when accelerated paint cannot run.
 
 Linux layer-shell surfaces use their dedicated host because layer-shell configuration must happen
 before a regular winit surface is created. Other platforms express palette behavior with a normal

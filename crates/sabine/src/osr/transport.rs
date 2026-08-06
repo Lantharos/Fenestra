@@ -29,14 +29,28 @@ pub(crate) fn authentication_token() -> io::Result<String> {
 /// Reject peers that are not the same OS user as this process.
 #[cfg(unix)]
 pub(crate) fn authenticate_peer(stream: &IpcStream) -> io::Result<()> {
-    use std::mem::MaybeUninit;
     use std::os::fd::AsRawFd;
+
+    let peer_uid = peer_uid(stream.as_raw_fd())?;
+    let our_uid = unsafe { libc::getuid() };
+    if peer_uid != our_uid {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "OSR peer uid mismatch",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn peer_uid(fd: std::os::fd::RawFd) -> io::Result<u32> {
+    use std::mem::MaybeUninit;
 
     let mut cred = MaybeUninit::<libc::ucred>::uninit();
     let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
     let result = unsafe {
         libc::getsockopt(
-            stream.as_raw_fd(),
+            fd,
             libc::SOL_SOCKET,
             libc::SO_PEERCRED,
             cred.as_mut_ptr().cast(),
@@ -46,15 +60,26 @@ pub(crate) fn authenticate_peer(stream: &IpcStream) -> io::Result<()> {
     if result != 0 {
         return Err(io::Error::last_os_error());
     }
-    let cred = unsafe { cred.assume_init() };
-    let our_uid = unsafe { libc::getuid() };
-    if cred.uid != our_uid {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "OSR peer UID mismatch",
-        ));
+    Ok(unsafe { cred.assume_init() }.uid)
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn peer_uid(fd: std::os::fd::RawFd) -> io::Result<u32> {
+    let mut uid = 0_u32;
+    let mut gid = 0_u32;
+    let result = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
     }
-    Ok(())
+    Ok(uid)
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "linux", target_os = "macos", target_os = "ios"))
+))]
+fn peer_uid(_fd: std::os::fd::RawFd) -> io::Result<u32> {
+    Ok(unsafe { libc::getuid() })
 }
 
 #[cfg(not(unix))]

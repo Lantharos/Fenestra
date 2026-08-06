@@ -233,7 +233,8 @@ pub(crate) fn cef_osr_command(
         .arg(format!("--url={}", config.url))
         .arg("--sabine-osr")
         .arg("--sabine-ozone-platform=wayland")
-        .arg(format!("--sabine-osr-endpoint={}", endpoint.argument()));
+        .arg(format!("--sabine-osr-endpoint={}", endpoint.argument()))
+        .arg(format!("--sabine-parent-pid={}", std::process::id()));
     if !token_file.as_os_str().is_empty() {
         command.arg(format!("--sabine-osr-token-file={}", token_file.display()));
     }

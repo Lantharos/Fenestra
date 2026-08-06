@@ -82,11 +82,14 @@ pub(crate) struct OsrAccelFrame {
     pub x: i32,
     pub y: i32,
     pub format: u32,
-    #[allow(dead_code)]
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub modifier: u64,
     pub stride: u32,
     pub offset: u64,
     pub size: u64,
+    /// Platform native share handle: Linux unused (0), Windows `HANDLE`, macOS `IOSurfaceID`.
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    pub native_handle: u64,
     pub dirty: Vec<OsrAccelRect>,
     pub fd: i32,
 }

@@ -17,14 +17,9 @@ impl GpuRenderer {
                 &mut self.font_system,
                 Metrics::new(command.size * scale, command.line_height * scale),
             );
-            buffer.set_size(
-                &mut self.font_system,
-                Some(command.width * scale),
-                Some(command.height * scale),
-            );
-            buffer.set_wrap(&mut self.font_system, Wrap::WordOrGlyph);
+            buffer.set_size(Some(command.width * scale), Some(command.height * scale));
+            buffer.set_wrap(Wrap::WordOrGlyph);
             buffer.set_text(
-                &mut self.font_system,
                 &command.text,
                 &Attrs::new().family(Family::SansSerif),
                 Shaping::Advanced,

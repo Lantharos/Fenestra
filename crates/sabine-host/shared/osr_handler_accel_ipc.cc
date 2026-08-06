@@ -40,7 +40,7 @@ std::string BuildAccelPayload(const std::string& guest_id,
 
   const std::string prefix = GuestPrefix(guest_id);
   const size_t meta_len =
-      prefix.size() + 4 + 8 + 4 + 8 + 8 + 4 + rects.size() * 16;
+      prefix.size() + 4 + 8 + 4 + 8 + 8 + 8 + 4 + rects.size() * 16;
   if (meta_len > std::numeric_limits<uint32_t>::max()) {
     return {};
   }
@@ -57,6 +57,8 @@ std::string BuildAccelPayload(const std::string& guest_id,
   PutU64(&payload, at, meta.offset);
   at += 8;
   PutU64(&payload, at, meta.size);
+  at += 8;
+  PutU64(&payload, at, meta.native_handle);
   at += 8;
   PutU32(&payload, at, static_cast<uint32_t>(rects.size()));
   at += 4;

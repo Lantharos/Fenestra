@@ -40,27 +40,27 @@ sabine-host = { path = "crates/sabine-host", version = "0.1.0" }
 sabine = { path = "crates/sabine", version = "0.1.0" }
 sabine-service = { path = "crates/sabine-service", version = "0.1.0" }
 
-ashpd = { version = "0.13.11", features = ["global_shortcuts"] }
-bytemuck = { version = "1.25.0", features = ["derive"] }
-futures-util = "0.3.31"
-getrandom = "0.4.2"
-glyphon = "0.11.0"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
-layershellev = "0.18.1"
-ksni = { version = "0.3.4", features = ["blocking"] }
-libc = "0.2.186"
-pollster = "0.4.0"
-clap = { version = "4.6.1", features = ["derive"] }
+ashpd = { version = "0.13.13", features = ["global_shortcuts"] }
+bytemuck = { version = "1.25.2", features = ["derive"] }
+futures-util = "0.3.33"
+getrandom = "0.4.3"
+glyphon = "0.12.0"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
+layershellev = "0.19.1"
+ksni = { version = "0.3.6", features = ["blocking"] }
+libc = "0.2.189"
+pollster = "1.0.1"
+clap = { version = "4.6.5", features = ["derive"] }
 raw-window-handle = "0.6.2"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 sha1 = "0.11.0"
 sha2 = "0.11.0"
-thiserror = "2.0.18"
-tokio = { version = "1.48.0", features = ["rt", "sync", "time", "macros"] }
-toml = "1.1.2"
-wayland-client = "0.31.14"
-wgpu = "29.0.3"
+thiserror = "2.0.19"
+tokio = { version = "1.53.1", features = ["rt", "sync", "time", "macros"] }
+toml = "1.1.4"
+wayland-client = "0.31.15"
+wgpu = "30.0.0"
 winit = { git = "https://github.com/rust-windowing/winit", rev = "42366231b0d92480a933339bd5eaa7fba8106f42" }
 window-vibrancy = "0.8.0"
-x11rb = "0.13.2"
+x11rb = "0.14.0"

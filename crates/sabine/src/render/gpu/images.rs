@@ -233,6 +233,54 @@ impl GpuRenderer {
         Ok(bind_group)
     }
 
+    pub fn install_external_bgra_texture(
+        &mut self,
+        id: impl Into<String>,
+        texture: wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Result<(), RendererError> {
+        let id = id.into();
+        if width == 0 || height == 0 {
+            return Err(RendererError::Texture(
+                "external image has empty size".to_string(),
+            ));
+        }
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&id),
+            layout: &self.image_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&self.image_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+            ],
+        });
+        self.texture_cache.insert(
+            id,
+            CachedTexture {
+                texture,
+                bind_group,
+                width,
+                height,
+            },
+        );
+        Ok(())
+    }
+
+    pub(crate) fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub(crate) fn supports_feature(&self, feature: wgpu::Features) -> bool {
+        self.device.features().contains(feature)
+    }
+
     pub(super) fn create_dynamic_bgra_image(&mut self, id: String, width: u32, height: u32) {
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(&id),
