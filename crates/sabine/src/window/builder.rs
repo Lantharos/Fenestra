@@ -72,10 +72,19 @@ impl SabineWindow {
 
     /// Linux only: enable VA-API hardware video decode for WebCodecs/MSE.
     ///
-    /// Enabled by default on Linux.
+    /// Disabled by default (driver paths are crash-prone on many GPUs).
     #[cfg(target_os = "linux")]
     pub fn vaapi_hardware_decode(mut self, enabled: bool) -> Self {
         self.config.browser.vaapi_hardware_decode = enabled;
+        self
+    }
+
+    /// Linux only: opt into CEF shared-texture (DMA-BUF) OSR.
+    ///
+    /// Disabled by default — Chromium still fails SkSurface init on NVIDIA.
+    #[cfg(target_os = "linux")]
+    pub fn shared_texture_osr(mut self, enabled: bool) -> Self {
+        self.config.browser.shared_texture_osr = enabled;
         self
     }
 

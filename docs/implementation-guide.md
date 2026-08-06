@@ -48,12 +48,15 @@ not outlive a crashed parent.
 
 ## Paint and composition
 
-Accelerated OSR is the preferred path (CEF 151+). Shared textures are enabled on every desktop
-unless `--sabine-software-osr` is set:
+Accelerated OSR is preferred on Windows and macOS. On Linux, software `OnPaint` is the default
+because Chromium's shared-texture (DMA-BUF) path still fails SkSurface initialization on many
+drivers — especially NVIDIA. Opt in with `WindowBuilder::shared_texture_osr(true)` / 
+`--sabine-shared-texture`. Software is also forced with `--sabine-software-osr`.
 
-- **Linux** — the host sends DMA-BUF file descriptors for `OnAcceleratedPaint`; the compositor
-  imports them zero-copy into wgpu (Vulkan external memory) when the adapter supports it, otherwise
-  maps the plane into the existing dirty-rect framebuffer path.
+- **Linux** — when shared textures are enabled, the host sends DMA-BUF file descriptors for
+  `OnAcceleratedPaint`; the compositor imports them zero-copy into wgpu (Vulkan external memory)
+  when the adapter supports it, otherwise maps the plane into the existing dirty-rect framebuffer
+  path.
 - **Windows** — the host duplicates the D3D11 shared `HANDLE` into the compositor process; wgpu
   imports it on a Vulkan device when `VULKAN_EXTERNAL_MEMORY_WIN32` is available.
 - **macOS** — the host sends the `IOSurfaceID` for `OnAcceleratedPaint`; the compositor looks

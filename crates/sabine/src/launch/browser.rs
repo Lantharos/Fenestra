@@ -27,6 +27,10 @@ pub struct BrowserOptions {
     pub remote_devtools_disabled: bool,
     /// Internal: force software OSR (no shared textures). Not a public API.
     pub software_osr_fallback: bool,
+    /// Linux only: opt into CEF shared-texture (DMA-BUF) OSR. Off by default —
+    /// Chromium's path still fails SkSurface init on NVIDIA and some Mesa builds.
+    #[cfg(target_os = "linux")]
+    pub shared_texture_osr: bool,
     #[cfg(target_os = "linux")]
     pub vaapi_hardware_decode: bool,
 }
@@ -37,6 +41,8 @@ impl Default for BrowserOptions {
             remote_devtools_port: None,
             remote_devtools_disabled: false,
             software_osr_fallback: false,
+            #[cfg(target_os = "linux")]
+            shared_texture_osr: false,
             // Off by default: VaapiIgnoreDriverChecks / Nvidia paths crash many GPU processes.
             #[cfg(target_os = "linux")]
             vaapi_hardware_decode: false,
@@ -122,6 +128,10 @@ pub(crate) fn apply_browser_launch_args(
     if options.software_osr_fallback {
         command.arg("--disable-vulkan");
         command.arg("--sabine-software-osr");
+    }
+    #[cfg(target_os = "linux")]
+    if options.shared_texture_osr && !options.software_osr_fallback {
+        command.arg("--sabine-shared-texture");
     }
     if let Some(port) = options.effective_remote_devtools_port(dev_mode) {
         command.arg(format!("--remote-debugging-port={port}"));

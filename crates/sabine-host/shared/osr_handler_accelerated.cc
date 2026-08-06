@@ -23,7 +23,13 @@ bool PreferSharedTexture(CefRefPtr<CefCommandLine> command_line) {
   if (!command_line || command_line->HasSwitch("sabine-software-osr")) {
     return false;
   }
+#if defined(OS_LINUX)
+  // Linux shared-texture OSR (DMA-BUF) still fails SkSurface init on many
+  // drivers — especially NVIDIA. Opt in with --sabine-shared-texture.
+  return command_line->HasSwitch("sabine-shared-texture");
+#else
   return true;
+#endif
 }
 
 void ApplySharedTexture(CefWindowInfo* window_info, bool enabled) {

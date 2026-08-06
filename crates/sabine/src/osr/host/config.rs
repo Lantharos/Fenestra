@@ -43,6 +43,8 @@ pub(crate) struct OsrHostConfig {
     /// Internal silent fallback — not a public paint-mode API.
     pub software_osr_fallback: bool,
     #[cfg(target_os = "linux")]
+    pub shared_texture_osr: bool,
+    #[cfg(target_os = "linux")]
     pub vaapi_hardware_decode: bool,
 }
 
@@ -52,6 +54,8 @@ impl OsrHostConfig {
             remote_devtools_port: self.remote_devtools_port,
             remote_devtools_disabled: self.remote_devtools_disabled,
             software_osr_fallback: self.software_osr_fallback,
+            #[cfg(target_os = "linux")]
+            shared_texture_osr: self.shared_texture_osr,
             #[cfg(target_os = "linux")]
             vaapi_hardware_decode: self.vaapi_hardware_decode,
         }
@@ -167,8 +171,14 @@ impl OsrHostConfig {
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
             #[cfg(target_os = "linux")]
+            shared_texture_osr: value
+                .get("shared_texture_osr")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            #[cfg(target_os = "linux")]
             vaapi_hardware_decode: value
                 .get("vaapi_hardware_decode")
+                .or_else(|| value.get("hardware_decode"))
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
         })

@@ -108,6 +108,10 @@ pub(crate) fn spawn_osr_host_child(
     let _ = require_app_id(config)?;
     let host_config_path =
         std::env::temp_dir().join(format!("sabine-osr-{}.json", osr_instance_key()));
+    #[cfg(target_os = "linux")]
+    let shared_texture_osr = config.browser.shared_texture_osr;
+    #[cfg(not(target_os = "linux"))]
+    let shared_texture_osr = false;
     let body = serde_json::json!({
         "runtime_dir": runtime_dir,
         "host_binary": host_binary,
@@ -137,7 +141,8 @@ pub(crate) fn spawn_osr_host_child(
         "dev_mode": config.dev_mode(),
         "remote_devtools_port": config.effective_remote_devtools_port(),
         "remote_devtools_disabled": config.browser.remote_devtools_disabled,
-        "hardware_decode": config.browser.hardware_decode_enabled(),
+        "shared_texture_osr": shared_texture_osr,
+        "vaapi_hardware_decode": config.browser.hardware_decode_enabled(),
     });
     std::fs::write(&host_config_path, body.to_string()).map_err(|error| {
         SabineError::CreationFailed {
