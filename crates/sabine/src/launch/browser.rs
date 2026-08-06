@@ -4,15 +4,7 @@ pub(crate) const HOST_CONTROL_PREFIX: &str = "SABINE_HOST_CONTROL";
 
 /// Features disabled for the normal (accelerated) CEF host profile.
 pub(crate) const DISABLED_CEF_FEATURES: &str = concat!(
-    "OptimizationGuideOnDeviceModel,",
-    "AutofillServerCommunication,",
-    "MediaRouter,",
-    "Translate,",
-    "InterestFeedContentSuggestions"
-);
-
-/// Extra features disabled only when silently falling back to software OSR.
-pub(crate) const SOFTWARE_FALLBACK_CEF_FEATURES: &str = concat!(
+    // Linux shared-texture OSR uses ANGLE GL-EGL; keep Vulkan out of the GPU process.
     "Vulkan,",
     "DefaultANGLEVulkan,",
     "VulkanFromANGLE,",
@@ -22,6 +14,9 @@ pub(crate) const SOFTWARE_FALLBACK_CEF_FEATURES: &str = concat!(
     "Translate,",
     "InterestFeedContentSuggestions"
 );
+
+/// Extra features disabled only when silently falling back to software OSR.
+pub(crate) const SOFTWARE_FALLBACK_CEF_FEATURES: &str = DISABLED_CEF_FEATURES;
 
 const DEFAULT_REMOTE_DEVTOOLS_PORT: u16 = 9222;
 
@@ -42,8 +37,9 @@ impl Default for BrowserOptions {
             remote_devtools_port: None,
             remote_devtools_disabled: false,
             software_osr_fallback: false,
+            // Off by default: VaapiIgnoreDriverChecks / Nvidia paths crash many GPU processes.
             #[cfg(target_os = "linux")]
-            vaapi_hardware_decode: true,
+            vaapi_hardware_decode: false,
         }
     }
 }
@@ -82,21 +78,20 @@ pub(crate) fn apply_browser_launch_args(
     let enabled_features: Vec<&str> = {
         #[cfg(target_os = "linux")]
         {
-            // X11 ozone: works under Wayland via XWayland and allows Vulkan.
-            // (Wayland ozone + Vulkan is rejected by Chromium.)
+            // CEF #3953/#3954: Linux shared-texture OSR needs X11 ozone + ANGLE GL-EGL.
             let mut features = vec!["UseOzonePlatform"];
             command.arg("--ozone-platform=x11");
+            command.arg("--use-gl=angle");
+            command.arg("--use-angle=gl-egl");
+            command.arg("--disable-vulkan");
             if options.vaapi_hardware_decode {
-                features.extend([
-                    "VaapiVideoDecoder",
-                    "VaapiIgnoreDriverChecks",
-                    "VaapiOnNvidiaGPUs",
-                ]);
+                features.push("VaapiVideoDecoder");
             }
             features
         }
         #[cfg(not(target_os = "linux"))]
         {
+            let _ = options;
             Vec::new()
         }
     };

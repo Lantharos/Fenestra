@@ -267,6 +267,7 @@ pub(crate) fn cef_osr_command(
         .current_dir(&release_dir)
         .env("GDK_BACKEND", "x11")
         .env("XDG_SESSION_TYPE", "x11")
+        .env_remove("WAYLAND_DISPLAY")
         .env("LD_LIBRARY_PATH", ld_library_path(&release_dir));
     // Env remains a fallback for non-handoff launches; the token file is what
     // survives CEF process-singleton relaunch into the primary process.

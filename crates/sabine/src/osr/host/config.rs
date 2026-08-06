@@ -170,7 +170,7 @@ impl OsrHostConfig {
             vaapi_hardware_decode: value
                 .get("vaapi_hardware_decode")
                 .and_then(serde_json::Value::as_bool)
-                .unwrap_or(true),
+                .unwrap_or(false),
         })
     }
 }

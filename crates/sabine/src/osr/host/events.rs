@@ -21,6 +21,7 @@ impl OsrNativeHost {
                 }
                 super::types::OsrHostEvent::Message(OsrMessage::Frame(frame)) => {
                     if self.accepts_paint() {
+                        self.accel_fallback.note_frame();
                         let was_presented = self.presented;
                         let was_resize_pending = self.pending_resize_paint.is_some();
                         let updated = self.update_frame_texture(frame);
@@ -31,6 +32,7 @@ impl OsrNativeHost {
                 }
                 super::types::OsrHostEvent::Message(OsrMessage::PaintBatch(batch)) => {
                     if self.accepts_paint() {
+                        self.accel_fallback.note_frame();
                         let was_presented = self.presented;
                         let was_resize_pending = self.pending_resize_paint.is_some();
                         let updated = self.update_paint_batch(batch);
@@ -162,6 +164,12 @@ impl OsrNativeHost {
                     }
                 }
             }
+        }
+        if !self.config.software_osr_fallback
+            && crate::osr::accel::should_relaunch_software(&self.accel_fallback)
+        {
+            self.relaunch_software_osr();
+            return;
         }
         if needs_initial_present {
             self.render();
