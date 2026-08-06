@@ -1,8 +1,9 @@
 use std::process::ExitCode;
 
 use sabine_runtime::{
-    RuntimeConfig, RuntimePackage, detect_runtime, latest_install_plan, prune_user_runtimes,
-    remove_user_runtime_version, resolve_runtime, update_user_runtime_with_progress,
+    RuntimeConfig, RuntimeError, RuntimePackage, detect_runtime, latest_install_plan,
+    prune_user_runtimes, remove_user_runtime_version, resolve_runtime,
+    update_user_runtime_with_progress,
 };
 
 pub enum RuntimeCommand {
@@ -48,11 +49,38 @@ pub fn run_runtime(command: RuntimeCommand) -> ExitCode {
 
 pub fn ensure_runtime_ready() -> Result<std::path::PathBuf, String> {
     let config = RuntimeConfig::default();
-    let runtime = resolve_runtime(&config).map_err(|error| {
-        format!("failed to resolve the Sabine runtime: {error}\ninstall it with `sabine runtime install`")
-    })?;
+    let runtime = match resolve_runtime(&config) {
+        Ok(runtime) => runtime,
+        Err(RuntimeError::NotFound(_)) if config.allow_user_install => {
+            eprintln!("sabine: no CEF runtime found; installing shared runtime…");
+            install_default_runtime(&config)?
+        }
+        Err(error) => {
+            return Err(format!(
+                "failed to resolve the Sabine runtime: {error}\ninstall it with `sabine runtime install`"
+            ));
+        }
+    };
     sabine_host::ensure_host(runtime.location.path())
         .map_err(|error| format!("failed to prepare the Sabine CEF host: {error}"))
+}
+
+fn install_default_runtime(config: &RuntimeConfig) -> Result<sabine_runtime::RuntimeInfo, String> {
+    let plan = latest_install_plan(config)
+        .map_err(|error| format!("failed to plan runtime install: {error}"))?;
+    eprintln!(
+        "sabine: downloading {} runtime {}…",
+        plan.package.as_str(),
+        plan.version
+    );
+    update_user_runtime_with_progress(config, |progress| {
+        let percent = progress
+            .fraction
+            .map(|fraction| format!(" {:>3}%", (fraction * 100.0).round() as u8))
+            .unwrap_or_default();
+        eprintln!("sabine: {}{}", progress.message, percent);
+    })
+    .map_err(|error| format!("failed to install runtime: {error}"))
 }
 
 fn list_runtimes(json: bool) -> ExitCode {
@@ -247,7 +275,7 @@ fn doctor_runtime(json: bool) -> ExitCode {
             }
             "outdated" => {
                 println!(
-                    "{} runtime: outdated (found versions below minimum 144)",
+                    "{} runtime: outdated (found versions below minimum 151)",
                     "CEF"
                 );
                 println!("  Update with: sabine runtime install");

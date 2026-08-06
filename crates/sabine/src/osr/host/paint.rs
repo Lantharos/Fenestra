@@ -10,6 +10,7 @@ use crate::render::{DisplayList, ImageCommand, RectCommand, RoundedRectCommand};
 use crate::window::style::Color;
 
 use super::native::OsrNativeHost;
+use super::paint_upload::upload_composed_damage;
 use super::types::{
     LifecycleState, PendingResizePaint, RESIZE_REPAINT_GRACE, RESIZE_REPAINT_RETRY,
     overlay_id_for_surface, overlay_texture_id, uses_sabine_chrome,
@@ -107,22 +108,19 @@ impl OsrNativeHost {
                 let Some(damage) = self.main_buffer.compose(width, height, &frame) else {
                     return false;
                 };
-                let bytes = self.main_buffer.bytes().to_vec();
                 let Some(renderer) = self.renderer.as_mut() else {
                     return false;
                 };
-                if renderer
-                    .update_dynamic_bgra_image_region(
-                        MAIN_TEXTURE_ID,
-                        width,
-                        height,
-                        damage.x,
-                        damage.y,
-                        damage.width,
-                        damage.height,
-                        &bytes,
-                    )
-                    .is_err()
+                if upload_composed_damage(
+                    renderer,
+                    MAIN_TEXTURE_ID,
+                    width,
+                    height,
+                    self.main_buffer.bytes(),
+                    damage,
+                    std::slice::from_ref(&frame),
+                )
+                .is_err()
                 {
                     return false;
                 }
@@ -142,7 +140,7 @@ impl OsrNativeHost {
                 };
                 let texture_id = overlay_texture_id(&overlay_id);
                 let local = overlay_local_frame(&frame);
-                let (damage, bytes) = {
+                let damage = {
                     let overlay = self.overlays.entry(overlay_id.clone()).or_insert_with(|| {
                         super::types::OverlayLayer {
                             frame: local.clone(),
@@ -153,23 +151,26 @@ impl OsrNativeHost {
                     else {
                         return false;
                     };
-                    (damage, overlay.buffer.bytes().to_vec())
+                    damage
                 };
+                let bytes = self
+                    .overlays
+                    .get(&overlay_id)
+                    .map(|overlay| overlay.buffer.bytes().to_vec())
+                    .unwrap_or_default();
                 let Some(renderer) = self.renderer.as_mut() else {
                     return false;
                 };
-                if renderer
-                    .update_dynamic_bgra_image_region(
-                        &texture_id,
-                        frame.width,
-                        frame.height,
-                        damage.x,
-                        damage.y,
-                        damage.width,
-                        damage.height,
-                        &bytes,
-                    )
-                    .is_err()
+                if upload_composed_damage(
+                    renderer,
+                    &texture_id,
+                    frame.width,
+                    frame.height,
+                    &bytes,
+                    damage,
+                    std::slice::from_ref(&local),
+                )
+                .is_err()
                 {
                     return false;
                 }
@@ -213,18 +214,16 @@ impl OsrNativeHost {
                 else {
                     return false;
                 };
-                if renderer
-                    .update_dynamic_bgra_image_region(
-                        MAIN_TEXTURE_ID,
-                        batch.width,
-                        batch.height,
-                        damage.x,
-                        damage.y,
-                        damage.width,
-                        damage.height,
-                        self.main_buffer.bytes(),
-                    )
-                    .is_err()
+                if upload_composed_damage(
+                    renderer,
+                    MAIN_TEXTURE_ID,
+                    batch.width,
+                    batch.height,
+                    self.main_buffer.bytes(),
+                    damage,
+                    &batch.frames,
+                )
+                .is_err()
                 {
                     return false;
                 }
@@ -271,18 +270,16 @@ impl OsrNativeHost {
                 let Some(renderer) = self.renderer.as_mut() else {
                     return false;
                 };
-                if renderer
-                    .update_dynamic_bgra_image_region(
-                        &texture_id,
-                        batch.width,
-                        batch.height,
-                        damage.x,
-                        damage.y,
-                        damage.width,
-                        damage.height,
-                        &bytes,
-                    )
-                    .is_err()
+                if upload_composed_damage(
+                    renderer,
+                    &texture_id,
+                    batch.width,
+                    batch.height,
+                    &bytes,
+                    damage,
+                    &batch.frames,
+                )
+                .is_err()
                 {
                     return false;
                 }

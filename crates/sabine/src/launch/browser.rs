@@ -1,7 +1,18 @@
 use std::process::Command;
 
 pub(crate) const HOST_CONTROL_PREFIX: &str = "SABINE_HOST_CONTROL";
+
+/// Features disabled for the normal (accelerated) CEF host profile.
 pub(crate) const DISABLED_CEF_FEATURES: &str = concat!(
+    "OptimizationGuideOnDeviceModel,",
+    "AutofillServerCommunication,",
+    "MediaRouter,",
+    "Translate,",
+    "InterestFeedContentSuggestions"
+);
+
+/// Extra features disabled only when silently falling back to software OSR.
+pub(crate) const SOFTWARE_FALLBACK_CEF_FEATURES: &str = concat!(
     "Vulkan,",
     "DefaultANGLEVulkan,",
     "VulkanFromANGLE,",
@@ -19,6 +30,8 @@ const DEFAULT_REMOTE_DEVTOOLS_PORT: u16 = 9222;
 pub struct BrowserOptions {
     pub remote_devtools_port: Option<u16>,
     pub remote_devtools_disabled: bool,
+    /// Internal: force software OSR (no shared textures). Not a public API.
+    pub software_osr_fallback: bool,
     #[cfg(target_os = "linux")]
     pub vaapi_hardware_decode: bool,
 }
@@ -28,6 +41,7 @@ impl Default for BrowserOptions {
         Self {
             remote_devtools_port: None,
             remote_devtools_disabled: false,
+            software_osr_fallback: false,
             #[cfg(target_os = "linux")]
             vaapi_hardware_decode: true,
         }
@@ -87,9 +101,13 @@ pub(crate) fn apply_browser_launch_args(
     if !enabled_features.is_empty() {
         command.arg(format!("--enable-features={}", enabled_features.join(",")));
     }
+    let disabled = if options.software_osr_fallback {
+        SOFTWARE_FALLBACK_CEF_FEATURES
+    } else {
+        DISABLED_CEF_FEATURES
+    };
     command
-        .arg(format!("--disable-features={DISABLED_CEF_FEATURES}"))
-        .arg("--disable-vulkan")
+        .arg(format!("--disable-features={disabled}"))
         .arg("--disable-background-networking")
         .arg("--disable-component-update")
         .arg("--disable-component-extensions-with-background-pages")
@@ -104,6 +122,10 @@ pub(crate) fn apply_browser_launch_args(
         .arg("--no-default-browser-check")
         .arg("--no-first-run")
         .arg("--password-store=basic");
+    if options.software_osr_fallback {
+        command.arg("--disable-vulkan");
+        command.arg("--sabine-software-osr");
+    }
     if let Some(port) = options.effective_remote_devtools_port(dev_mode) {
         command.arg(format!("--remote-debugging-port={port}"));
         command.arg("--remote-allow-origins=*");

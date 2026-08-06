@@ -41,6 +41,7 @@
 #include "include/wrapper/cef_helpers.h"
 #include "json_util.h"
 #include "sabine_bridge_js.h"
+#include "osr_handler_accelerated.h"
 #include "osr_handler_util.h"
 
 using namespace sabine_osr;
@@ -149,6 +150,8 @@ void CreateSabineOsrBrowser(CefRefPtr<CefCommandLine> command_line) {
 
 	  CefWindowInfo window_info;
 	  window_info.SetAsWindowless(kNullWindowHandle);
+	  sabine_osr::ApplySharedTexture(
+	      &window_info, sabine_osr::PreferSharedTexture(command_line));
 	  CefRefPtr<SabineOsrHandler> handler(new SabineOsrHandler(
 	      endpoint, authentication_token, width, height, scale,
 	      BridgeCommands(command_line),

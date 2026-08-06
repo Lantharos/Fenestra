@@ -48,12 +48,20 @@ not outlive a crashed parent.
 
 ## Paint and composition
 
-CEF emits BGRA dirty rectangles. The native host retains a backing store per surface and patches only
-the changed ranges. Each surface is then uploaded to an independent GPU texture:
+Accelerated OSR is the preferred path (CEF 151+). On Linux the host enables shared textures and
+sends DMA-BUF file descriptors for `OnAcceleratedPaint`; the compositor imports when possible and
+otherwise maps the plane into the existing dirty-rect framebuffer path. If accelerated paint cannot
+run, Sabine silently relaunches the CEF helper with software `OnPaint` — there is no public
+paint-mode switch or CEF handle exposure.
+
+CEF still delivers BGRA dirty rectangles on the software path (and as a CPU bridge after GPU
+raster). The native host retains a backing store per surface and patches only the changed ranges.
+Each surface is then uploaded to an independent GPU texture (sparse per-rect uploads when damage is
+disjoint):
 
 - main page
 - popup overlay
-- one texture per guest
+- one texture per guest (including guest `<select>` popups)
 
 The display list damages the union of the old and new bounds when a primitive changes. Resize waits
 for a correctly sized CEF paint rather than stretching a stale frame indefinitely.
@@ -64,12 +72,12 @@ authenticates with a first-line token delivered via `SABINE_OSR_TOKEN` (not argv
 
 | Platform | Transport | Large paint path |
 | --- | --- | --- |
-| Linux | Unix domain socket | memfd plus descriptor passing |
+| Linux | Unix domain socket | DMA-BUF / memfd plus descriptor passing |
 | macOS | Unix domain socket | inline dirty-rect batch |
 | Windows | localhost TCP | inline dirty-rect batch |
 
-The portable paths still send only dirty rectangles. A future native shared-handle transport can be
-added behind the same message kinds without changing app code.
+The portable paths still send only dirty rectangles. Native D3D11 / IOSurface → wgpu import can be
+added later behind the same message kinds without changing app code.
 
 Linux layer-shell surfaces use their dedicated host because layer-shell configuration must happen
 before a regular winit surface is created. Other platforms express palette behavior with a normal

@@ -215,6 +215,19 @@ impl OsrLayerHost {
                     }
                 }
             }
+            LayerHostEvent::Message(OsrMessage::AccelFrame(frame)) => {
+                if self.visible {
+                    match crate::osr::accel::accel_to_paint_batch(frame) {
+                        Ok(batch) => {
+                            if let Some(return_data) = self.refresh_batch_surface(batch, state, id)
+                            {
+                                return return_data;
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
+            }
             LayerHostEvent::Message(OsrMessage::PopupHidden) => {
                 self.close_popup(state);
             }

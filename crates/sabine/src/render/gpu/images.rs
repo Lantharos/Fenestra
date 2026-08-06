@@ -233,7 +233,7 @@ impl GpuRenderer {
         Ok(bind_group)
     }
 
-    fn create_dynamic_bgra_image(&mut self, id: String, width: u32, height: u32) {
+    pub(super) fn create_dynamic_bgra_image(&mut self, id: String, width: u32, height: u32) {
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(&id),
             size: wgpu::Extent3d {

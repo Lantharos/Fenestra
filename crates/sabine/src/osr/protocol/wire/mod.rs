@@ -1,12 +1,15 @@
+mod accel;
 mod header;
 mod paint;
 mod regions;
+mod shared_mem;
 
 use crate::osr::transport::IpcStream;
 use std::io::{self, Read};
 
 use crate::osr::protocol::{OsrFrame, OsrMessage, OsrSurface};
 
+use accel::{KIND_GUEST_ACCEL, KIND_MAIN_ACCEL, KIND_POPUP_ACCEL, parse_accel_frame};
 use header::{close_optional_fd, read_header, read_i32, read_u32};
 use paint::{parse_paint_batch, split_guest_payload};
 use regions::{parse_draggable_regions, parse_file_drag_request};
@@ -185,6 +188,9 @@ pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessa
         KIND_BRIDGE_REQUEST => {
             close_optional_fd(fd);
             OsrMessage::BridgeRequest(String::from_utf8(payload).unwrap_or_default())
+        }
+        KIND_MAIN_ACCEL | KIND_POPUP_ACCEL | KIND_GUEST_ACCEL => {
+            OsrMessage::AccelFrame(parse_accel_frame(kind, width, height, x, y, &payload, fd)?)
         }
         _ => {
             close_optional_fd(fd);

@@ -158,7 +158,7 @@ fn read_bootstrap(path: PathBuf) -> Result<(RuntimeConfig, Option<AppManifest>),
         min_version: value
             .get("min_version")
             .and_then(Value::as_str)
-            .unwrap_or("144")
+            .unwrap_or("151")
             .to_string(),
         index_url: value
             .get("index_url")

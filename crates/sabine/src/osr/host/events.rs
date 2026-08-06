@@ -39,6 +39,16 @@ impl OsrNativeHost {
                         needs_initial_present |= !was_presented && self.main_frame.is_some();
                     }
                 }
+                super::types::OsrHostEvent::Message(OsrMessage::AccelFrame(frame)) => {
+                    if self.accepts_paint() {
+                        let was_presented = self.presented;
+                        let was_resize_pending = self.pending_resize_paint.is_some();
+                        let updated = self.update_accel_frame(frame);
+                        needs_redraw |= updated;
+                        resize_frame_ready |= was_resize_pending && updated;
+                        needs_initial_present |= !was_presented && self.main_frame.is_some();
+                    }
+                }
                 super::types::OsrHostEvent::Message(OsrMessage::PopupHidden) => {
                     self.clear_overlay(POPUP_OVERLAY_ID);
                     needs_redraw = true;

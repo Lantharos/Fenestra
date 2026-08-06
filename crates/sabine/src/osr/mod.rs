@@ -1,3 +1,4 @@
+pub(crate) mod accel;
 pub(crate) mod frame_buffer;
 pub(crate) mod host;
 pub(crate) mod launch;

@@ -148,6 +148,16 @@ class SabineOsrHandler : public CefClient,
                const void* buffer,
                int width,
                int height) override;
+  void OnAcceleratedPaint(CefRefPtr<CefBrowser> browser,
+                          PaintElementType type,
+                          const RectList& dirtyRects,
+                          const CefAcceleratedPaintInfo& info) override;
+  bool GetScreenPoint(CefRefPtr<CefBrowser> browser,
+                      int viewX,
+                      int viewY,
+                      int& screenX,
+                      int& screenY) override;
+  void SetScreenOrigin(int x, int y);
   bool StartDragging(CefRefPtr<CefBrowser> browser,
                      CefRefPtr<CefDragData> drag_data,
                      cef_drag_operations_mask_t allowed_ops,
@@ -261,6 +271,9 @@ class SabineOsrHandler : public CefClient,
   int height_ = 1;
   float scale_ = 1.0f;
   CefRect popup_rect_;
+  CefRect guest_popup_rect_;
+  int screen_origin_x_ = 0;
+  int screen_origin_y_ = 0;
   GuestRegistry guests_;
   std::string focused_guest_id_;
   std::string pending_guest_id_;

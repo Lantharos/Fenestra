@@ -20,6 +20,7 @@ pub(crate) const POPUP_OVERLAY_ID: &str = "__sabine_popup";
 pub(crate) enum OsrMessage {
     Frame(OsrFrame),
     PaintBatch(OsrPaintBatch),
+    AccelFrame(OsrAccelFrame),
     /// Hide the legacy single popup overlay (`__sabine_popup`).
     PopupHidden,
     /// Hide a guest overlay by id.
@@ -63,6 +64,31 @@ pub(crate) struct OsrPaintBatch {
     pub x: i32,
     pub y: i32,
     pub frames: Vec<OsrFrame>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct OsrAccelRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug)]
+pub(crate) struct OsrAccelFrame {
+    pub surface: OsrSurface,
+    pub width: u32,
+    pub height: u32,
+    pub x: i32,
+    pub y: i32,
+    pub format: u32,
+    #[allow(dead_code)]
+    pub modifier: u64,
+    pub stride: u32,
+    pub offset: u64,
+    pub size: u64,
+    pub dirty: Vec<OsrAccelRect>,
+    pub fd: i32,
 }
 
 #[derive(Clone, Debug)]

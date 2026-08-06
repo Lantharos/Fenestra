@@ -1,4 +1,5 @@
 mod forward;
+mod ime;
 
 use std::time::{Duration, Instant};
 
@@ -109,6 +110,8 @@ impl ApplicationHandler for OsrNativeHost {
             } => {
                 self.send_key_event(&event);
             }
+            WindowEvent::Ime(ime) => self.forward_ime(ime),
+            WindowEvent::Moved(_) => self.send_screen_origin(),
             WindowEvent::RedrawRequested if self.config.visible && self.presented => self.render(),
             WindowEvent::RedrawRequested => {}
             WindowEvent::PointerMoved {

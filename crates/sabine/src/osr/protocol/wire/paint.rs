@@ -1,18 +1,29 @@
 use std::io;
 #[cfg(unix)]
-use std::{
-    fs::File,
-    io::{Read, Seek, SeekFrom},
-    os::fd::FromRawFd,
-};
+use std::os::fd::FromRawFd;
+use std::sync::Arc;
 
 use super::header::{close_optional_fd, read_i32, read_u32, read_u64};
-use super::regions::payload_count;
+use super::shared_mem::SharedMapping;
 use super::{
     BATCH_ENTRY_LEN, KIND_GUEST_BATCH, KIND_GUEST_SHARED_BATCH, KIND_MAIN_BATCH,
     KIND_MAIN_SHARED_BATCH, KIND_POPUP_SHARED_BATCH,
 };
 use crate::osr::protocol::{OsrFrame, OsrPaintBatch, OsrSurface};
+
+enum PaintSource {
+    Mapped(Arc<SharedMapping>),
+    Inline(Vec<u8>),
+}
+
+impl PaintSource {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Mapped(mapping) => mapping.as_slice(),
+            Self::Inline(bytes) => bytes.as_slice(),
+        }
+    }
+}
 
 pub(super) fn parse_paint_batch(
     kind: u32,
@@ -35,7 +46,14 @@ pub(super) fn parse_paint_batch(
     } else {
         (OsrSurface::Popup, payload.to_vec())
     };
-    let source_bytes;
+
+    let count = super::regions::payload_count(&batch_payload)?;
+    let entries_end = 4 + count * BATCH_ENTRY_LEN;
+    let entries = batch_payload
+        .get(4..entries_end)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "truncated OSR paint batch"))?
+        .to_vec();
+
     let source = if shared {
         let fd = fd.ok_or_else(|| {
             io::Error::new(
@@ -43,21 +61,18 @@ pub(super) fn parse_paint_batch(
                 "shared OSR paint batch missing file descriptor",
             )
         })?;
-        source_bytes = read_shared_bytes(fd)?;
-        source_bytes.as_slice()
+        PaintSource::Mapped(SharedMapping::map_fd(fd)?)
     } else {
         close_optional_fd(fd);
-        let count = payload_count(&batch_payload)?;
         let blob_start = 4 + count * BATCH_ENTRY_LEN;
-        batch_payload
+        let bytes = batch_payload
             .get(blob_start..)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid OSR paint batch"))?
+            .to_vec();
+        PaintSource::Inline(bytes)
     };
-    let count = payload_count(&batch_payload)?;
-    let entries_end = 4 + count * BATCH_ENTRY_LEN;
-    let entries = batch_payload
-        .get(4..entries_end)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "truncated OSR paint batch"))?;
+    let source_bytes = source.as_slice();
+
     let mut frames = Vec::with_capacity(count);
     for entry in entries.chunks_exact(BATCH_ENTRY_LEN) {
         let rect_x = read_i32(&entry[0..4]);
@@ -73,7 +88,7 @@ pub(super) fn parse_paint_batch(
                 "invalid OSR paint rect byte length",
             ));
         }
-        let bytes = source
+        let bytes = source_bytes
             .get(offset..offset + len)
             .ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "truncated OSR paint rect bytes")
@@ -124,8 +139,10 @@ pub(super) fn split_guest_payload(payload: &[u8]) -> io::Result<(String, Vec<u8>
 }
 
 #[cfg(unix)]
+#[allow(dead_code)]
 pub(super) fn read_shared_bytes(fd: i32) -> io::Result<Vec<u8>> {
-    let mut file = unsafe { File::from_raw_fd(fd) };
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
     file.seek(SeekFrom::Start(0))?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
@@ -133,6 +150,7 @@ pub(super) fn read_shared_bytes(fd: i32) -> io::Result<Vec<u8>> {
 }
 
 #[cfg(not(unix))]
+#[allow(dead_code)]
 pub(super) fn read_shared_bytes(_fd: i32) -> io::Result<Vec<u8>> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

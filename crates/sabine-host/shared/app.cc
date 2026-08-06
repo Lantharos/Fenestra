@@ -61,16 +61,24 @@ SabineApp::SabineApp() = default;
 void SabineApp::OnBeforeCommandLineProcessing(
     const CefString& process_type,
     CefRefPtr<CefCommandLine> command_line) {
-  command_line->AppendSwitch("disable-vulkan");
+  const bool software_osr = command_line->HasSwitch("sabine-software-osr");
+  if (software_osr) {
+    command_line->AppendSwitch("disable-vulkan");
+  }
   const std::string ozone_platform =
       command_line->GetSwitchValue("sabine-ozone-platform");
   if (!ozone_platform.empty()) {
     command_line->AppendSwitchWithValue("ozone-platform", ozone_platform);
     command_line->AppendSwitchWithValue("ozone-platform-hint", ozone_platform);
   }
-  command_line->AppendSwitchWithValue(
-      "disable-features",
-      "Vulkan,DefaultANGLEVulkan,VulkanFromANGLE,OptimizationGuideOnDeviceModel");
+  if (software_osr) {
+    command_line->AppendSwitchWithValue(
+        "disable-features",
+        "Vulkan,DefaultANGLEVulkan,VulkanFromANGLE,OptimizationGuideOnDeviceModel");
+  } else {
+    command_line->AppendSwitchWithValue("disable-features",
+                                        "OptimizationGuideOnDeviceModel");
+  }
   command_line->AppendSwitchWithValue("password-store", "basic");
   if (command_line->HasSwitch("sabine-transparent")) {
     command_line->AppendSwitch("enable-transparent-visuals");

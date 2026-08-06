@@ -98,7 +98,7 @@ impl Default for RuntimeConfig {
         Self {
             mode: RuntimeMode::SharedPreferred,
             package: RuntimePackage::Standard,
-            min_version: "144".to_string(),
+            min_version: "151".to_string(),
             index_url: None,
             allow_user_install: true,
             allow_bundled: true,

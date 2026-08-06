@@ -312,7 +312,14 @@ void SabineOsrHandler::GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect)
 }
 
 void SabineOsrHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {
-  if (GuestForBrowser(browser)) {
+  if (GuestView* guest = GuestForBrowser(browser)) {
+    if (!show) {
+      const std::string popup_id = guest->id + "/popup";
+      SendMessage(kGuestHidden, 0, 0, guest->bounds.x + guest_popup_rect_.x,
+                  guest->bounds.y + guest_popup_rect_.y, popup_id.data(),
+                  static_cast<uint32_t>(popup_id.size()));
+      guest_popup_rect_ = CefRect();
+    }
     return;
   }
   if (!show) {
@@ -323,6 +330,18 @@ void SabineOsrHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) {
 void SabineOsrHandler::OnPopupSize(CefRefPtr<CefBrowser> browser,
                                  const CefRect& rect) {
   if (GuestForBrowser(browser)) {
+    if (guest_popup_rect_.x != rect.x || guest_popup_rect_.y != rect.y ||
+        guest_popup_rect_.width != rect.width ||
+        guest_popup_rect_.height != rect.height) {
+      // Force compositor to drop the previous guest popup overlay bounds.
+      if (GuestView* guest = GuestForBrowser(browser)) {
+        const std::string popup_id = guest->id + "/popup";
+        SendMessage(kGuestHidden, 0, 0, guest->bounds.x + guest_popup_rect_.x,
+                    guest->bounds.y + guest_popup_rect_.y, popup_id.data(),
+                    static_cast<uint32_t>(popup_id.size()));
+      }
+    }
+    guest_popup_rect_ = rect;
     return;
   }
   if (popup_rect_.x != rect.x || popup_rect_.y != rect.y ||
@@ -339,9 +358,11 @@ void SabineOsrHandler::OnPaint(CefRefPtr<CefBrowser> browser,
 	                             int width,
 	                             int height) {
   if (GuestView* guest = GuestForBrowser(browser)) {
-    // Guest select/dropdown surfaces are not composited yet, so only the guest
-    // view itself is forwarded.
     if (type == PET_POPUP) {
+      SendPaintBatch(kGuestFrame, guest->id + "/popup",
+                     guest->bounds.x + guest_popup_rect_.x,
+                     guest->bounds.y + guest_popup_rect_.y, buffer, width,
+                     height, dirtyRects);
       return;
     }
     if (!guest->painted) {

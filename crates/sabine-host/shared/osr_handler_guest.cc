@@ -34,6 +34,7 @@
 #include "guest_manager.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
+#include "include/cef_command_line.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context_handler.h"
 #include "include/cef_task.h"
@@ -41,6 +42,7 @@
 #include "include/wrapper/cef_helpers.h"
 #include "json_util.h"
 #include "sabine_bridge_js.h"
+#include "osr_handler_accelerated.h"
 #include "osr_handler_util.h"
 
 using namespace sabine_osr;
@@ -220,6 +222,9 @@ void SabineOsrHandler::ContinueCreateGuest(
 
   CefWindowInfo window_info;
   window_info.SetAsWindowless(kNullWindowHandle);
+  sabine_osr::ApplySharedTexture(
+      &window_info,
+      sabine_osr::PreferSharedTexture(CefCommandLine::GetGlobalCommandLine()));
 
   CefRefPtr<CefDictionaryValue> extra_info = CefDictionaryValue::Create();
   extra_info->SetBool("sabineAllowBridge", request.allow_bridge);

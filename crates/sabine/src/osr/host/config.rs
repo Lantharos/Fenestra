@@ -40,6 +40,8 @@ pub(crate) struct OsrHostConfig {
     pub dev_mode: bool,
     pub remote_devtools_port: Option<u16>,
     pub remote_devtools_disabled: bool,
+    /// Internal silent fallback — not a public paint-mode API.
+    pub software_osr_fallback: bool,
     #[cfg(target_os = "linux")]
     pub vaapi_hardware_decode: bool,
 }
@@ -49,6 +51,7 @@ impl OsrHostConfig {
         crate::BrowserOptions {
             remote_devtools_port: self.remote_devtools_port,
             remote_devtools_disabled: self.remote_devtools_disabled,
+            software_osr_fallback: self.software_osr_fallback,
             #[cfg(target_os = "linux")]
             vaapi_hardware_decode: self.vaapi_hardware_decode,
         }
@@ -157,6 +160,10 @@ impl OsrHostConfig {
                 .and_then(|port| u16::try_from(port).ok()),
             remote_devtools_disabled: value
                 .get("remote_devtools_disabled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            software_osr_fallback: value
+                .get("software_osr_fallback")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
             #[cfg(target_os = "linux")]

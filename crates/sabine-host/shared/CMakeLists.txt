@@ -28,14 +28,22 @@ set(SABINE_HOST_SOURCES
   json_util.h
   osr_handler.cc
   osr_handler.h
+  osr_handler_accel_ipc.cc
+  osr_handler_accel_ipc.h
+  osr_handler_accelerated.cc
+  osr_handler_accelerated.h
   osr_handler_bridge.cc
   osr_handler_cef.cc
   osr_handler_downloads.cc
   osr_handler_drag.cc
   osr_handler_guest.cc
   osr_handler_guest_ops.cc
+  osr_handler_ime.cc
+  osr_handler_ime.h
   osr_handler_input.cc
   osr_handler_ipc.cc
+  osr_handler_screen.cc
+  osr_handler_screen.h
   osr_handler_util.cc
   osr_handler_util.h
 )

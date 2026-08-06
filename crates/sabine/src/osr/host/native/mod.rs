@@ -80,6 +80,7 @@ pub(super) struct OsrNativeHost {
     pub(super) cef_handed_off: bool,
     /// Deadline for the primary CEF process to connect after exit-24 handoff.
     pub(super) handoff_deadline: Option<Instant>,
+    pub(super) accel_fallback: crate::osr::accel::AccelFallbackPolicy,
 }
 
 impl OsrNativeHost {
@@ -149,6 +150,7 @@ impl OsrNativeHost {
             started: Instant::now(),
             cef_handed_off: false,
             handoff_deadline: None,
+            accel_fallback: crate::osr::accel::AccelFallbackPolicy::default(),
         }
     }
 
@@ -208,6 +210,23 @@ impl OsrNativeHost {
             }
         };
         self.child = Some(child);
+    }
+
+    pub(super) fn relaunch_software_osr(&mut self) {
+        if self.accel_fallback.is_software() || self.config.software_osr_fallback {
+            return;
+        }
+        self.accel_fallback.mark_software();
+        self.config.software_osr_fallback = true;
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        self.socket = None;
+        self.main_frame = None;
+        self.main_buffer.release();
+        self.overlays.clear();
+        self.launch_child();
     }
 
     pub(super) fn content_size_for_cef(&self) -> (u32, u32, f64) {

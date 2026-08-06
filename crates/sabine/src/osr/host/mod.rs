@@ -6,6 +6,8 @@ mod input;
 mod lifecycle;
 mod native;
 mod paint;
+mod paint_accel;
+mod paint_upload;
 mod socket;
 mod types;
 

@@ -41,6 +41,8 @@
 #include "include/wrapper/cef_helpers.h"
 #include "json_util.h"
 #include "sabine_bridge_js.h"
+#include "osr_handler_ime.h"
+#include "osr_handler_screen.h"
 #include "osr_handler_util.h"
 
 using namespace sabine_osr;
@@ -70,6 +72,9 @@ void SabineOsrHandler::HandleControlLine(const std::string& line) {
   if (parts.empty() || !browser_) {
     return;
   }
+  if (TryHandleScreenOriginControl(this, parts)) {
+    return;
+  }
   CefRefPtr<CefBrowser> target_browser = browser_;
   GuestView* pointer_guest = nullptr;
   int pointer_x = parts.size() >= 3 ? std::atoi(parts[1].c_str()) : 0;
@@ -90,13 +95,17 @@ void SabineOsrHandler::HandleControlLine(const std::string& line) {
       DismissPopupGuest();
       FocusGuest(std::string());
     }
-  } else if (parts[0] == "key" && !focused_guest_id_.empty()) {
+  } else if ((parts[0] == "key" || parts[0].rfind("ime_", 0) == 0) &&
+             !focused_guest_id_.empty()) {
     GuestView* guest = guests_.Find(focused_guest_id_);
     if (guest && guest->browser) {
       target_browser = guest->browser;
     }
   }
   CefRefPtr<CefBrowserHost> host = target_browser->GetHost();
+  if (TryHandleImeControl(host, parts)) {
+    return;
+  }
   if (parts[0] == "resize" && parts.size() >= 4) {
     const int width = std::max(1, std::atoi(parts[1].c_str()));
     const int height = std::max(1, std::atoi(parts[2].c_str()));

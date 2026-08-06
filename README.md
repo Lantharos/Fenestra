@@ -87,9 +87,10 @@ const tab = await guest.create({
 });
 ```
 
-On first launch, bootstrap prepares the shared Sabine service and Chromium runtime (with
-progress). Later launches adopt that install, register the app, and open immediately. If the
-service binary is missing, Sabine downloads it from GitHub Releases into the shared data dir.
+On first launch (or `sabine dev`), Sabine prepares the shared Chromium runtime when it is missing
+(with progress). App launches also register with the shared Sabine service. Later runs adopt that
+install and open immediately. If the service binary is missing, Sabine downloads it from GitHub
+Releases into the shared data dir.
 
 ## Window recipes
 

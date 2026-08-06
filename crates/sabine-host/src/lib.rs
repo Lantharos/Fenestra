@@ -31,6 +31,22 @@ const HOST_SOURCES: &[(&str, &str)] = &[
     ("osr_handler.cc", include_str!("../shared/osr_handler.cc")),
     ("osr_handler.h", include_str!("../shared/osr_handler.h")),
     (
+        "osr_handler_accel_ipc.cc",
+        include_str!("../shared/osr_handler_accel_ipc.cc"),
+    ),
+    (
+        "osr_handler_accel_ipc.h",
+        include_str!("../shared/osr_handler_accel_ipc.h"),
+    ),
+    (
+        "osr_handler_accelerated.cc",
+        include_str!("../shared/osr_handler_accelerated.cc"),
+    ),
+    (
+        "osr_handler_accelerated.h",
+        include_str!("../shared/osr_handler_accelerated.h"),
+    ),
+    (
         "osr_handler_bridge.cc",
         include_str!("../shared/osr_handler_bridge.cc"),
     ),
@@ -55,12 +71,28 @@ const HOST_SOURCES: &[(&str, &str)] = &[
         include_str!("../shared/osr_handler_guest_ops.cc"),
     ),
     (
+        "osr_handler_ime.cc",
+        include_str!("../shared/osr_handler_ime.cc"),
+    ),
+    (
+        "osr_handler_ime.h",
+        include_str!("../shared/osr_handler_ime.h"),
+    ),
+    (
         "osr_handler_input.cc",
         include_str!("../shared/osr_handler_input.cc"),
     ),
     (
         "osr_handler_ipc.cc",
         include_str!("../shared/osr_handler_ipc.cc"),
+    ),
+    (
+        "osr_handler_screen.cc",
+        include_str!("../shared/osr_handler_screen.cc"),
+    ),
+    (
+        "osr_handler_screen.h",
+        include_str!("../shared/osr_handler_screen.h"),
     ),
     (
         "osr_handler_util.cc",

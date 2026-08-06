@@ -13,6 +13,7 @@ use crate::render::rect_pipeline::{
 };
 use crate::render::{DisplayCommand, DisplayList, TextCommand};
 
+mod image_rects;
 mod images;
 mod text;
 
