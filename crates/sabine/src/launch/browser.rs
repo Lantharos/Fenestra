@@ -3,6 +3,9 @@ use std::process::Command;
 pub(crate) const HOST_CONTROL_PREFIX: &str = "SABINE_HOST_CONTROL";
 
 /// Features disabled for the normal (accelerated) CEF host profile.
+///
+/// On Linux Wayland, Vulkan must also be disabled (Chromium ozone incompatibility);
+/// see [`apply_browser_launch_args`].
 pub(crate) const DISABLED_CEF_FEATURES: &str = concat!(
     "OptimizationGuideOnDeviceModel,",
     "AutofillServerCommunication,",
@@ -11,8 +14,8 @@ pub(crate) const DISABLED_CEF_FEATURES: &str = concat!(
     "InterestFeedContentSuggestions"
 );
 
-/// Extra features disabled only when silently falling back to software OSR.
-pub(crate) const SOFTWARE_FALLBACK_CEF_FEATURES: &str = concat!(
+/// Features disabled when CEF runs with Wayland ozone (accelerated or software).
+pub(crate) const WAYLAND_CEF_FEATURES: &str = concat!(
     "Vulkan,",
     "DefaultANGLEVulkan,",
     "VulkanFromANGLE,",
@@ -79,6 +82,11 @@ pub(crate) fn apply_browser_launch_args(
     options: &BrowserOptions,
     dev_mode: bool,
 ) {
+    #[cfg(target_os = "linux")]
+    let wayland_ozone = true;
+    #[cfg(not(target_os = "linux"))]
+    let wayland_ozone = false;
+
     let enabled_features: Vec<&str> = {
         #[cfg(target_os = "linux")]
         {
@@ -101,8 +109,8 @@ pub(crate) fn apply_browser_launch_args(
     if !enabled_features.is_empty() {
         command.arg(format!("--enable-features={}", enabled_features.join(",")));
     }
-    let disabled = if options.software_osr_fallback {
-        SOFTWARE_FALLBACK_CEF_FEATURES
+    let disabled = if options.software_osr_fallback || wayland_ozone {
+        WAYLAND_CEF_FEATURES
     } else {
         DISABLED_CEF_FEATURES
     };
@@ -122,8 +130,11 @@ pub(crate) fn apply_browser_launch_args(
         .arg("--no-default-browser-check")
         .arg("--no-first-run")
         .arg("--password-store=basic");
-    if options.software_osr_fallback {
+    // Wayland ozone + Vulkan is unsupported in Chromium; use GL/ANGLE instead.
+    if options.software_osr_fallback || wayland_ozone {
         command.arg("--disable-vulkan");
+    }
+    if options.software_osr_fallback {
         command.arg("--sabine-software-osr");
     }
     if let Some(port) = options.effective_remote_devtools_port(dev_mode) {

@@ -62,16 +62,20 @@ void SabineApp::OnBeforeCommandLineProcessing(
     const CefString& process_type,
     CefRefPtr<CefCommandLine> command_line) {
   const bool software_osr = command_line->HasSwitch("sabine-software-osr");
-  if (software_osr) {
-    command_line->AppendSwitch("disable-vulkan");
-  }
   const std::string ozone_platform =
       command_line->GetSwitchValue("sabine-ozone-platform");
+  // Chromium: Wayland ozone cannot use Vulkan. Keep GL/ANGLE so shared-texture
+  // OSR (DMA-BUF) still works; only software OSR needs the extra feature cuts.
+  const bool disable_vulkan =
+      software_osr || ozone_platform == "wayland";
+  if (disable_vulkan) {
+    command_line->AppendSwitch("disable-vulkan");
+  }
   if (!ozone_platform.empty()) {
     command_line->AppendSwitchWithValue("ozone-platform", ozone_platform);
     command_line->AppendSwitchWithValue("ozone-platform-hint", ozone_platform);
   }
-  if (software_osr) {
+  if (disable_vulkan) {
     command_line->AppendSwitchWithValue(
         "disable-features",
         "Vulkan,DefaultANGLEVulkan,VulkanFromANGLE,OptimizationGuideOnDeviceModel");
