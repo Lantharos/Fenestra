@@ -64,10 +64,12 @@ void SabineApp::OnBeforeCommandLineProcessing(
   const bool software_osr = command_line->HasSwitch("sabine-software-osr");
   const std::string ozone_platform =
       command_line->GetSwitchValue("sabine-ozone-platform");
-  // Chromium rejects Wayland ozone + Vulkan. Prefer X11 ozone for OSR; if a
-  // caller still forces Wayland, disable Vulkan so GPU init can proceed.
-  const bool disable_vulkan =
-      software_osr || ozone_platform == "wayland" || ozone_platform == "x11";
+#if defined(OS_LINUX)
+  // Chromium rejects Wayland ozone + Vulkan; keep Vulkan off for Linux OSR.
+  const bool disable_vulkan = true;
+#else
+  const bool disable_vulkan = software_osr;
+#endif
   if (disable_vulkan) {
     command_line->AppendSwitch("disable-vulkan");
   }
@@ -78,7 +80,7 @@ void SabineApp::OnBeforeCommandLineProcessing(
 
 #if defined(OS_LINUX)
   // CEF #3953: shared-texture OSR needs ANGLE's EGL backend for DMA-BUF.
-  if (!software_osr) {
+  if (command_line->HasSwitch("sabine-shared-texture") && !software_osr) {
     if (!command_line->HasSwitch("use-gl")) {
       command_line->AppendSwitchWithValue("use-gl", "angle");
     }

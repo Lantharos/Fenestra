@@ -82,6 +82,8 @@ impl SabineWindow {
     /// Linux only: opt into CEF shared-texture (DMA-BUF) OSR.
     ///
     /// Disabled by default — Chromium still fails SkSurface init on NVIDIA.
+    /// When enabled, CEF is launched with X11 ozone + ANGLE gl-egl (CEF requirement);
+    /// the default Linux path stays on Wayland ozone with software paints.
     #[cfg(target_os = "linux")]
     pub fn shared_texture_osr(mut self, enabled: bool) -> Self {
         self.config.browser.shared_texture_osr = enabled;

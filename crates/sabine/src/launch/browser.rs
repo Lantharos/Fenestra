@@ -84,11 +84,18 @@ pub(crate) fn apply_browser_launch_args(
     let enabled_features: Vec<&str> = {
         #[cfg(target_os = "linux")]
         {
-            // CEF #3953/#3954: Linux shared-texture OSR needs X11 ozone + ANGLE GL-EGL.
             let mut features = vec!["UseOzonePlatform"];
-            command.arg("--ozone-platform=x11");
-            command.arg("--use-gl=angle");
-            command.arg("--use-angle=gl-egl");
+            // Default: Wayland ozone (matches the Sabine shell). Shared-texture
+            // OSR still needs X11 + ANGLE GL-EGL per CEF #3953/#3954.
+            let use_shared = options.shared_texture_osr && !options.software_osr_fallback;
+            if use_shared {
+                command.arg("--ozone-platform=x11");
+                command.arg("--use-gl=angle");
+                command.arg("--use-angle=gl-egl");
+            } else {
+                command.arg("--ozone-platform=wayland");
+            }
+            // Wayland ozone rejects Vulkan; keep it off on Linux CEF generally.
             command.arg("--disable-vulkan");
             if options.vaapi_hardware_decode {
                 features.push("VaapiVideoDecoder");

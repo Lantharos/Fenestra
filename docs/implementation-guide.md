@@ -50,8 +50,12 @@ not outlive a crashed parent.
 
 Accelerated OSR is preferred on Windows and macOS. On Linux, software `OnPaint` is the default
 because Chromium's shared-texture (DMA-BUF) path still fails SkSurface initialization on many
-drivers — especially NVIDIA. Opt in with `WindowBuilder::shared_texture_osr(true)` / 
+drivers — especially NVIDIA. Opt in with `WindowBuilder::shared_texture_osr(true)` /
 `--sabine-shared-texture`. Software is also forced with `--sabine-software-osr`.
+
+Linux CEF ozone defaults to **Wayland** (same as the Sabine shell). Shared-texture opt-in
+still forces **X11** ozone + ANGLE `gl-egl` because that is what CEF/Chromium currently require
+for DMA-BUF OSR — not because Sabine wants X11.
 
 - **Linux** — when shared textures are enabled, the host sends DMA-BUF file descriptors for
   `OnAcceleratedPaint`; the compositor imports them zero-copy into wgpu (Vulkan external memory)
