@@ -345,7 +345,16 @@ impl OsrNativeHost {
 }
 
 pub(super) fn can_defer_window_visibility() -> bool {
-    true
+    // Windows accelerated OSR can stay silent while CEF/GPU spin up; showing
+    // the native shell immediately avoids an invisible window forever.
+    #[cfg(target_os = "windows")]
+    {
+        return false;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        true
+    }
 }
 
 pub(super) fn platform_chrome(chrome: SabineWindowChrome) -> PlatformWindowChrome {

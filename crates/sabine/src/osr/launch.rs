@@ -8,9 +8,11 @@ use crate::host::{ManagedChild, prepare_child_command};
 use crate::osr::transport::IpcEndpoint;
 use crate::{
     BridgeHandlers, SabineError, SabineProcess, SabineResult, SabineWindowConfig,
-    browser_profile_dir, ld_library_path, prepare_bridge_command, spawn_bridge_dispatch,
+    browser_profile_dir, prepare_bridge_command, spawn_bridge_dispatch,
     spawn_bridge_dispatch_for_window,
 };
+#[cfg(target_os = "linux")]
+use crate::ld_library_path;
 use sabine_bridge::{BridgeRuntime, LaunchMetrics};
 
 pub(crate) const OSR_HOST_ARG: &str = "--sabine-osr-host";
@@ -265,9 +267,24 @@ pub(crate) fn cef_osr_command(
         ));
     crate::apply_browser_launch_args(&mut command, &config.browser_options(), config.dev_mode);
     crate::host::prepare_detachable_child_command(&mut command);
-    command
-        .current_dir(&release_dir)
-        .env("LD_LIBRARY_PATH", ld_library_path(&release_dir));
+    command.current_dir(&release_dir);
+    #[cfg(target_os = "linux")]
+    {
+        command.env("LD_LIBRARY_PATH", ld_library_path(&release_dir));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let release = release_dir.to_string_lossy();
+        let path = std::env::var("PATH").unwrap_or_default();
+        command.env(
+            "PATH",
+            if path.is_empty() {
+                release.into_owned()
+            } else {
+                format!("{release};{path}")
+            },
+        );
+    }
     #[cfg(target_os = "linux")]
     {
         let ozone = if config.browser_options().shared_texture_osr

@@ -140,11 +140,11 @@ pub fn prepare_machine_with_progress(
 
     let policy = load_policy();
     let _ = save_policy(&policy);
-    if policy.login_autostart {
-        let _ = install_login_autostart();
-    }
-    let daemon_running = ensure_daemon_running().unwrap_or(false);
 
+    // Install the runtime in this process first. Starting the daemon beforehand
+    // races: `sabine-service run` immediately calls maintain(), which takes the
+    // same install lock and makes the setup UI report "Waiting for another
+    // Sabine runtime install" for the install it just kicked off.
     on_progress(PrepareProgress {
         stage: PrepareStage::Runtime,
         message: "Preparing runtime".to_string(),
@@ -163,6 +163,11 @@ pub fn prepare_machine_with_progress(
             fraction,
         });
     })?;
+
+    if policy.login_autostart {
+        let _ = install_login_autostart();
+    }
+    let daemon_running = ensure_daemon_running().unwrap_or(false);
 
     let registered_app = if let Some(manifest) = register {
         on_progress(PrepareProgress {
@@ -403,7 +408,12 @@ pub fn uninstall_login_autostart() -> ServiceResult<()> {
 }
 
 fn run_checked(command: &mut Command) -> ServiceResult<()> {
-    let status = command.status()?;
+    // Windows `reg.exe` prints "The operation completed successfully." to stdout
+    // on every successful write; keep that noise out of the setup UI.
+    let status = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
     if status.success() {
         Ok(())
     } else {

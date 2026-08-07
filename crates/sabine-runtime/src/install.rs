@@ -6,6 +6,9 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(windows)]
+use std::process::{Command, Stdio};
+
 use crate::detect::{detect_package, is_runtime_dir};
 use crate::download::{
     download_file, extract_archive, first_extracted_runtime_dir, latest_install_plan,
@@ -331,12 +334,24 @@ impl RuntimeInstallLock {
                         let _ = std::fs::remove_file(&path);
                         continue;
                     }
+                    let self_wait =
+                        lock_holder_pid(&path).is_some_and(|pid| pid == std::process::id());
                     if last_heartbeat.elapsed() >= INSTALL_LOCK_WAIT_HEARTBEAT {
                         let waited = started.elapsed().as_secs();
+                        let message = if self_wait {
+                            format!("Finishing runtime install ({waited}s)")
+                        } else {
+                            let holder = lock_holder_pid(&path)
+                                .map(|pid| format!(" (held by pid {pid})"))
+                                .unwrap_or_default();
+                            format!(
+                                "Waiting for another Sabine runtime install{holder} ({waited}s)"
+                            )
+                        };
                         progress(RuntimeInstallProgress::new(
                             RuntimeInstallStep::Preparing,
                             None,
-                            format!("Waiting for another Sabine runtime install ({waited}s)"),
+                            message,
                         ));
                         last_heartbeat = Instant::now();
                     }
@@ -401,16 +416,15 @@ fn lock_is_stale(path: &Path) -> bool {
 }
 
 fn lock_holder_alive(path: &Path) -> bool {
-    let Ok(contents) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let Some(pid) = contents.lines().find_map(|line| {
+    lock_holder_pid(path).is_some_and(process_alive)
+}
+
+fn lock_holder_pid(path: &Path) -> Option<u32> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    contents.lines().find_map(|line| {
         line.strip_prefix("pid=")
             .and_then(|value| value.trim().parse::<u32>().ok())
-    }) else {
-        return false;
-    };
-    process_alive(pid)
+    })
 }
 
 fn process_alive(pid: u32) -> bool {
@@ -423,11 +437,23 @@ fn process_alive(pid: u32) -> bool {
         let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
         result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        // Without a cheap PID probe, keep the age-based stale timeout.
+        Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+            .is_some_and(|output| {
+                let text = String::from_utf8_lossy(&output.stdout);
+                text.contains(&pid.to_string())
+            })
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
         let _ = pid;
-        true
+        false
     }
 }
 

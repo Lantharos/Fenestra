@@ -332,6 +332,16 @@ impl ApplicationHandler for OsrNativeHost {
             event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
             return;
         }
+        if self.config.visible
+            && !self.presented
+            && self.window.is_some()
+            && self.socket.is_some()
+            && self.started.elapsed() >= Duration::from_secs(4)
+        {
+            self.render();
+            self.present_after_first_frame();
+            return;
+        }
         if self.started.elapsed() > Duration::from_secs(2)
             && self.child.is_none()
             && !self.cef_handed_off

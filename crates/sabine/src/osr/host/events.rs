@@ -18,6 +18,11 @@ impl OsrNativeHost {
                     self.handoff_deadline = None;
                     self.send_resize();
                     self.send_current_lifecycle();
+                    if self.config.visible && !self.presented && self.window.is_some() {
+                        self.render();
+                        self.present_after_first_frame();
+                        needs_redraw = true;
+                    }
                 }
                 super::types::OsrHostEvent::Message(OsrMessage::Frame(frame)) => {
                     if self.accepts_paint() {
@@ -43,6 +48,7 @@ impl OsrNativeHost {
                 }
                 super::types::OsrHostEvent::Message(OsrMessage::AccelFrame(frame)) => {
                     if self.accepts_paint() {
+                        self.accel_fallback.note_frame();
                         let was_presented = self.presented;
                         let was_resize_pending = self.pending_resize_paint.is_some();
                         let updated = self.update_accel_frame(frame);
