@@ -213,3 +213,7 @@ cargo check --target x86_64-pc-windows-gnu --workspace
 The Windows cross-check validates Rust cfg coverage. A release still needs a native Windows CEF-host
 build and an actual GPU/input smoke test. The same rule applies to macOS. Linux tests do not prove
 Windows or macOS composition behavior.
+
+On Windows, `sabine-host` must be built with **MSVC** (Visual Studio 2019+ C++ workload). Official CEF
+binaries do not link with MinGW/MSYS. Sabine forces a Visual Studio CMake generator and normalizes
+`CEF_ROOT` to forward slashes so CEF’s cmake macros do not treat `\Users\...` as escape sequences.

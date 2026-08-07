@@ -7,6 +7,7 @@ use std::{
 };
 
 const SERVICE_REPO: &str = "Lantharos/Sabine";
+const SERVICE_GIT_URL: &str = "https://github.com/Lantharos/Sabine";
 
 pub fn cached_service_path() -> PathBuf {
     service_data_dir().join("bin").join(service_binary_name())
@@ -44,33 +45,134 @@ pub fn ensure_service_executable(
         return Ok(path);
     }
 
+    let destination = cached_service_path();
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
     on_progress(PrepareProgress {
         stage: PrepareStage::Service,
         message: "Downloading Sabine service".to_string(),
         fraction: Some(0.02),
     });
 
-    let destination = cached_service_path();
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)?;
+    match try_download_release_service(&destination, &mut on_progress) {
+        Ok(()) => {
+            on_progress(PrepareProgress {
+                stage: PrepareStage::Service,
+                message: "Sabine service ready".to_string(),
+                fraction: Some(0.08),
+            });
+            return Ok(destination);
+        }
+        Err(download_error) => {
+            on_progress(PrepareProgress {
+                stage: PrepareStage::Service,
+                message: "Release asset missing; building Sabine service from GitHub".to_string(),
+                fraction: Some(0.03),
+            });
+            install_service_via_cargo(&destination, &mut on_progress).map_err(|cargo_error| {
+                ServiceError::Update(format!(
+                    "{download_error}; cargo install also failed: {cargo_error}"
+                ))
+            })?;
+            on_progress(PrepareProgress {
+                stage: PrepareStage::Service,
+                message: "Sabine service ready".to_string(),
+                fraction: Some(0.08),
+            });
+            Ok(destination)
+        }
     }
+}
+
+fn try_download_release_service(
+    destination: &Path,
+    on_progress: &mut impl FnMut(PrepareProgress),
+) -> ServiceResult<()> {
     let temporary = destination.with_extension("download");
     let url = service_download_url();
-    download_file(&url, &temporary, &mut on_progress)?;
+    download_file(&url, &temporary, on_progress)?;
+    finalize_service_binary(&temporary, destination)?;
+    Ok(())
+}
+
+fn install_service_via_cargo(
+    destination: &Path,
+    on_progress: &mut impl FnMut(PrepareProgress),
+) -> ServiceResult<()> {
+    if which("cargo").is_err() {
+        return Err(ServiceError::Update(
+            "Rust/cargo is required to build sabine-service until GitHub Releases publish binaries. \
+Install Rust from https://rustup.rs, or set SABINE_SERVICE_PATH / SABINE_SERVICE_URL."
+                .into(),
+        ));
+    }
+
+    on_progress(PrepareProgress {
+        stage: PrepareStage::Service,
+        message: "Building Sabine service with cargo (this can take a few minutes)".to_string(),
+        fraction: Some(0.04),
+    });
+
+    let cargo_root = destination
+        .parent()
+        .map(|parent| parent.join(".cargo-root"))
+        .ok_or_else(|| ServiceError::Update("invalid service destination".into()))?;
+    if cargo_root.exists() {
+        let _ = fs::remove_dir_all(&cargo_root);
+    }
+    fs::create_dir_all(&cargo_root)?;
+
+    let status = Command::new("cargo")
+        .args(["install", "--git", SERVICE_GIT_URL, "--force", "--root"])
+        .arg(&cargo_root)
+        .arg("--package")
+        .arg("sabine-service")
+        .status()
+        .map_err(|error| ServiceError::Update(format!("failed to run cargo: {error}")))?;
+    if !status.success() {
+        let _ = fs::remove_dir_all(&cargo_root);
+        return Err(ServiceError::Update(format!(
+            "cargo install --git {SERVICE_GIT_URL} --package sabine-service failed with {status}"
+        )));
+    }
+
+    let installed = cargo_root.join("bin").join(service_binary_name());
+    if !installed.is_file() {
+        let _ = fs::remove_dir_all(&cargo_root);
+        return Err(ServiceError::Update(format!(
+            "cargo install succeeded but {} was not created",
+            installed.display()
+        )));
+    }
+    fs::copy(&installed, destination).map_err(|error| {
+        ServiceError::Update(format!(
+            "failed to copy service binary to {}: {error}",
+            destination.display()
+        ))
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(&temporary)?.permissions();
+        let mut permissions = fs::metadata(destination)?.permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&temporary, permissions)?;
+        fs::set_permissions(destination, permissions)?;
     }
-    fs::rename(&temporary, &destination)?;
-    on_progress(PrepareProgress {
-        stage: PrepareStage::Service,
-        message: "Sabine service ready".to_string(),
-        fraction: Some(0.08),
-    });
-    Ok(destination)
+    let _ = fs::remove_dir_all(&cargo_root);
+    Ok(())
+}
+
+fn finalize_service_binary(temporary: &Path, destination: &Path) -> ServiceResult<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(temporary)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(temporary, permissions)?;
+    }
+    fs::rename(temporary, destination)?;
+    Ok(())
 }
 
 fn service_download_url() -> String {
@@ -166,7 +268,7 @@ fn download_file(
     } else {
         let _ = fs::remove_file(destination);
         Err(ServiceError::Update(format!(
-            "failed to download Sabine service from {url}; publish a release asset or set SABINE_SERVICE_URL / SABINE_SERVICE_PATH"
+            "failed to download Sabine service from {url}"
         )))
     }
 }

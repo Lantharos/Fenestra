@@ -51,5 +51,12 @@ pub(crate) fn runtime_is_standard(runtime_dir: &Path) -> bool {
         .is_some_and(|name| name.ends_with(RuntimePackage::Standard.install_suffix()))
         && runtime_dir.join("include").is_dir()
         && runtime_dir.join("libcef_dll").is_dir()
-        && runtime_dir.join("Release").join("libcef.so").is_file()
+        && has_libcef_binary(runtime_dir)
+}
+
+fn has_libcef_binary(runtime_dir: &Path) -> bool {
+    let release = runtime_dir.join("Release");
+    release.join("libcef.so").is_file()
+        || release.join("libcef.dll").is_file()
+        || release.join("libcef.dylib").is_file()
 }

@@ -10,6 +10,14 @@ if(NOT CEF_ROOT)
   message(FATAL_ERROR "CEF_ROOT is required")
 endif()
 
+# CEF macros interpolate CEF_LIB_* into CMake strings; backslashes become escapes.
+file(TO_CMAKE_PATH "${CEF_ROOT}" CEF_ROOT)
+
+if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  message(FATAL_ERROR
+    "sabine-host on Windows requires MSVC. Official CEF binaries cannot be linked with MinGW/MSYS.")
+endif()
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CEF_ROOT}/cmake")
 find_package(CEF REQUIRED)
 

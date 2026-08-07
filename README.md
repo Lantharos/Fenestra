@@ -89,8 +89,8 @@ const tab = await guest.create({
 
 On first launch (or `sabine dev`), Sabine prepares the shared Chromium runtime when it is missing
 (with progress). App launches also register with the shared Sabine service. Later runs adopt that
-install and open immediately. If the service binary is missing, Sabine downloads it from GitHub
-Releases into the shared data dir.
+install and open immediately. If the service binary is missing, Sabine tries GitHub Releases first,
+then falls back to `cargo install --git` (Rust must be installed) until release binaries are published.
 
 ## Window recipes
 
@@ -169,20 +169,23 @@ Sabine keeps the Chromium runtime under the platform application-data directory.
 `sabine-service` owns machine setup for every Sabine app:
 
 1. The first app launches with Sabine bootstrap code and a native progress window.
-2. Bootstrap downloads the service binary from GitHub Releases if needed, then starts it.
+2. Bootstrap obtains the service binary (GitHub Releases if available, otherwise
+   `cargo install --git https://github.com/Lantharos/Sabine`), then starts it.
 3. The service installs the latest compatible Chromium runtime.
 4. The app registers with the service and starts.
 
 Later apps reuse that service and runtime. By default the service also starts at login so the
 runtime stays warm. Prefer on-demand start with `sabine-service prefer-on-demand`.
 
-Service download URL defaults to:
+Service acquisition order:
 
-```text
-https://github.com/Lantharos/Sabine/releases/latest/download/sabine-service-{os}-{arch}
-```
+1. `SABINE_SERVICE_PATH` if set
+2. Binary next to the current executable / on `PATH` / cached under the Sabine data dir
+3. GitHub Releases asset:
+   `https://github.com/Lantharos/Sabine/releases/latest/download/sabine-service-{os}-{arch}`
+4. Fallback: build from git with cargo (requires a Rust toolchain)
 
-Override with `SABINE_SERVICE_URL` or point at a local binary with `SABINE_SERVICE_PATH`.
+Override the release URL with `SABINE_SERVICE_URL`.
 
 ```sh
 sabine runtime doctor
