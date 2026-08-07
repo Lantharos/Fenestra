@@ -59,4 +59,10 @@ fn has_libcef_binary(runtime_dir: &Path) -> bool {
     release.join("libcef.so").is_file()
         || release.join("libcef.dll").is_file()
         || release.join("libcef.dylib").is_file()
+        || release
+            .join("Chromium Embedded Framework.framework")
+            .is_dir()
+        || runtime_dir
+            .join("Chromium Embedded Framework.framework")
+            .is_dir()
 }

@@ -216,12 +216,11 @@ impl ProgressApp {
         }
         self.last_paint = Instant::now();
 
-        let heading = if message.is_empty() {
+        let status = if message.is_empty() {
             self.title.as_str()
         } else {
             message.as_str()
         };
-        window.set_title(heading);
 
         let size = window.surface_size();
         let width = size.width.max(1);
@@ -257,7 +256,7 @@ impl ProgressApp {
             height,
             pad,
             pad + (8.0 * scale) as i32,
-            heading,
+            status,
             TEXT,
             scale,
         );
