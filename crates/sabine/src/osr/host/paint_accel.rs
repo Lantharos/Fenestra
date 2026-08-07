@@ -48,10 +48,18 @@ impl OsrNativeHost {
         #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
         let imported: Result<wgpu::Texture, String> = Err("accel import unsupported".into());
 
-        let Ok(texture) = imported else {
-            return false;
-        };
-        crate::osr::accel::install_imported_texture(renderer, &texture_id, frame, texture).is_ok()
+        match imported {
+            Ok(texture) => {
+                crate::osr::accel::install_imported_texture(renderer, &texture_id, frame, texture)
+                    .is_ok()
+            }
+            Err(error) => {
+                if self.accel_fallback.accel_ok() == 0 && self.accel_fallback.accel_fail() == 0 {
+                    eprintln!("Sabine OSR: accelerated texture import failed: {error}");
+                }
+                false
+            }
+        }
     }
 
     fn note_accel_surface(&mut self, frame: &OsrAccelFrame) {

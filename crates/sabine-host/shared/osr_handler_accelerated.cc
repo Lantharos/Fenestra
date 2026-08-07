@@ -23,13 +23,12 @@ bool PreferSharedTexture(CefRefPtr<CefCommandLine> command_line) {
   if (!command_line || command_line->HasSwitch("sabine-software-osr")) {
     return false;
   }
-#if defined(OS_LINUX) || defined(OS_WIN)
-  // Linux DMA-BUF and Windows D3D shared-texture OSR are still fragile;
-  // software OnPaint is the reliable default. Opt in with
-  // --sabine-shared-texture.
+#if defined(OS_LINUX)
+  // Linux shared-texture OSR (DMA-BUF) still fails SkSurface init on many
+  // drivers — especially NVIDIA. Opt in with --sabine-shared-texture.
   return command_line->HasSwitch("sabine-shared-texture");
 #else
-  // macOS IOSurface path is the default accelerated route.
+  // Windows (D3D11) and macOS (IOSurface) use accelerated OSR by default.
   return true;
 #endif
 }

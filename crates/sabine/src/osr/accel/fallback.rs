@@ -46,6 +46,14 @@ impl AccelFallbackPolicy {
         self.accel_fail = self.accel_fail.saturating_add(1);
     }
 
+    pub(crate) fn accel_ok(&self) -> u32 {
+        self.accel_ok
+    }
+
+    pub(crate) fn accel_fail(&self) -> u32 {
+        self.accel_fail
+    }
+
     /// When still waiting for the first successful paint, wake the host loop
     /// so silence can trigger a software OSR relaunch.
     pub(crate) fn paint_watch_deadline(&self) -> Option<Instant> {

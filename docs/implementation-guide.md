@@ -48,15 +48,17 @@ not outlive a crashed parent.
 
 ## Paint and composition
 
-Accelerated OSR is preferred on macOS. On Linux and Windows, software `OnPaint` is the default
-because shared-texture OSR is still fragile (Linux DMA-BUF / SkSurface failures on many drivers —
-especially NVIDIA; Windows D3D handle import is opt-in until proven reliable). Opt in with
-`WindowBuilder::shared_texture_osr(true)` / `--sabine-shared-texture`. Software is also forced with
-`--sabine-software-osr`.
+Accelerated OSR is preferred on Windows and macOS. On Linux, software `OnPaint` is the default
+because Chromium's shared-texture (DMA-BUF) path still fails SkSurface initialization on many
+drivers — especially NVIDIA. Opt in with `WindowBuilder::shared_texture_osr(true)` /
+`--sabine-shared-texture`. Software is also forced with `--sabine-software-osr`.
 
 Linux CEF ozone defaults to **Wayland** (same as the Sabine shell). Shared-texture opt-in
 still forces **X11** ozone + ANGLE `gl-egl` because that is what CEF/Chromium currently require
 for DMA-BUF OSR — not because Sabine wants X11. Windows and macOS do not pass ozone overrides.
+
+On Windows the compositor uses the **Vulkan** wgpu backend so CEF D3D11 shared handles can be
+imported (`VULKAN_EXTERNAL_MEMORY_WIN32`). DX12 cannot import those handles.
 
 - **Linux** — when shared textures are enabled, the host sends DMA-BUF file descriptors for
   `OnAcceleratedPaint`; the compositor imports them zero-copy into wgpu (Vulkan external memory)

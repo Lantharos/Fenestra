@@ -74,8 +74,9 @@ pub(super) struct TextBufferEntry {
 fn preferred_backends() -> wgpu::Backends {
     #[cfg(target_os = "windows")]
     {
-        // D3D11 shared-handle import needs the Vulkan HAL path.
-        wgpu::Backends::VULKAN | wgpu::Backends::DX12
+        // CEF D3D11 shared-handle import is Vulkan-only in wgpu-hal
+        // (`texture_from_d3d11_shared_handle`). DX12 cannot import those handles.
+        wgpu::Backends::VULKAN
     }
     #[cfg(target_os = "linux")]
     {

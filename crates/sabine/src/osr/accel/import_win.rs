@@ -3,6 +3,7 @@ use wgpu::hal::api::Vulkan;
 use crate::osr::protocol::OsrAccelFrame;
 use crate::render::GpuRenderer;
 
+const CEF_COLOR_TYPE_RGBA_8888: u32 = 0;
 const CEF_COLOR_TYPE_BGRA_8888: u32 = 1;
 
 /// Import a duplicated D3D11 shared `HANDLE` into a wgpu Vulkan texture.
@@ -13,8 +14,9 @@ pub(crate) fn try_import_d3d11(
     if frame.native_handle == 0 || frame.width == 0 || frame.height == 0 {
         return Err("invalid d3d11 shared handle frame".into());
     }
-    if frame.format != CEF_COLOR_TYPE_BGRA_8888 {
-        return Err("d3d11 import requires BGRA8888".into());
+    // CEF reports channel order; the shared DXGI texture is BGRA8888 either way.
+    if frame.format != CEF_COLOR_TYPE_BGRA_8888 && frame.format != CEF_COLOR_TYPE_RGBA_8888 {
+        return Err(format!("unsupported d3d11 color format {}", frame.format));
     }
     if !renderer.supports_feature(wgpu::Features::VULKAN_EXTERNAL_MEMORY_WIN32) {
         close_handle(frame.native_handle);
