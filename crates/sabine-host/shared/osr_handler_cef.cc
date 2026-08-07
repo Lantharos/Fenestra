@@ -128,8 +128,8 @@ void SabineOsrHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     DestroyGuest(id);
   } else if (browser_ && browser_->IsSame(browser)) {
     std::vector<std::string> ids;
-    for (const GuestView* guest : guests_.InZOrder()) {
-      ids.push_back(guest->id);
+    for (const GuestView* view : guests_.InZOrder()) {
+      ids.push_back(view->id);
     }
     for (const auto& id : ids) {
       DestroyGuest(id);
