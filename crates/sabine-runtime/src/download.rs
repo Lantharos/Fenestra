@@ -109,13 +109,15 @@ pub(crate) fn verify_sha1_with_progress(
 }
 
 pub(crate) fn extract_archive(archive: &Path, destination: &Path) -> Result<(), RuntimeError> {
+    std::fs::create_dir_all(destination)?;
+    // Canonicalize so the archive path is absolute. Extract with cwd=destination
+    // instead of `tar -C <path>`: GNU tar (common via Git for Windows) treats a
+    // drive letter in -C as a remote hostname and produces a corrupt/partial tree.
+    let archive = std::fs::canonicalize(archive).unwrap_or_else(|_| archive.to_path_buf());
     let status = Command::new("tar")
-        .args([
-            "-xjf",
-            archive.to_string_lossy().as_ref(),
-            "-C",
-            destination.to_string_lossy().as_ref(),
-        ])
+        .current_dir(destination)
+        .arg("-xjf")
+        .arg(&archive)
         .status()
         .map_err(RuntimeError::Io)?;
     if status.success() {

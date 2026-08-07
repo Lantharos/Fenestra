@@ -45,6 +45,15 @@ impl AccelFallbackPolicy {
     pub(crate) fn note_accel_fail(&mut self) {
         self.accel_fail = self.accel_fail.saturating_add(1);
     }
+
+    /// When still waiting for the first successful paint, wake the host loop
+    /// so silence can trigger a software OSR relaunch.
+    pub(crate) fn paint_watch_deadline(&self) -> Option<Instant> {
+        if self.software || self.accel_ok > 0 || self.frames > 0 {
+            return None;
+        }
+        Some(self.started + Duration::from_secs(3))
+    }
 }
 
 /// Relaunch into software OSR when accelerated paints never succeed after a
@@ -72,6 +81,14 @@ mod tests {
         let mut policy = AccelFallbackPolicy::default();
         policy.started = Instant::now() - Duration::from_secs(4);
         assert!(should_relaunch_software(&policy));
+    }
+
+    #[test]
+    fn paint_watch_deadline_clears_after_frames() {
+        let mut policy = AccelFallbackPolicy::default();
+        assert!(policy.paint_watch_deadline().is_some());
+        policy.note_frame();
+        assert!(policy.paint_watch_deadline().is_none());
     }
 
     #[test]

@@ -49,8 +49,15 @@ pub(crate) fn runtime_is_standard(runtime_dir: &Path) -> bool {
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.ends_with(RuntimePackage::Standard.install_suffix()))
+        && standard_sdk_present(runtime_dir)
+}
+
+/// Headers + CMake modules needed to build `sabine-host` against a Standard CEF tree.
+pub(crate) fn standard_sdk_present(runtime_dir: &Path) -> bool {
+    runtime_dir.join("cmake").is_dir()
         && runtime_dir.join("include").is_dir()
         && runtime_dir.join("libcef_dll").is_dir()
+        && runtime_dir.join("include").join("cef_version.h").is_file()
         && has_libcef_binary(runtime_dir)
 }
 

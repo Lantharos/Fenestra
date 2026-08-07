@@ -148,6 +148,20 @@ fn install_user_runtime_inner(
     ));
     std::fs::rename(&extracted, &plan.install_dir)?;
     std::fs::write(plan.install_dir.join("VERSION"), &plan.version)?;
+    if config.package == RuntimePackage::Standard
+        && !crate::host::standard_sdk_present(&plan.install_dir)
+    {
+        let path = plan.install_dir.clone();
+        let _ = std::fs::remove_dir_all(&path);
+        let _ = std::fs::remove_dir_all(&work_dir);
+        return Err(RuntimeError::InstallationFailed(format!(
+            "extracted CEF archive at {} is missing the standard SDK layout \
+             (cmake/, include/cef_version.h, libcef_dll/, Release/libcef.*). \
+             On Windows, ensure `tar` is the OS/bsdtar build — Git's GNU tar \
+             mishandles drive-letter extract paths.",
+            path.display()
+        )));
+    }
     let _ = std::fs::remove_dir_all(&work_dir);
     progress(RuntimeInstallProgress::new(
         RuntimeInstallStep::Complete,

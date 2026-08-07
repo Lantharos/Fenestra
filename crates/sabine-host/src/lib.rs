@@ -136,13 +136,25 @@ pub fn ensure_host(runtime_dir: &Path) -> Result<PathBuf, String> {
     {
         return Ok(binary);
     }
-    if !runtime_dir.join("include").is_dir()
-        || !runtime_dir.join("libcef_dll").is_dir()
-        || !runtime_dir.join("cmake").is_dir()
-    {
+    let missing = [
+        ("cmake", runtime_dir.join("cmake").is_dir()),
+        ("include", runtime_dir.join("include").is_dir()),
+        (
+            "include/cef_version.h",
+            runtime_dir.join("include").join("cef_version.h").is_file(),
+        ),
+        ("libcef_dll", runtime_dir.join("libcef_dll").is_dir()),
+    ]
+    .into_iter()
+    .filter_map(|(name, ok)| (!ok).then_some(name))
+    .collect::<Vec<_>>();
+    if !missing.is_empty() {
         return Err(format!(
-            "CEF runtime at {} is not a standard CEF distribution",
-            runtime_dir.display()
+            "CEF runtime at {} is not a complete standard distribution (missing {}). \
+Reinstall with `cargo run -p sabine-cli -- runtime install` (or delete that folder and relaunch). \
+On Windows, a partial extract often means Git's GNU tar mishandled the path — use the OS `tar`.",
+            runtime_dir.display(),
+            missing.join(", ")
         ));
     }
 

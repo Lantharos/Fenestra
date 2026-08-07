@@ -240,6 +240,12 @@ impl ApplicationHandler for OsrNativeHost {
     }
 
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+        if !self.config.software_osr_fallback
+            && crate::osr::accel::should_relaunch_software(&self.accel_fallback)
+        {
+            self.relaunch_software_osr();
+            return;
+        }
         if let Some(child) = self.child.as_mut()
             && let Ok(Some(status)) = child.try_wait()
         {
@@ -321,6 +327,10 @@ impl ApplicationHandler for OsrNativeHost {
         }
         if self.cef_handed_off && self.socket.is_some() {
             self.handoff_deadline = None;
+        }
+        if let Some(deadline) = self.accel_fallback.paint_watch_deadline() {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            return;
         }
         if self.started.elapsed() > Duration::from_secs(2)
             && self.child.is_none()

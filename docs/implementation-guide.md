@@ -48,14 +48,15 @@ not outlive a crashed parent.
 
 ## Paint and composition
 
-Accelerated OSR is preferred on Windows and macOS. On Linux, software `OnPaint` is the default
-because Chromium's shared-texture (DMA-BUF) path still fails SkSurface initialization on many
-drivers — especially NVIDIA. Opt in with `WindowBuilder::shared_texture_osr(true)` /
-`--sabine-shared-texture`. Software is also forced with `--sabine-software-osr`.
+Accelerated OSR is preferred on macOS. On Linux and Windows, software `OnPaint` is the default
+because shared-texture OSR is still fragile (Linux DMA-BUF / SkSurface failures on many drivers —
+especially NVIDIA; Windows D3D handle import is opt-in until proven reliable). Opt in with
+`WindowBuilder::shared_texture_osr(true)` / `--sabine-shared-texture`. Software is also forced with
+`--sabine-software-osr`.
 
 Linux CEF ozone defaults to **Wayland** (same as the Sabine shell). Shared-texture opt-in
 still forces **X11** ozone + ANGLE `gl-egl` because that is what CEF/Chromium currently require
-for DMA-BUF OSR — not because Sabine wants X11.
+for DMA-BUF OSR — not because Sabine wants X11. Windows and macOS do not pass ozone overrides.
 
 - **Linux** — when shared textures are enabled, the host sends DMA-BUF file descriptors for
   `OnAcceleratedPaint`; the compositor imports them zero-copy into wgpu (Vulkan external memory)
@@ -217,3 +218,7 @@ Windows or macOS composition behavior.
 On Windows, `sabine-host` must be built with **MSVC** (Visual Studio 2019+ C++ workload). Official CEF
 binaries do not link with MinGW/MSYS. Sabine forces a Visual Studio CMake generator and normalizes
 `CEF_ROOT` to forward slashes so CEF’s cmake macros do not treat `\Users\...` as escape sequences.
+
+CEF archives are extracted with `tar` using the destination as the process working directory (not
+`tar -C C:\...`). Git for Windows’ GNU tar treats a drive letter in `-C` as a remote host and can
+leave a partial tree that looks installed but cannot build the host.

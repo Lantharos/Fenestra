@@ -234,21 +234,9 @@ pub(crate) fn cef_osr_command(
             PathBuf::new()
         });
     let mut command = Command::new(host_binary);
-    #[cfg(target_os = "linux")]
-    let ozone = if config.browser_options().shared_texture_osr
-        && !config.browser_options().software_osr_fallback
-    {
-        // CEF shared-texture OSR still requires X11 ozone + ANGLE GL-EGL.
-        "x11"
-    } else {
-        "wayland"
-    };
-    #[cfg(not(target_os = "linux"))]
-    let ozone = "wayland";
     command
         .arg(format!("--url={}", config.url))
         .arg("--sabine-osr")
-        .arg(format!("--sabine-ozone-platform={ozone}"))
         .arg(format!("--sabine-osr-endpoint={}", endpoint.argument()))
         .arg(format!("--sabine-parent-pid={}", std::process::id()));
     if !token_file.as_os_str().is_empty() {
@@ -279,11 +267,24 @@ pub(crate) fn cef_osr_command(
     crate::host::prepare_detachable_child_command(&mut command);
     command
         .current_dir(&release_dir)
-        .env("GDK_BACKEND", ozone)
-        .env("XDG_SESSION_TYPE", ozone)
         .env("LD_LIBRARY_PATH", ld_library_path(&release_dir));
-    if ozone == "x11" {
-        command.env_remove("WAYLAND_DISPLAY");
+    #[cfg(target_os = "linux")]
+    {
+        let ozone = if config.browser_options().shared_texture_osr
+            && !config.browser_options().software_osr_fallback
+        {
+            // CEF shared-texture OSR still requires X11 ozone + ANGLE GL-EGL.
+            "x11"
+        } else {
+            "wayland"
+        };
+        command
+            .arg(format!("--sabine-ozone-platform={ozone}"))
+            .env("GDK_BACKEND", ozone)
+            .env("XDG_SESSION_TYPE", ozone);
+        if ozone == "x11" {
+            command.env_remove("WAYLAND_DISPLAY");
+        }
     }
     // Env remains a fallback for non-handoff launches; the token file is what
     // survives CEF process-singleton relaunch into the primary process.

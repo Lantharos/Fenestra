@@ -20,10 +20,7 @@ use sabine_platform::{
     AutostartEntry, DeepLinkRegistration, GlobalShortcutActivation, GlobalShortcutRegistration,
     NativeMessagingHost, PlatformEvent, SingleInstancePolicy, TrayActivation, TrayIcon,
 };
-use tray_icon::{
-    MouseButton, MouseButtonState, TrayIconEvent,
-    menu::MenuEvent,
-};
+use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent, menu::MenuEvent};
 
 pub(super) type EventQueue = Arc<Mutex<Vec<PlatformEvent>>>;
 
