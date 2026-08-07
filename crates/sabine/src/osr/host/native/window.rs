@@ -16,8 +16,6 @@ use winit::{
 
 use crate::osr::protocol::MAIN_TEXTURE_ID;
 use crate::render::GpuRenderer;
-#[cfg(target_os = "windows")]
-use sabine_platform::WindowBackgroundEffect;
 
 #[cfg(target_os = "windows")]
 use super::windows_system_backdrop;

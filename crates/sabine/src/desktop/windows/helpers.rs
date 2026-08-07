@@ -12,7 +12,7 @@ use std::{
     net::{TcpListener, TcpStream},
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
@@ -20,17 +20,16 @@ use std::{
 };
 
 use global_hotkey::{
-    GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
+    GlobalHotKeyManager,
     hotkey::{Code, HotKey, Modifiers},
 };
 use sabine_platform::{
-    AutostartEntry, DeepLinkRegistration, GlobalShortcutActivation, GlobalShortcutRegistration,
-    NativeMessagingHost, PlatformEvent, Shortcut, SingleInstanceActivation, SingleInstancePolicy,
-    TrayActivation, TrayIcon,
+    AutostartEntry, DeepLinkRegistration, GlobalShortcutRegistration, NativeMessagingHost,
+    PlatformEvent, Shortcut, SingleInstanceActivation, SingleInstancePolicy, TrayIcon,
 };
 use tray_icon::{
-    Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent,
-    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    Icon, TrayIconBuilder,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
 };
 use windows::Win32::{
     Foundation::{ERROR_ALREADY_EXISTS, ERROR_SUCCESS, GetLastError},

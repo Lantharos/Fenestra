@@ -7,10 +7,6 @@
 
 use std::{
     collections::HashMap,
-    fs,
-    io::{Read, Write},
-    net::{TcpListener, TcpStream},
-    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -19,28 +15,14 @@ use std::{
     time::Duration,
 };
 
-use global_hotkey::{
-    GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
-    hotkey::{Code, HotKey, Modifiers},
-};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
 use sabine_platform::{
     AutostartEntry, DeepLinkRegistration, GlobalShortcutActivation, GlobalShortcutRegistration,
-    NativeMessagingHost, PlatformEvent, Shortcut, SingleInstanceActivation, SingleInstancePolicy,
-    TrayActivation, TrayIcon,
+    NativeMessagingHost, PlatformEvent, SingleInstancePolicy, TrayActivation, TrayIcon,
 };
 use tray_icon::{
-    Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent,
-    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
-};
-use windows::Win32::{
-    Foundation::{ERROR_ALREADY_EXISTS, ERROR_SUCCESS, GetLastError},
-    System::{
-        Registry::{
-            HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
-            RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW,
-        },
-        Threading::CreateMutexW,
-    },
+    MouseButton, MouseButtonState, TrayIconEvent,
+    menu::MenuEvent,
 };
 
 pub(super) type EventQueue = Arc<Mutex<Vec<PlatformEvent>>>;

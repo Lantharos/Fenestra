@@ -284,6 +284,7 @@ fn runtime_ipc_dir(app_id: &str) -> io::Result<PathBuf> {
         .join(sanitized))
 }
 
+#[cfg(any(unix, test))]
 pub(crate) fn sanitize_app_id(app_id: &str) -> String {
     let sanitized = app_id
         .chars()
