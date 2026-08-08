@@ -47,10 +47,12 @@ pub(crate) fn run_from_args(args: &[String]) -> bool {
 
 pub(crate) fn prepare(config: &SabineWindowConfig) -> SabineResult<()> {
     let register = app_manifest(config);
-    if resolve_runtime(&config.runtime).is_ok()
-        && let Ok(report) =
-            sabine_service::adopt_with_runtime(config.runtime.clone(), register.clone())
-    {
+
+    if resolve_runtime(&config.runtime).is_ok() {
+        let report = sabine_service::adopt_with_runtime(config.runtime.clone(), register.clone())
+            .map_err(|error| SabineError::CreationFailed {
+            message: format!("failed to register with Sabine service: {error}"),
+        })?;
         if std::env::var_os("SABINE_TRACE").is_some() {
             eprintln!(
                 "sabine-service ready runtime={} daemon={} login_autostart={}",
@@ -60,6 +62,13 @@ pub(crate) fn prepare(config: &SabineWindowConfig) -> SabineResult<()> {
         return Ok(());
     }
 
+    run_bootstrap_install(config, register)
+}
+
+fn run_bootstrap_install(
+    config: &SabineWindowConfig,
+    register: Option<AppManifest>,
+) -> SabineResult<()> {
     let config_path = bootstrap_config_path();
     write_bootstrap(&config_path, &config.runtime, register.as_ref()).map_err(|error| {
         SabineError::CreationFailed {
@@ -122,8 +131,11 @@ fn write_bootstrap(
         "min_version": config.min_version,
         "index_url": config.index_url,
         "allow_user_install": config.allow_user_install,
-        "allow_bundled": false,
+        "allow_bundled": config.allow_bundled,
     });
+    if let Some(dir) = &config.bundled_dir {
+        body["bundled_dir"] = dir.display().to_string().into();
+    }
     if let Some(manifest) = register {
         body["register"] = serde_json::json!({
             "id": manifest.id,
@@ -167,8 +179,14 @@ fn read_bootstrap(path: PathBuf) -> Result<(RuntimeConfig, Option<AppManifest>),
             .get("allow_user_install")
             .and_then(Value::as_bool)
             .unwrap_or(true),
-        allow_bundled: false,
-        bundled_dir: None,
+        allow_bundled: value
+            .get("allow_bundled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        bundled_dir: value
+            .get("bundled_dir")
+            .and_then(Value::as_str)
+            .map(PathBuf::from),
         ..RuntimeConfig::default()
     };
     let register = value.get("register").and_then(|entry| {
