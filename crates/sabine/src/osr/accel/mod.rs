@@ -13,7 +13,7 @@ pub(crate) use import_linux::try_import_dmabuf;
 #[cfg(target_os = "macos")]
 pub(crate) use import_mac::try_import_iosurface;
 #[cfg(windows)]
-pub(crate) use import_win::try_import_d3d11;
+pub(crate) use import_win::{close_imported_handle, try_import_d3d11};
 pub(crate) use mmap_fallback::accel_to_paint_batch;
 
 use crate::osr::protocol::OsrAccelFrame;
@@ -25,7 +25,16 @@ pub(crate) fn install_imported_texture(
     frame: &OsrAccelFrame,
     texture: wgpu::Texture,
 ) -> Result<(), String> {
-    renderer
-        .install_external_bgra_texture(texture_id, texture, frame.width, frame.height)
-        .map_err(|error| error.to_string())
+    #[cfg(windows)]
+    {
+        renderer
+            .publish_imported_bgra_frame(texture_id, texture, frame.width, frame.height)
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        renderer
+            .install_external_bgra_texture(texture_id, texture, frame.width, frame.height)
+            .map_err(|error| error.to_string())
+    }
 }

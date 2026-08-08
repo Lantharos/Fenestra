@@ -50,13 +50,21 @@ impl OsrNativeHost {
 
         match imported {
             Ok(texture) => {
-                crate::osr::accel::install_imported_texture(renderer, &texture_id, frame, texture)
-                    .is_ok()
+                let installed = crate::osr::accel::install_imported_texture(
+                    renderer,
+                    &texture_id,
+                    frame,
+                    texture,
+                )
+                .is_ok();
+                #[cfg(windows)]
+                crate::osr::accel::close_imported_handle(frame.native_handle);
+                installed
             }
             Err(error) => {
-                if self.accel_fallback.accel_ok() == 0 && self.accel_fallback.accel_fail() == 0 {
-                    eprintln!("Sabine OSR: accelerated texture import failed: {error}");
-                }
+                #[cfg(windows)]
+                crate::osr::accel::close_imported_handle(frame.native_handle);
+                eprintln!("Sabine OSR: accelerated texture import failed: {error}");
                 false
             }
         }

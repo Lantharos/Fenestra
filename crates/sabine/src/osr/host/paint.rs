@@ -347,7 +347,21 @@ impl OsrNativeHost {
 
     pub(super) fn display_list(&self, width: f32, height: f32) -> DisplayList {
         let ready = self.main_frame.is_some();
-        let background = if !ready || self.config.transparent {
+        let opaque_swapchain = self
+            .renderer
+            .as_ref()
+            .is_some_and(|renderer| renderer.surface_alpha_is_opaque());
+        let background = if !ready {
+            if self.config.transparent && opaque_swapchain {
+                Color::WINDOW
+            } else if self.config.transparent {
+                Color::rgba(0.0, 0.0, 0.0, 0.0)
+            } else {
+                Color::WINDOW
+            }
+        } else if self.config.transparent && opaque_swapchain {
+            Color::WINDOW
+        } else if self.config.transparent {
             Color::rgba(0.0, 0.0, 0.0, 0.0)
         } else {
             Color::WINDOW

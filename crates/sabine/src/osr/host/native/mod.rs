@@ -216,6 +216,7 @@ impl OsrNativeHost {
         if self.accel_fallback.is_software() || self.config.software_osr_fallback {
             return;
         }
+        eprintln!("Sabine OSR: switching CEF to software OSR after accelerated paint failures");
         self.accel_fallback.mark_software();
         self.config.software_osr_fallback = true;
         if let Some(mut child) = self.child.take() {

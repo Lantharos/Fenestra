@@ -16,10 +16,11 @@ pub(crate) fn try_import_d3d11(
     }
     // CEF reports channel order; the shared DXGI texture is BGRA8888 either way.
     if frame.format != CEF_COLOR_TYPE_BGRA_8888 && frame.format != CEF_COLOR_TYPE_RGBA_8888 {
+        close_imported_handle(frame.native_handle);
         return Err(format!("unsupported d3d11 color format {}", frame.format));
     }
     if !renderer.supports_feature(wgpu::Features::VULKAN_EXTERNAL_MEMORY_WIN32) {
-        close_handle(frame.native_handle);
+        close_imported_handle(frame.native_handle);
         return Err("adapter lacks VULKAN_EXTERNAL_MEMORY_WIN32".into());
     }
 
@@ -53,13 +54,13 @@ pub(crate) fn try_import_d3d11(
 
     let hal_texture = {
         let Some(hal_device) = (unsafe { renderer.device().as_hal::<Vulkan>() }) else {
-            close_handle(frame.native_handle);
+            close_imported_handle(frame.native_handle);
             return Err("wgpu device is not Vulkan".into());
         };
         match unsafe { hal_device.texture_from_d3d11_shared_handle(handle, &hal_desc) } {
             Ok(texture) => texture,
             Err(error) => {
-                close_handle(frame.native_handle);
+                close_imported_handle(frame.native_handle);
                 return Err(format!("texture_from_d3d11_shared_handle: {error:?}"));
             }
         }
@@ -74,7 +75,7 @@ pub(crate) fn try_import_d3d11(
     })
 }
 
-fn close_handle(raw: u64) {
+pub(crate) fn close_imported_handle(raw: u64) {
     if raw == 0 {
         return;
     }

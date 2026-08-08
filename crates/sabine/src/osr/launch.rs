@@ -5,14 +5,14 @@ use std::{
 };
 
 use crate::host::{ManagedChild, prepare_child_command};
+#[cfg(target_os = "linux")]
+use crate::ld_library_path;
 use crate::osr::transport::IpcEndpoint;
 use crate::{
     BridgeHandlers, SabineError, SabineProcess, SabineResult, SabineWindowConfig,
     browser_profile_dir, prepare_bridge_command, spawn_bridge_dispatch,
     spawn_bridge_dispatch_for_window,
 };
-#[cfg(target_os = "linux")]
-use crate::ld_library_path;
 use sabine_bridge::{BridgeRuntime, LaunchMetrics};
 
 pub(crate) const OSR_HOST_ARG: &str = "--sabine-osr-host";

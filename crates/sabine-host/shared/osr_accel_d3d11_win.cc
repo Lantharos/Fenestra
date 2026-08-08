@@ -3,7 +3,9 @@
 #include <d3d11.h>
 #include <d3d11_1.h>
 #include <dxgi.h>
+#include <dxgi1_2.h>
 
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <utility>
@@ -144,26 +146,44 @@ bool EnsureOwnedSharedSlot(OwnedSharedSlot* slot,
   desc.Usage = D3D11_USAGE_DEFAULT;
   desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
   desc.CPUAccessFlags = 0;
-  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
   ID3D11Texture2D* texture = nullptr;
-  HRESULT hr = g_d3d11.device->CreateTexture2D(&desc, nullptr, &texture);
+  HRESULT hr = g_d3d11.device1->CreateTexture2D(&desc, nullptr, &texture);
   if (FAILED(hr) || !texture) {
-    return false;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+    hr = g_d3d11.device->CreateTexture2D(&desc, nullptr, &texture);
   }
-
-  IDXGIResource* dxgi_resource = nullptr;
-  hr = texture->QueryInterface(__uuidof(IDXGIResource),
-                               reinterpret_cast<void**>(&dxgi_resource));
-  if (FAILED(hr) || !dxgi_resource) {
-    texture->Release();
+  if (FAILED(hr) || !texture) {
+    std::fprintf(stderr,
+                 "Sabine CEF: failed to create owned D3D11 shared texture (hr=0x%08lx)\n",
+                 static_cast<unsigned long>(hr));
     return false;
   }
 
   HANDLE shared_handle = nullptr;
-  hr = dxgi_resource->GetSharedHandle(&shared_handle);
-  dxgi_resource->Release();
+  IDXGIResource1* dxgi_resource1 = nullptr;
+  hr = texture->QueryInterface(__uuidof(IDXGIResource1),
+                               reinterpret_cast<void**>(&dxgi_resource1));
+  if (SUCCEEDED(hr) && dxgi_resource1) {
+    hr = dxgi_resource1->CreateSharedHandle(
+        nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
+        &shared_handle);
+    dxgi_resource1->Release();
+  }
   if (FAILED(hr) || !shared_handle) {
+    IDXGIResource* dxgi_resource = nullptr;
+    hr = texture->QueryInterface(__uuidof(IDXGIResource),
+                                 reinterpret_cast<void**>(&dxgi_resource));
+    if (SUCCEEDED(hr) && dxgi_resource) {
+      hr = dxgi_resource->GetSharedHandle(&shared_handle);
+      dxgi_resource->Release();
+    }
+  }
+  if (FAILED(hr) || !shared_handle) {
+    std::fprintf(stderr,
+                 "Sabine CEF: failed to export owned D3D11 shared handle (hr=0x%08lx)\n",
+                 static_cast<unsigned long>(hr));
     texture->Release();
     return false;
   }
@@ -185,6 +205,9 @@ ID3D11Texture2D* OpenCefSharedTexture(HANDLE cef_shared_handle) {
       cef_shared_handle, __uuidof(ID3D11Texture2D),
       reinterpret_cast<void**>(&texture));
   if (FAILED(hr)) {
+    std::fprintf(stderr,
+                 "Sabine CEF: OpenSharedResource1 failed (hr=0x%08lx)\n",
+                 static_cast<unsigned long>(hr));
     return nullptr;
   }
   return texture;

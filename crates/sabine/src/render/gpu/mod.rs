@@ -55,6 +55,7 @@ pub struct GpuRenderer {
     text_buffers: Vec<TextBufferEntry>,
     texture_cache: HashMap<String, CachedTexture>,
     scale_factor: f32,
+    surface_alpha_is_opaque: bool,
     window: Arc<dyn Window>,
 }
 
@@ -69,6 +70,28 @@ pub(super) struct CachedTexture {
 pub(super) struct TextBufferEntry {
     pub(super) buffer: Buffer,
     pub(super) command: TextCommand,
+}
+
+fn select_surface_alpha_mode(
+    modes: &[wgpu::CompositeAlphaMode],
+    transparent: bool,
+) -> wgpu::CompositeAlphaMode {
+    if transparent {
+        for preferred in [
+            wgpu::CompositeAlphaMode::PreMultiplied,
+            wgpu::CompositeAlphaMode::PostMultiplied,
+            wgpu::CompositeAlphaMode::Inherit,
+        ] {
+            if modes.contains(&preferred) {
+                return preferred;
+            }
+        }
+    }
+    modes
+        .iter()
+        .copied()
+        .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
+        .unwrap_or(modes[0])
 }
 
 fn preferred_backends() -> wgpu::Backends {
@@ -114,7 +137,7 @@ fn external_memory_features(adapter: &wgpu::Adapter) -> wgpu::Features {
 }
 
 impl GpuRenderer {
-    pub async fn new(window: Arc<dyn Window>) -> Result<Self, RendererError> {
+    pub async fn new(window: Arc<dyn Window>, transparent: bool) -> Result<Self, RendererError> {
         let size = window.surface_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: preferred_backends(),
@@ -154,19 +177,17 @@ impl GpuRenderer {
             .copied()
             .find(|mode| *mode == wgpu::PresentMode::Fifo)
             .unwrap_or(capabilities.present_modes[0]);
-        let alpha_mode = capabilities
-            .alpha_modes
-            .iter()
-            .copied()
-            .find(|mode| *mode == wgpu::CompositeAlphaMode::PreMultiplied)
-            .or_else(|| {
-                capabilities
-                    .alpha_modes
-                    .iter()
-                    .copied()
-                    .find(|mode| *mode == wgpu::CompositeAlphaMode::PostMultiplied)
-            })
-            .unwrap_or(capabilities.alpha_modes[0]);
+        let alpha_mode = select_surface_alpha_mode(&capabilities.alpha_modes, transparent);
+        let surface_alpha_is_opaque = matches!(
+            alpha_mode,
+            wgpu::CompositeAlphaMode::Opaque | wgpu::CompositeAlphaMode::Auto
+        );
+        if std::env::var_os("SABINE_TRACE").is_some() {
+            eprintln!(
+                "Sabine GPU: backend={:?} surface alpha={alpha_mode:?} transparent={transparent}",
+                adapter.get_info().backend
+            );
+        }
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -272,8 +293,13 @@ impl GpuRenderer {
             text_buffers: Vec::new(),
             texture_cache: HashMap::new(),
             scale_factor: window.scale_factor() as f32,
+            surface_alpha_is_opaque,
             window,
         })
+    }
+
+    pub(crate) fn surface_alpha_is_opaque(&self) -> bool {
+        self.surface_alpha_is_opaque
     }
 
     pub fn resize(&mut self, width: u32, height: u32, scale_factor: f32) {

@@ -233,6 +233,60 @@ impl GpuRenderer {
         Ok(bind_group)
     }
 
+    pub fn publish_imported_bgra_frame(
+        &mut self,
+        id: impl Into<String>,
+        imported: wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Result<(), RendererError> {
+        let id = id.into();
+        if width == 0 || height == 0 {
+            return Err(RendererError::Texture(
+                "imported image has empty size".to_string(),
+            ));
+        }
+        let recreate = self
+            .texture_cache
+            .get(&id)
+            .is_none_or(|entry| entry.width != width || entry.height != height);
+        if recreate {
+            self.create_dynamic_bgra_image_unorm(id.clone(), width, height);
+        }
+        let dest = self
+            .texture_cache
+            .get(&id)
+            .ok_or_else(|| RendererError::Texture("imported image cache miss".into()))?
+            .texture
+            .clone();
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("sabine-imported-bgra-copy"),
+            });
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &imported,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &dest,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
+    }
+
     pub fn install_external_bgra_texture(
         &mut self,
         id: impl Into<String>,
@@ -293,6 +347,47 @@ impl GpuRenderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&id),
+            layout: &self.image_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&self.image_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+            ],
+        });
+        self.texture_cache.insert(
+            id,
+            CachedTexture {
+                texture,
+                bind_group,
+                width,
+                height,
+            },
+        );
+    }
+
+    pub(super) fn create_dynamic_bgra_image_unorm(&mut self, id: String, width: u32, height: u32) {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&id),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });

@@ -100,14 +100,15 @@ impl OsrNativeHost {
         };
         self.surface_size = window.surface_size();
         self.scale_factor = window.scale_factor();
-        let renderer = match pollster::block_on(GpuRenderer::new(window.clone())) {
-            Ok(renderer) => renderer,
-            Err(error) => {
-                eprintln!("failed to initialize Sabine OSR renderer: {error}");
-                event_loop.exit();
-                return;
-            }
-        };
+        let renderer =
+            match pollster::block_on(GpuRenderer::new(window.clone(), self.config.transparent)) {
+                Ok(renderer) => renderer,
+                Err(error) => {
+                    eprintln!("failed to initialize Sabine OSR renderer: {error}");
+                    event_loop.exit();
+                    return;
+                }
+            };
         self.renderer = Some(renderer);
         self.window = Some(window.clone());
         let ime_caps = ImeCapabilities::new().with_hint_and_purpose();
