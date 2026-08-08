@@ -1,3 +1,5 @@
+use sabine_runtime::RuntimeConfig;
+
 use crate::{
     AppManifest, SabineService, ServiceError, ServiceResult, ensure_service_executable,
     service_data_dir,
@@ -67,6 +69,13 @@ pub fn set_login_autostart(enabled: bool) -> ServiceResult<ServicePolicy> {
 }
 
 pub fn ensure_ready(register: Option<AppManifest>) -> ServiceResult<ServiceReadyReport> {
+    ensure_ready_with_runtime(RuntimeConfig::default(), register)
+}
+
+pub fn ensure_ready_with_runtime(
+    runtime: sabine_runtime::RuntimeConfig,
+    register: Option<AppManifest>,
+) -> ServiceResult<ServiceReadyReport> {
     let policy = load_policy();
     let _ = save_policy(&policy);
 
@@ -75,7 +84,7 @@ pub fn ensure_ready(register: Option<AppManifest>) -> ServiceResult<ServiceReady
     }
 
     let daemon_running = ensure_daemon_running().unwrap_or(false);
-    let service = SabineService::default();
+    let service = SabineService::default().with_runtime(runtime);
     let report = service.maintain()?;
 
     let registered_app = if let Some(manifest) = register {
@@ -93,9 +102,16 @@ pub fn ensure_ready(register: Option<AppManifest>) -> ServiceResult<ServiceReady
 }
 
 pub fn adopt(register: Option<AppManifest>) -> ServiceResult<ServiceReadyReport> {
+    adopt_with_runtime(sabine_runtime::RuntimeConfig::default(), register)
+}
+
+pub fn adopt_with_runtime(
+    runtime: sabine_runtime::RuntimeConfig,
+    register: Option<AppManifest>,
+) -> ServiceResult<ServiceReadyReport> {
     let policy = load_policy();
     let daemon_running = ensure_daemon_running().unwrap_or(false);
-    let service = SabineService::default();
+    let service = SabineService::default().with_runtime(runtime);
     let runtime = service.runtime()?;
     let registered_app = if let Some(manifest) = register {
         Some(service.register(manifest)?.manifest.id)

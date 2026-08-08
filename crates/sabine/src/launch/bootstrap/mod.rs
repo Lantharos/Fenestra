@@ -47,11 +47,10 @@ pub(crate) fn run_from_args(args: &[String]) -> bool {
 
 pub(crate) fn prepare(config: &SabineWindowConfig) -> SabineResult<()> {
     let register = app_manifest(config);
-    if resolve_runtime(&config.runtime).is_ok() {
-        let report =
-            sabine_service::adopt(register).map_err(|error| SabineError::CreationFailed {
-                message: format!("failed to register with Sabine service: {error}"),
-            })?;
+    if resolve_runtime(&config.runtime).is_ok()
+        && let Ok(report) =
+            sabine_service::adopt_with_runtime(config.runtime.clone(), register.clone())
+    {
         if std::env::var_os("SABINE_TRACE").is_some() {
             eprintln!(
                 "sabine-service ready runtime={} daemon={} login_autostart={}",
