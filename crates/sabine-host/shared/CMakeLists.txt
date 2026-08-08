@@ -40,6 +40,8 @@ set(SABINE_HOST_SOURCES
   osr_handler_accel_ipc.h
   osr_handler_accelerated.cc
   osr_handler_accelerated.h
+  osr_accel_d3d11_win.cc
+  osr_accel_d3d11_win.h
   osr_handler_bridge.cc
   osr_handler_cef.cc
   osr_handler_downloads.cc
@@ -69,7 +71,7 @@ target_include_directories(sabine-host PRIVATE "${CEF_ROOT}")
 add_dependencies(sabine-host libcef_dll_wrapper)
 target_link_libraries(sabine-host libcef_lib libcef_dll_wrapper ${CEF_STANDARD_LIBS})
 if(OS_WINDOWS)
-  target_link_libraries(sabine-host ws2_32)
+  target_link_libraries(sabine-host ws2_32 d3d11 dxgi)
 endif()
 if(OS_MAC)
   target_link_libraries(sabine-host "-framework IOSurface" "-framework CoreFoundation")

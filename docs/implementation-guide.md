@@ -64,8 +64,12 @@ imported (`VULKAN_EXTERNAL_MEMORY_WIN32`). DX12 cannot import those handles.
   `OnAcceleratedPaint`; the compositor imports them zero-copy into wgpu (Vulkan external memory)
   when the adapter supports it, otherwise maps the plane into the existing dirty-rect framebuffer
   path.
-- **Windows** — the host duplicates the D3D11 shared `HANDLE` into the compositor process; wgpu
-  imports it on a Vulkan device when `VULKAN_EXTERNAL_MEMORY_WIN32` is available.
+- **Windows** — the host opens CEF's pooled D3D11 shared texture with
+  `OpenSharedResource1`, copies it into a Sabine-owned shared texture (CEF
+  requires this before `OnAcceleratedPaint` returns), duplicates that stable
+  handle into the compositor process, and wgpu imports it on a Vulkan device
+  when `VULKAN_EXTERNAL_MEMORY_WIN32` is available. If copy fails, the host
+  readbacks BGRA into the software paint path.
 - **macOS** — the host sends the `IOSurfaceID` for `OnAcceleratedPaint`; the compositor looks
   it up and wraps a Metal texture into wgpu. If IPC fails, the host locks the surface and bridges
   BGRA into the paint path.
@@ -93,7 +97,7 @@ authenticates with a first-line token delivered via `SABINE_OSR_TOKEN` (not argv
 | --- | --- | --- |
 | Linux | Unix domain socket | DMA-BUF FD + Vulkan → wgpu (mmap fallback) |
 | macOS | Unix domain socket | IOSurfaceID → Metal → wgpu (BGRA bridge if IPC fails) |
-| Windows | localhost TCP | duplicated D3D11 HANDLE → Vulkan → wgpu |
+| Windows | localhost TCP | CEF handle → D3D11 copy → duplicated shared HANDLE → Vulkan → wgpu |
 
 Software `OnPaint` dirty-rect batches remain the silent fallback when accelerated paint cannot run.
 

@@ -9,6 +9,7 @@
 #include "osr_handler_util.h"
 
 #if defined(OS_WIN)
+#include "osr_accel_d3d11_win.h"
 #include <windows.h>
 #elif defined(OS_MAC)
 #include <IOSurface/IOSurface.h>
@@ -244,38 +245,62 @@ void SabineOsrHandler::OnAcceleratedPaint(
                  dirtyRects);
 
 #elif defined(OS_WIN)
-  const uint64_t remote_handle =
-      DuplicateHandleToParent(info.shared_texture_handle);
-  if (remote_handle == 0) {
-    EmitBridgeEvent("\"osr.accel_handle_failed\"", "{}");
-    return;
-  }
+  auto send_copied_accel = [&](const std::string& slot_key,
+                               uint32_t accel_kind,
+                               const std::string& guest_id,
+                               int32_t x, int32_t y) -> bool {
+    AccelD3d11CopiedFrame copied{};
+    if (!CopyAcceleratedD3d11Frame(
+            slot_key, info.shared_texture_handle, frame_w, frame_h,
+            static_cast<uint32_t>(info.format), &copied)) {
+      std::vector<uint8_t> bgra;
+      if (!ReadAcceleratedD3d11FrameToBgra(
+              info.shared_texture_handle, frame_w, frame_h,
+              static_cast<uint32_t>(info.format), &bgra)) {
+        EmitBridgeEvent("\"osr.accel_copy_failed\"", "{}");
+        return false;
+      }
+      const uint32_t frame_kind = guest_id.empty()
+                                      ? (type == PET_POPUP ? kPopupFrame
+                                                           : kMainFrame)
+                                      : kGuestFrame;
+      SendPaintBatch(frame_kind, guest_id, x, y, bgra.data(), frame_w, frame_h,
+                     dirtyRects);
+      return true;
+    }
 
-  AccelPaintMeta meta;
-  meta.format = static_cast<uint32_t>(info.format);
-  meta.native_handle = remote_handle;
-  meta.stride = static_cast<uint32_t>(frame_w) * 4;
-  meta.size = static_cast<uint64_t>(meta.stride) * static_cast<uint64_t>(frame_h);
+    const uint64_t remote_handle =
+        DuplicateHandleToParent(copied.shared_handle);
+    if (remote_handle == 0) {
+      EmitBridgeEvent("\"osr.accel_handle_failed\"", "{}");
+      return false;
+    }
 
-  auto send_handle = [&](uint32_t kind, const std::string& guest_id, int32_t x,
-                         int32_t y) -> bool {
+    AccelPaintMeta meta;
+    meta.format = static_cast<uint32_t>(info.format);
+    meta.native_handle = remote_handle;
+    meta.stride = static_cast<uint32_t>(frame_w) * 4;
+    meta.size =
+        static_cast<uint64_t>(meta.stride) * static_cast<uint64_t>(frame_h);
+
     const std::string payload = BuildAccelPayload(
         guest_id, meta, dirtyRects, static_cast<uint32_t>(frame_w),
         static_cast<uint32_t>(frame_h));
     return !payload.empty() &&
-           SendMessage(kind, static_cast<uint32_t>(frame_w),
+           SendMessage(accel_kind, static_cast<uint32_t>(frame_w),
                        static_cast<uint32_t>(frame_h), x, y, payload.data(),
                        static_cast<uint32_t>(payload.size()));
   };
 
   if (GuestView* guest = GuestForBrowser(browser)) {
     if (type == PET_POPUP) {
-      send_handle(kGuestAccel, guest->id + "/popup",
-                  guest->bounds.x + guest_popup_rect_.x,
-                  guest->bounds.y + guest_popup_rect_.y);
+      send_copied_accel(guest->id + "/popup", kGuestAccel, guest->id + "/popup",
+                        guest->bounds.x + guest_popup_rect_.x,
+                        guest->bounds.y + guest_popup_rect_.y);
       return;
     }
-    if (send_handle(kGuestAccel, guest->id, guest->bounds.x, guest->bounds.y) &&
+    if (send_copied_accel(guest->id, kGuestAccel, guest->id, guest->bounds.x,
+                          guest->bounds.y) &&
         !guest->painted) {
       guest->painted = true;
       if (guest->id == kSabinePopupGuestId) {
@@ -290,7 +315,8 @@ void SabineOsrHandler::OnAcceleratedPaint(
   const uint32_t kind = type == PET_POPUP ? kPopupAccel : kMainAccel;
   const int32_t x = type == PET_POPUP ? popup_rect_.x : 0;
   const int32_t y = type == PET_POPUP ? popup_rect_.y : 0;
-  send_handle(kind, std::string(), x, y);
+  send_copied_accel(type == PET_POPUP ? "popup" : "main", kind, std::string(),
+                    x, y);
 
 #elif defined(OS_MAC)
   auto* surface =

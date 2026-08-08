@@ -47,6 +47,14 @@ const HOST_SOURCES: &[(&str, &str)] = &[
         include_str!("../shared/osr_handler_accelerated.h"),
     ),
     (
+        "osr_accel_d3d11_win.cc",
+        include_str!("../shared/osr_accel_d3d11_win.cc"),
+    ),
+    (
+        "osr_accel_d3d11_win.h",
+        include_str!("../shared/osr_accel_d3d11_win.h"),
+    ),
+    (
         "osr_handler_bridge.cc",
         include_str!("../shared/osr_handler_bridge.cc"),
     ),
