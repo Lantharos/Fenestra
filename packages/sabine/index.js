@@ -72,6 +72,10 @@ export const bridge = {
 };
 
 export const events = {
+  /** @param {(payload: import("./index.d.ts").WindowFileDragEvent) => void} callback */
+  fileDrag(callback) {
+    return listen("window.fileDrag", callback);
+  },
   /** @param {(payload: import("./index.d.ts").GuestNavigatedEvent) => void} callback */
   guestNavigated(callback) {
     return listen("guest.navigated", callback);
@@ -122,6 +126,9 @@ export const appWindow = {
   },
   restore() {
     requireApi().window.restore();
+  },
+  startDrag() {
+    requireApi().window.startDrag();
   },
 };
 

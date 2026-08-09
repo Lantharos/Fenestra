@@ -12,3 +12,5 @@ mod platform;
 mod platform;
 
 pub use platform::{DesktopServiceState, apply_desktop_services, start_desktop_event_forwarder};
+
+pub(crate) const INSTANCE_ALREADY_RUNNING: &str = "another instance is already running";

@@ -32,6 +32,10 @@ events.guestWheel((event) => {
 events.guestFavicon((event) => {
   console.log(event.id, event.favicons);
 });
+
+events.fileDrag((event) => {
+  console.log(event.phase, event.paths, event.x, event.y, event.action);
+});
 ```
 
 ## Window controls
@@ -42,6 +46,7 @@ import { appWindow } from "@lantharos/sabine";
 appWindow.show();
 appWindow.hide();
 appWindow.toggleMaximize();
+appWindow.startDrag();
 ```
 
 ## Guests

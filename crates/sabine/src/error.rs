@@ -20,6 +20,8 @@ pub enum SabineError {
     },
     #[error("window creation failed: {message}")]
     CreationFailed { message: String },
+    #[error("another instance is already running")]
+    InstanceAlreadyRunning,
     #[error("Sabine currently supports Linux, macOS, and Windows")]
     MobileUnsupported,
 }

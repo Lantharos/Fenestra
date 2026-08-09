@@ -43,6 +43,7 @@
 #include "common/json.h"
 #include "sabine_bridge_js.h"
 #include "osr/utilities.h"
+#include "osr/tasks.h"
 
 using namespace sabine_osr;
 

@@ -221,6 +221,26 @@ impl ApplicationHandler for OsrNativeHost {
             WindowEvent::MouseWheel { delta, .. } => {
                 self.forward_mouse_wheel(delta);
             }
+            WindowEvent::DragEntered { id, position } => {
+                self.begin_incoming_file_drag(event_loop, id, position);
+            }
+            WindowEvent::DragPosition {
+                id,
+                position,
+                proposed_action,
+            } => {
+                self.update_incoming_file_drag(id, position, proposed_action);
+            }
+            WindowEvent::DataTransferReceived { id, value, .. } => {
+                self.receive_incoming_file_drag(id, value.as_ref());
+            }
+            WindowEvent::DragDropped {
+                id,
+                proposed_action,
+            } => {
+                self.drop_incoming_file_drag(id, proposed_action);
+            }
+            WindowEvent::DragLeft { id } => self.leave_incoming_file_drag(id),
             WindowEvent::OutgoingDragDropped { id, action }
                 if self.active_file_drag == Some(id) =>
             {

@@ -53,6 +53,8 @@ const HOST_SOURCES: &[(&str, &str)] = &[
     ("osr/input.cc", include_str!("../shared/osr/input.cc")),
     ("osr/screen.cc", include_str!("../shared/osr/screen.cc")),
     ("osr/screen.h", include_str!("../shared/osr/screen.h")),
+    ("osr/tasks.cc", include_str!("../shared/osr/tasks.cc")),
+    ("osr/tasks.h", include_str!("../shared/osr/tasks.h")),
     (
         "osr/transport.cc",
         include_str!("../shared/osr/transport.cc"),

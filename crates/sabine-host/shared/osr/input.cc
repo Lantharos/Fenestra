@@ -164,6 +164,8 @@ void SabineOsrHandler::HandleControlLine(const std::string& line) {
       target_browser->GetMainFrame()->ExecuteJavaScript(
           script, target_browser->GetMainFrame()->GetURL(), 0);
     }
+  } else if (parts[0] == "file_drag" && parts.size() >= 2) {
+    EmitPrimaryEvent("window.fileDrag", parts[1]);
   } else if (parts[0] == "mouse_navigation" && parts.size() >= 5) {
     const int x = pointer_x;
     const int y = pointer_y;

@@ -14,7 +14,7 @@ pub use config::{
     SabineLifecyclePolicy, SabineWindowChrome, SabineWindowControlAction, SabineWindowControlRegion,
 };
 
-use crate::error::SabineResult;
+use crate::{error::SabineResult, host::SabineProcess};
 
 /// Cross-platform Sabine window builder.
 #[derive(Clone, Debug)]
@@ -35,8 +35,19 @@ impl SabineWindow {
     /// }
     /// ```
     pub fn main(build: impl FnOnce(Self) -> SabineResult<Self>) -> ! {
+        Self::main_with_process(build, |_| {})
+    }
+
+    /// Runs a Sabine app and exposes the launched process before waiting.
+    ///
+    /// Use this when application state needs the process event emitter or
+    /// launch metrics for the lifetime of the window.
+    pub fn main_with_process(
+        build: impl FnOnce(Self) -> SabineResult<Self>,
+        launched: impl FnOnce(&SabineProcess),
+    ) -> ! {
         let args = std::env::args().collect::<Vec<_>>();
-        if crate::launch::run_sabine_host_from_args(&args) {
+        if crate::dispatch_host_mode_from_args(&args) {
             std::process::exit(0);
         }
         let window = match build(Self::new()) {
@@ -47,13 +58,17 @@ impl SabineWindow {
             }
         };
         match window.launch() {
-            Ok(process) => match process.wait() {
-                Ok(status) => std::process::exit(status.code().unwrap_or(1)),
-                Err(error) => {
-                    eprintln!("Sabine process wait failed: {error}");
-                    std::process::exit(1);
+            Ok(process) => {
+                launched(&process);
+                match process.wait() {
+                    Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+                    Err(error) => {
+                        eprintln!("Sabine process wait failed: {error}");
+                        std::process::exit(1);
+                    }
                 }
-            },
+            }
+            Err(crate::SabineError::InstanceAlreadyRunning) => std::process::exit(0),
             Err(error) => {
                 eprintln!("failed to launch Sabine window: {error}");
                 std::process::exit(1);

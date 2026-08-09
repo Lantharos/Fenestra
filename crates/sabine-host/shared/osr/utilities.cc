@@ -486,33 +486,4 @@ std::string CursorName(cef_cursor_type_t type) {
   }
 }
 
-OsrCommandTask::OsrCommandTask(CefRefPtr<SabineOsrHandler> handler,
-                               std::string line)
-    : handler_(handler), line_(std::move(line)) {}
-
-OsrCommandTask::~OsrCommandTask() = default;
-
-void OsrCommandTask::Execute() {
-  handler_->HandleControlLine(line_);
-}
-
-OsrResizeTask::OsrResizeTask(CefRefPtr<SabineOsrHandler> handler)
-    : handler_(std::move(handler)) {}
-
-OsrResizeTask::~OsrResizeTask() = default;
-
-void OsrResizeTask::Execute() {
-  handler_->HandlePendingResize();
-}
-
-CloseOnDisconnectTask::CloseOnDisconnectTask(
-    CefRefPtr<SabineOsrHandler> handler)
-    : handler_(std::move(handler)) {}
-
-CloseOnDisconnectTask::~CloseOnDisconnectTask() = default;
-
-void CloseOnDisconnectTask::Execute() {
-  handler_->CloseFromNativeDisconnect();
-}
-
 }  // namespace sabine_osr

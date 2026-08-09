@@ -16,7 +16,6 @@ typedef long off_t;
 #endif
 
 #include "include/cef_command_line.h"
-#include "include/cef_task.h"
 #include "include/internal/cef_types.h"
 
 class SabineOsrHandler;
@@ -94,40 +93,6 @@ int KeyCodeForName(const std::string& key);
 std::u16string Utf8ToUtf16(const std::string& value);
 cef_mouse_button_type_t MouseButtonFromString(const std::string& value);
 std::string CursorName(cef_cursor_type_t type);
-
-class OsrCommandTask : public CefTask {
- public:
-  OsrCommandTask(CefRefPtr<SabineOsrHandler> handler, std::string line);
-  ~OsrCommandTask() override;
-  void Execute() override;
-
- private:
-  CefRefPtr<SabineOsrHandler> handler_;
-  const std::string line_;
-  IMPLEMENT_REFCOUNTING(OsrCommandTask);
-};
-
-class OsrResizeTask : public CefTask {
- public:
-  explicit OsrResizeTask(CefRefPtr<SabineOsrHandler> handler);
-  ~OsrResizeTask() override;
-  void Execute() override;
-
- private:
-  CefRefPtr<SabineOsrHandler> handler_;
-  IMPLEMENT_REFCOUNTING(OsrResizeTask);
-};
-
-class CloseOnDisconnectTask : public CefTask {
- public:
-  explicit CloseOnDisconnectTask(CefRefPtr<SabineOsrHandler> handler);
-  ~CloseOnDisconnectTask() override;
-  void Execute() override;
-
- private:
-  CefRefPtr<SabineOsrHandler> handler_;
-  IMPLEMENT_REFCOUNTING(CloseOnDisconnectTask);
-};
 
 }  // namespace sabine_osr
 

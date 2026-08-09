@@ -322,7 +322,7 @@ impl SingleInstanceGuard {
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 notify_existing_instance(&socket_path)?;
-                return Err("another Sabine instance is already running".to_string());
+                return Err(crate::desktop::INSTANCE_ALREADY_RUNNING.to_string());
             }
             Err(error) => return Err(error.to_string()),
         }

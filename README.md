@@ -34,7 +34,7 @@ bun add github:Lantharos/Sabine#path:packages/sabine
 - Visible progress while the first app prepares the machine for every Sabine app
 - One `Sabine.toml` for app identity, web assets, and packaging
 - Lifecycle controls for background windows, tray apps, and browser-style workloads
-- TypeScript package for invoke, guests, window controls, activity, and popups
+- TypeScript package for invoke, guests, window controls, native file drops, activity, and popups
 
 ## Quick start
 
@@ -75,10 +75,13 @@ fn main() {
 ```
 
 ```js
-import { invoke, guest, appWindow, listen } from "@lantharos/sabine";
+import { invoke, guest, appWindow, listen, events } from "@lantharos/sabine";
 
 const { version } = await invoke("app.version");
 listen("tray.click", () => appWindow.show());
+events.fileDrag(({ phase, paths, x, y, action }) => {
+  console.log(phase, paths, x, y, action);
+});
 
 const tab = await guest.create({
   url: "https://example.com",

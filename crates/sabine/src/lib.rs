@@ -46,6 +46,17 @@ pub use sabine_platform::{
 };
 pub use sabine_runtime::{RuntimeConfig, RuntimeMode};
 
+/// Runs an internal Sabine child mode selected by `args`.
+///
+/// Custom entry points should call this before argument parsers, logging,
+/// configuration, or other application initialization and return immediately
+/// when it yields `true`. The dispatcher recognizes both OSR-host and runtime
+/// bootstrap children. Ordinary application arguments return `false` without
+/// initializing Sabine.
+pub fn dispatch_host_mode_from_args(args: &[String]) -> bool {
+    launch::dispatch_host_mode_from_args(args)
+}
+
 pub(crate) use bridge::{
     parse_host_control, prepare_bridge_command, spawn_bridge_dispatch,
     spawn_bridge_dispatch_for_window,

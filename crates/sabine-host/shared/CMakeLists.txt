@@ -47,6 +47,8 @@ set(SABINE_HOST_SOURCES
   osr/input.cc
   osr/screen.cc
   osr/screen.h
+  osr/tasks.cc
+  osr/tasks.h
   osr/transport.cc
   osr/utilities.cc
   osr/utilities.h

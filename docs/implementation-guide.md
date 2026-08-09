@@ -16,6 +16,23 @@ Apps enter through `SabineWindow::main`. It dispatches internal child modes, bui
 launches it, and owns the process wait. `SabineWindow::launch` remains available when an application
 needs to integrate Sabine into an existing native process loop.
 
+Custom entry points that initialize an argument parser, logger, or application runtime should
+dispatch Sabine's internal children before doing any of that work:
+
+```rust
+fn main() {
+    let args = std::env::args().collect::<Vec<_>>();
+    if sabine::dispatch_host_mode_from_args(&args) {
+        return;
+    }
+
+    // Parse application arguments and initialize the app here.
+}
+```
+
+The root dispatcher covers both OSR-host and runtime-bootstrap children. It returns `false` for an
+ordinary app invocation without initializing Sabine. `SabineWindow::main` calls it automatically.
+
 The CEF helper is built from the C++ source embedded in the `sabine` crate. It always enables
 windowless rendering and always creates `SabineOsrHandler`; there is no windowed CEF handler.
 
@@ -169,6 +186,13 @@ While a guest is focused, matching `interceptedShortcuts` are consumed by the ho
 `guest.shortcut` to the primary page and neither keydown nor keyup reaches the guest. With
 `interceptHorizontalWheel`, predominantly horizontal wheel samples emit `guest.wheel` and are not
 forwarded to the guest. Favicon URL changes emit `guest.favicon`.
+
+HTML file drags from the primary page are promoted to native OS drags. Incoming URI-list drags,
+including self-drops, are accepted by the native host and emitted to the primary page as
+`window.fileDrag`. Each event carries its phase, absolute file paths, content coordinates, the
+negotiated copy/move/link action, and whether it originated from the same Sabine window. Apps use
+those coordinates to resolve their own semantic drop targets without exposing renderer internals to
+the native host.
 
 The web bridge exposes:
 

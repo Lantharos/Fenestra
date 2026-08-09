@@ -299,7 +299,7 @@ impl SingleInstanceGuard {
                 let _ = CloseHandle(handle);
             }
             notify_existing_instance(&name)?;
-            return Err("another Sabine instance is already running".to_string());
+            return Err(crate::desktop::INSTANCE_ALREADY_RUNNING.to_string());
         }
         let running = Arc::new(AtomicBool::new(true));
         let (listener, wake_port) =

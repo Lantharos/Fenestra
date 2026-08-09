@@ -40,7 +40,7 @@ impl SingleInstanceGuard {
                 events,
             )),
             Err(_) if send_single_instance_activation(&socket_path, policy).is_ok() => {
-                Err("another instance is already running".to_string())
+                Err(crate::desktop::INSTANCE_ALREADY_RUNNING.to_string())
             }
             Err(_) => {
                 let _ = fs::remove_file(&socket_path);

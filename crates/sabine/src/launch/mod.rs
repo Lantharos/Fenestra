@@ -10,8 +10,28 @@ use sabine_bridge::ContentSecurity;
 use std::path::{Path, PathBuf};
 use winit::{dpi::PhysicalPosition, event_loop::ActiveEventLoop};
 
-pub(crate) fn run_sabine_host_from_args(args: &[String]) -> bool {
-    osr::run_from_args(args) || bootstrap::run_from_args(args)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HostMode {
+    Osr,
+    Bootstrap,
+}
+
+fn host_mode(args: &[String]) -> Option<HostMode> {
+    if args.iter().any(|arg| arg == osr::launch::OSR_HOST_ARG) {
+        Some(HostMode::Osr)
+    } else if args.iter().any(|arg| arg == bootstrap::BOOTSTRAP_ARG) {
+        Some(HostMode::Bootstrap)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn dispatch_host_mode_from_args(args: &[String]) -> bool {
+    match host_mode(args) {
+        Some(HostMode::Osr) => osr::run_from_args(args),
+        Some(HostMode::Bootstrap) => bootstrap::run_from_args(args),
+        None => false,
+    }
 }
 
 pub(crate) fn metrics_label(config: &SabineWindowConfig) -> String {
@@ -230,6 +250,42 @@ pub(crate) fn format_url_host(host: &str) -> String {
         format!("[{host}]")
     } else {
         host.to_string()
+    }
+}
+
+#[cfg(test)]
+mod host_mode_tests {
+    use super::{HostMode, host_mode};
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn identifies_internal_host_modes_without_initializing_them() {
+        assert_eq!(host_mode(&args(&["app"])), None);
+        assert_eq!(
+            host_mode(&args(&["app", "--sabine-osr-host", "config.json"])),
+            Some(HostMode::Osr)
+        );
+        assert_eq!(
+            host_mode(&args(&["app", "--sabine-bootstrap", "config.json"])),
+            Some(HostMode::Bootstrap)
+        );
+    }
+
+    #[test]
+    fn osr_mode_takes_precedence_if_arguments_are_malformed() {
+        assert_eq!(
+            host_mode(&args(&[
+                "app",
+                "--sabine-bootstrap",
+                "bootstrap.json",
+                "--sabine-osr-host",
+                "osr.json",
+            ])),
+            Some(HostMode::Osr)
+        );
     }
 }
 

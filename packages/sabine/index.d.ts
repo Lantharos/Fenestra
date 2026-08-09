@@ -22,6 +22,16 @@ export interface SabineWindowApi {
   maximize(): void;
   toggleMaximize(): void;
   restore(): void;
+  startDrag(): void;
+}
+
+export interface WindowFileDragEvent {
+  phase: "enter" | "over" | "leave" | "drop";
+  paths: string[];
+  x: number;
+  y: number;
+  action: "copy" | "move" | "link" | "none";
+  internal: boolean;
 }
 
 export interface GuestBounds {
@@ -179,6 +189,7 @@ export declare const bridge: {
 };
 
 export declare const events: {
+  fileDrag(callback: (payload: WindowFileDragEvent) => void): () => void;
   guestNavigated(callback: (payload: GuestNavigatedEvent) => void): () => void;
   guestNewWindow(callback: (payload: GuestNewWindowEvent) => void): () => void;
   guestDownload(callback: (payload: GuestDownloadEvent) => void): () => void;

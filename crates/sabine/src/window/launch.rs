@@ -59,7 +59,13 @@ impl SabineWindow {
                     self.config.desktop_services.single_instance_id.as_deref(),
                     self.config.desktop_services.single_instance_policy,
                 )
-                .map_err(|message| SabineError::CreationFailed { message })?,
+                .map_err(|message| {
+                    if message == crate::desktop::INSTANCE_ALREADY_RUNNING {
+                        SabineError::InstanceAlreadyRunning
+                    } else {
+                        SabineError::CreationFailed { message }
+                    }
+                })?,
             );
             #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
             let desktop_services = None;

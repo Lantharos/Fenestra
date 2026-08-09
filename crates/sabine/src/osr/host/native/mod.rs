@@ -3,6 +3,7 @@ mod window;
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::{BufRead, Write},
+    path::PathBuf,
     process::Child,
     sync::{Arc, Mutex, mpsc},
     time::Instant,
@@ -12,7 +13,7 @@ use sabine_platform::{WindowChrome as PlatformWindowChrome, WindowOptions, Windo
 use winit::{
     cursor::CursorIcon,
     data_transfer::DataTransferId,
-    event_loop::{ActiveEventLoop, EventLoopProxy},
+    event_loop::{ActiveEventLoop, DndAction, EventLoopProxy},
     window::{ActivationToken, UserAttentionType, Window as WinitWindow},
 };
 
@@ -70,6 +71,7 @@ pub(super) struct OsrNativeHost {
     pub(super) presented: bool,
     pub(super) pending_activation_token: Option<ActivationToken>,
     pub(super) active_file_drag: Option<DataTransferId>,
+    pub(super) incoming_file_drag: Option<IncomingFileDrag>,
     pub(super) started: Instant,
     /// CEF exited with process-singleton handoff (code 24). The existing
     /// browser process owns this window's OSR endpoint; keep listening.
@@ -142,6 +144,7 @@ impl OsrNativeHost {
             presented: false,
             pending_activation_token: None,
             active_file_drag: None,
+            incoming_file_drag: None,
             started: Instant::now(),
             cef_handed_off: false,
             handoff_deadline: None,
@@ -324,6 +327,16 @@ impl OsrNativeHost {
         self.socket = None;
         event_loop.exit();
     }
+}
+
+pub(super) struct IncomingFileDrag {
+    pub(super) id: DataTransferId,
+    pub(super) paths: Vec<PathBuf>,
+    pub(super) x: f32,
+    pub(super) y: f32,
+    pub(super) action: Option<DndAction>,
+    pub(super) entered: bool,
+    pub(super) dropped: bool,
 }
 
 pub(super) fn platform_chrome(chrome: SabineWindowChrome) -> PlatformWindowChrome {

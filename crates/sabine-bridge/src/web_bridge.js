@@ -78,6 +78,7 @@
     maximize() { windowCommand("maximize"); },
     toggleMaximize() { windowCommand("toggle-maximize"); },
     restore() { windowCommand("restore"); },
+    startDrag() { windowCommand("start-drag"); },
   });
 
   window.sabine.bridge = {
