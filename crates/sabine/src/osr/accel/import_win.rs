@@ -6,7 +6,12 @@ use crate::render::GpuRenderer;
 
 const CEF_COLOR_TYPE_BGRA_8888: u32 = 1;
 
-/// Open the Sabine-owned D3D11 shared texture on wgpu's D3D12 device.
+/// Open the Sabine-owned D3D12 resource on wgpu's D3D12 device.
+///
+/// This handle is deliberately not CEF's paint-callback handle. The native
+/// host has already copied the frame, completed a D3D11 fence, and duplicated
+/// the owned handle into this process. Importing the original handle here or
+/// acknowledging the slot before wgpu finishes its copy breaks frame lifetime.
 pub(crate) fn try_import_d3d12(
     renderer: &mut GpuRenderer,
     frame: &OsrAccelFrame,

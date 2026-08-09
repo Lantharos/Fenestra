@@ -125,7 +125,7 @@ impl GpuRenderer {
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 compatible_surface: Some(&surface),
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference: wgpu::PowerPreference::LowPower,
                 ..Default::default()
             })
             .await
@@ -162,9 +162,13 @@ impl GpuRenderer {
             let presentation = "DirectComposition";
             #[cfg(not(target_os = "windows"))]
             let presentation = "native";
+            let adapter_info = adapter.get_info();
             eprintln!(
-                "Sabine GPU: backend={:?} presentation={presentation} surface alpha={alpha_mode:?} transparent={transparent}",
-                adapter.get_info().backend
+                "Sabine GPU: adapter={:?} type={:?} backend={:?} driver={:?} presentation={presentation} surface alpha={alpha_mode:?} transparent={transparent}",
+                adapter_info.name,
+                adapter_info.device_type,
+                adapter_info.backend,
+                adapter_info.driver
             );
         }
         let surface_config = wgpu::SurfaceConfiguration {

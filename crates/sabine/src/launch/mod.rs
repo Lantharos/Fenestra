@@ -281,6 +281,7 @@ mod tests {
         assert_eq!(lifecycle.hibernate_after, None);
         assert_eq!(lifecycle.hibernate_grace, Duration::from_millis(150));
         assert!(lifecycle.retain_hidden_frame);
+        assert!(!lifecycle.memory_saver);
     }
 
     #[test]
@@ -291,6 +292,7 @@ mod tests {
         assert_eq!(lifecycle.hibernate_after, Some(Duration::from_secs(5)));
         assert_eq!(lifecycle.hibernate_grace, Duration::from_millis(150));
         assert!(!lifecycle.retain_hidden_frame);
+        assert!(lifecycle.memory_saver);
     }
 
     #[test]

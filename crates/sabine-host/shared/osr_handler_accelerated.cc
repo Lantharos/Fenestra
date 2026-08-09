@@ -50,6 +50,9 @@ uint64_t DuplicateHandleToParent(HANDLE shared) {
   if (!parent) {
     return 0;
   }
+  // Windows process handles are table-local values. The numeric handle sent
+  // over IPC must be created directly in the compositor process; sending this
+  // process's value would intermittently open an unrelated object instead.
   HANDLE remote = nullptr;
   const BOOL ok =
       DuplicateHandle(GetCurrentProcess(), shared, parent, &remote, 0, FALSE,
@@ -113,9 +116,8 @@ void SabineOsrHandler::OnAcceleratedPaint(
     std::fflush(stderr);
   }
 
-  const bool src_is_rgba = info.format == CEF_COLOR_TYPE_RGBA_8888;
   const bool src_is_bgra = info.format == CEF_COLOR_TYPE_BGRA_8888;
-  if (!src_is_rgba && !src_is_bgra) {
+  if (!src_is_bgra) {
     EmitBridgeEvent("\"osr.accel_unsupported\"", "{}");
     return;
   }

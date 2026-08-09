@@ -49,6 +49,7 @@ impl OsrHostConfig {
         crate::launch::browser::BrowserOptions {
             remote_devtools_port: self.remote_devtools_port,
             remote_devtools_disabled: self.remote_devtools_disabled,
+            memory_saver: self.lifecycle.memory_saver,
             #[cfg(target_os = "linux")]
             vaapi_hardware_decode: self.vaapi_hardware_decode,
         }

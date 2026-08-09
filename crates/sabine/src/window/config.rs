@@ -138,6 +138,7 @@ pub struct SabineLifecyclePolicy {
     pub hibernate_after: Option<Duration>,
     pub hibernate_grace: Duration,
     pub retain_hidden_frame: bool,
+    pub memory_saver: bool,
 }
 
 impl Default for SabineLifecyclePolicy {
@@ -151,6 +152,7 @@ impl Default for SabineLifecyclePolicy {
             hibernate_after: None,
             hibernate_grace: Duration::from_millis(750),
             retain_hidden_frame: false,
+            memory_saver: false,
         }
     }
 }
@@ -180,8 +182,14 @@ impl SabineLifecyclePolicy {
         Self {
             hibernate_after: Some(Duration::from_secs(5)),
             retain_hidden_frame: false,
+            memory_saver: true,
             ..Self::hidden_window()
         }
+    }
+
+    pub fn with_memory_saver(mut self, enabled: bool) -> Self {
+        self.memory_saver = enabled;
+        self
     }
 
     pub fn with_hibernate_after(mut self, duration: Duration) -> Self {

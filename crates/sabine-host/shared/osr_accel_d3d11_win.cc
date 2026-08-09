@@ -2,6 +2,7 @@
 
 #include <d3d11.h>
 #include <d3d11_1.h>
+#include <d3d11_4.h>
 #include <d3d12.h>
 #include <dxgi.h>
 #include <dxgi1_2.h>
@@ -15,13 +16,28 @@
 namespace sabine_osr {
 namespace {
 
+// Windows GPU interop containment boundary.
+//
+// CEF owns an accelerated-paint texture only until its callback returns. This
+// module opens that texture on the same DXGI adapter, copies it into a Sabine-
+// owned D3D12 shareable resource through D3D11, waits for an ordered D3D11
+// fence, and retains the copied slot until the compositor acknowledges it.
+// Seemingly redundant COM interfaces and handle transitions enforce those
+// ownership and ordering rules. Do not reorder or simplify them without
+// testing Windows 10/11 on integrated, discrete, and hybrid-GPU systems.
+
 constexpr uint32_t kCefColorTypeBgra8888 = 1;
+constexpr DWORD kGpuFenceTimeoutMs = 1000;
 
 struct D3d11Context {
   ID3D11Device* device = nullptr;
   ID3D11Device1* device1 = nullptr;
+  ID3D11Device5* device5 = nullptr;
   ID3D11DeviceContext* context = nullptr;
-  ID3D11Query* sync_query = nullptr;
+  ID3D11DeviceContext4* context4 = nullptr;
+  ID3D11Fence* fence = nullptr;
+  HANDLE fence_event = nullptr;
+  uint64_t fence_value = 0;
   ID3D12Device* device12 = nullptr;
 };
 
@@ -63,8 +79,9 @@ uint64_t g_next_token = 1;
 constexpr uint32_t kSlotsPerSurface = 4;
 
 bool EnsureDevice() {
-  if (g_d3d11.device && g_d3d11.device1 && g_d3d11.context &&
-      g_d3d11.device12) {
+  if (g_d3d11.device && g_d3d11.device1 && g_d3d11.device5 &&
+      g_d3d11.context && g_d3d11.context4 && g_d3d11.fence &&
+      g_d3d11.fence_event && g_d3d11.device12) {
     return true;
   }
   D3D_FEATURE_LEVEL feature_levels[] = {
@@ -96,6 +113,30 @@ bool EnsureDevice() {
     return false;
   }
 
+  ID3D11Device5* device5 = nullptr;
+  hr = device->QueryInterface(__uuidof(ID3D11Device5),
+                              reinterpret_cast<void**>(&device5));
+  if (FAILED(hr) || !device5) {
+    std::fprintf(stderr,
+                 "Sabine CEF: D3D11 fence support is unavailable (hr=0x%08lx)\n",
+                 static_cast<unsigned long>(hr));
+    device1->Release();
+    device->Release();
+    context->Release();
+    return false;
+  }
+
+  ID3D11DeviceContext4* context4 = nullptr;
+  hr = context->QueryInterface(__uuidof(ID3D11DeviceContext4),
+                               reinterpret_cast<void**>(&context4));
+  if (FAILED(hr) || !context4) {
+    device5->Release();
+    device1->Release();
+    device->Release();
+    context->Release();
+    return false;
+  }
+
   IDXGIDevice* dxgi_device = nullptr;
   IDXGIAdapter* adapter = nullptr;
   ID3D12Device* device12 = nullptr;
@@ -112,19 +153,33 @@ bool EnsureDevice() {
     adapter->Release();
   }
   if (FAILED(hr) || !device12) {
+    context4->Release();
+    device5->Release();
     device1->Release();
     device->Release();
     context->Release();
     return false;
   }
 
-  ID3D11Query* sync_query = nullptr;
-  D3D11_QUERY_DESC query_desc{};
-  query_desc.Query = D3D11_QUERY_EVENT;
-  query_desc.MiscFlags = 0;
-  hr = device->CreateQuery(&query_desc, &sync_query);
-  if (FAILED(hr) || !sync_query) {
+  ID3D11Fence* fence = nullptr;
+  hr = device5->CreateFence(0, D3D11_FENCE_FLAG_NONE, __uuidof(ID3D11Fence),
+                            reinterpret_cast<void**>(&fence));
+  if (FAILED(hr) || !fence) {
     device12->Release();
+    context4->Release();
+    device5->Release();
+    device1->Release();
+    device->Release();
+    context->Release();
+    return false;
+  }
+
+  HANDLE fence_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+  if (!fence_event) {
+    fence->Release();
+    device12->Release();
+    context4->Release();
+    device5->Release();
     device1->Release();
     device->Release();
     context->Release();
@@ -133,30 +188,33 @@ bool EnsureDevice() {
 
   g_d3d11.device = device;
   g_d3d11.device1 = device1;
+  g_d3d11.device5 = device5;
   g_d3d11.context = context;
-  g_d3d11.sync_query = sync_query;
+  g_d3d11.context4 = context4;
+  g_d3d11.fence = fence;
+  g_d3d11.fence_event = fence_event;
   g_d3d11.device12 = device12;
   return true;
 }
 
 bool WaitForGpu() {
-  if (!g_d3d11.context || !g_d3d11.sync_query) {
+  if (!g_d3d11.context || !g_d3d11.context4 || !g_d3d11.fence ||
+      !g_d3d11.fence_event) {
     return false;
   }
-  g_d3d11.context->End(g_d3d11.sync_query);
-  g_d3d11.context->Flush();
-  for (int attempt = 0; attempt < 1000; ++attempt) {
-    const HRESULT hr = g_d3d11.context->GetData(
-        g_d3d11.sync_query, nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
-    if (hr == S_OK) {
-      return true;
-    }
-    if (hr != S_FALSE) {
-      return false;
-    }
-    Sleep(1);
+  const uint64_t fence_value = ++g_d3d11.fence_value;
+  HRESULT hr = g_d3d11.context4->Signal(g_d3d11.fence, fence_value);
+  if (FAILED(hr)) {
+    return false;
   }
-  return false;
+  hr = g_d3d11.fence->SetEventOnCompletion(fence_value,
+                                           g_d3d11.fence_event);
+  if (FAILED(hr)) {
+    return false;
+  }
+  g_d3d11.context->Flush();
+  return WaitForSingleObject(g_d3d11.fence_event, kGpuFenceTimeoutMs) ==
+         WAIT_OBJECT_0;
 }
 
 bool EnsureOwnedSharedSlot(OwnedSharedSlot* slot,
@@ -214,6 +272,8 @@ bool EnsureOwnedSharedSlot(OwnedSharedSlot* slot,
   }
 
   ID3D11Texture2D* texture = nullptr;
+  // Windows quirk: the D3D12 resource is the exported owner, while this D3D11
+  // view exists solely so CopyResource can consume CEF's D3D11 texture.
   hr = g_d3d11.device1->OpenSharedResource1(
       shared_handle, __uuidof(ID3D11Texture2D),
       reinterpret_cast<void**>(&texture));
@@ -240,6 +300,8 @@ ID3D11Texture2D* OpenCefSharedTexture(HANDLE cef_shared_handle) {
     return nullptr;
   }
   ID3D11Texture2D* texture = nullptr;
+  // The returned COM reference must not outlive this paint callback. Sabine
+  // exports its own copy instead of retaining CEF's pooled texture or handle.
   const HRESULT hr = g_d3d11.device1->OpenSharedResource1(
       cef_shared_handle, __uuidof(ID3D11Texture2D),
       reinterpret_cast<void**>(&texture));

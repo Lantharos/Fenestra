@@ -80,6 +80,7 @@ pub(crate) fn lifecycle_to_json(lifecycle: &SabineLifecyclePolicy) -> Value {
         "hibernate_after_ms": lifecycle.hibernate_after.map(duration_millis),
         "hibernate_grace_ms": duration_millis(lifecycle.hibernate_grace),
         "retain_hidden_frame": lifecycle.retain_hidden_frame,
+        "memory_saver": lifecycle.memory_saver,
     })
 }
 
@@ -125,6 +126,10 @@ pub(crate) fn lifecycle_from_json(value: Option<&Value>) -> SabineLifecyclePolic
         .get("retain_hidden_frame")
         .and_then(Value::as_bool)
         .unwrap_or(lifecycle.retain_hidden_frame);
+    lifecycle.memory_saver = value
+        .get("memory_saver")
+        .and_then(Value::as_bool)
+        .unwrap_or(lifecycle.memory_saver);
     lifecycle
 }
 
@@ -405,4 +410,16 @@ fn rect_from_json(value: &Value) -> Option<WindowRegionRect> {
         value.get("width")?.as_i64()? as i32,
         value.get("height")?.as_i64()? as i32,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lifecycle_round_trip_preserves_memory_saver() {
+        let expected = SabineLifecyclePolicy::memory_saver_hidden_window();
+        let actual = lifecycle_from_json(Some(&lifecycle_to_json(&expected)));
+        assert_eq!(actual, expected);
+    }
 }

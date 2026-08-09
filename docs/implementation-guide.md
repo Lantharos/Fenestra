@@ -142,7 +142,7 @@ the builder keeps common cases one method away:
 - window: size, chrome, visibility, transparency, blur and control regions
 - browser: Chromium flags, devtools, profiles and security
 - bridge: descriptors, sync handlers and async handlers
-- lifecycle: foreground/background rates, suspend and hibernate policy
+- lifecycle: foreground/background rates, suspend, hibernate and memory-saver policy
 - services: tray, autostart, shortcuts, deep links, native messaging and single instance
 - runtime: minimum version and bundled/shared policy
 
@@ -187,6 +187,11 @@ leases allow durable Rust work or page work to block hibernation while it is gen
 Blur and occlusion suspend only lower the windowless frame rate; they do not call CEF `WasHidden`,
 so brief focus loss during interactive move does not blank the surface. Hibernation is what actually
 hides the view and tears down the renderer.
+
+Memory saver is explicit. `SabineLifecyclePolicy::memory_saver_hidden_window()` or
+`.memory_saver(true)` enables the aggressive hidden-window policy and prevents Chromium from
+keeping a spare renderer warm. Normal browser-tab and hidden-window policies retain Chromium's
+spare renderer so future navigations do not pay an avoidable process-start penalty.
 
 Rules for renderer changes:
 

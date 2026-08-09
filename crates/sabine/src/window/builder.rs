@@ -335,6 +335,11 @@ impl SabineWindow {
         self
     }
 
+    pub fn memory_saver(mut self, enabled: bool) -> Self {
+        self.config.lifecycle.memory_saver = enabled;
+        self
+    }
+
     fn apply_hidden_lifecycle_defaults(&mut self) {
         self.config.lifecycle.suspend_on_blur = true;
         self.config.lifecycle.background_frame_rate = 1;

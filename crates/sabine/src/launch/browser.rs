@@ -3,7 +3,7 @@ use std::process::Command;
 pub(crate) const HOST_CONTROL_PREFIX: &str = "SABINE_HOST_CONTROL";
 
 /// CEF features Sabine does not use.
-pub(crate) const DISABLED_CEF_FEATURES: &str = concat!(
+const DISABLED_CEF_FEATURES: &str = concat!(
     "OptimizationGuideOnDeviceModel,",
     "AutofillServerCommunication,",
     "MediaRouter,",
@@ -18,6 +18,7 @@ const DEFAULT_REMOTE_DEVTOOLS_PORT: u16 = 9222;
 pub(crate) struct BrowserOptions {
     pub remote_devtools_port: Option<u16>,
     pub remote_devtools_disabled: bool,
+    pub memory_saver: bool,
     #[cfg(target_os = "linux")]
     pub vaapi_hardware_decode: bool,
 }
@@ -73,8 +74,13 @@ pub(crate) fn apply_browser_launch_args(
     if !enabled_features.is_empty() {
         command.arg(format!("--enable-features={}", enabled_features.join(",")));
     }
+    let disabled_features = if options.memory_saver {
+        format!("{DISABLED_CEF_FEATURES},SpareRendererForSitePerProcess")
+    } else {
+        DISABLED_CEF_FEATURES.to_string()
+    };
     command
-        .arg(format!("--disable-features={DISABLED_CEF_FEATURES}"))
+        .arg(format!("--disable-features={disabled_features}"))
         .arg("--disable-background-networking")
         .arg("--disable-component-update")
         .arg("--disable-component-extensions-with-background-pages")
@@ -92,5 +98,41 @@ pub(crate) fn apply_browser_launch_args(
     if let Some(port) = options.effective_remote_devtools_port(dev_mode) {
         command.arg(format!("--remote-debugging-port={port}"));
         command.arg("--remote-allow-origins=*");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(options: &BrowserOptions) -> Vec<String> {
+        let mut command = Command::new("sabine-host");
+        apply_browser_launch_args(&mut command, options, false);
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn normal_policy_keeps_chromiums_spare_renderer() {
+        assert!(
+            !args(&BrowserOptions::default())
+                .iter()
+                .any(|arg| arg.contains("SpareRendererForSitePerProcess"))
+        );
+    }
+
+    #[test]
+    fn memory_saver_disables_chromiums_spare_renderer() {
+        let options = BrowserOptions {
+            memory_saver: true,
+            ..BrowserOptions::default()
+        };
+        assert!(
+            args(&options)
+                .iter()
+                .any(|arg| arg.contains("SpareRendererForSitePerProcess"))
+        );
     }
 }
