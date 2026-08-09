@@ -95,25 +95,23 @@ fn list_runtimes(json: bool) -> ExitCode {
             .join(",");
 
         println!("{{\"runtimes\":[{entries}]}}");
+    } else if runtimes.is_empty() {
+        println!("No CEF runtimes found.");
+        println!("Run `sabine runtime install` to install the shared runtime.");
     } else {
-        if runtimes.is_empty() {
-            println!("No CEF runtimes found.");
-            println!("Run `sabine runtime install` to install the shared runtime.");
-        } else {
-            println!("CEF runtimes:");
-            for runtime in &runtimes {
-                let location_type = match &runtime.location {
-                    sabine_runtime::RuntimeLocation::System(_) => "system",
-                    sabine_runtime::RuntimeLocation::UserLocal(_) => "user",
-                    sabine_runtime::RuntimeLocation::Bundled(_) => "bundled",
-                };
-                println!(
-                    "  {} {} {}",
-                    runtime.version,
-                    location_type,
-                    runtime.location.path().display()
-                );
-            }
+        println!("CEF runtimes:");
+        for runtime in &runtimes {
+            let location_type = match &runtime.location {
+                sabine_runtime::RuntimeLocation::System(_) => "system",
+                sabine_runtime::RuntimeLocation::UserLocal(_) => "user",
+                sabine_runtime::RuntimeLocation::Bundled(_) => "bundled",
+            };
+            println!(
+                "  {} {} {}",
+                runtime.version,
+                location_type,
+                runtime.location.path().display()
+            );
         }
     }
 
