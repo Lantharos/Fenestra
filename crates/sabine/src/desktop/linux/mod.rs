@@ -1,11 +1,6 @@
 use std::{
     collections::BTreeMap,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
     thread::{self, JoinHandle},
-    time::Duration,
 };
 
 use sabine_platform::{
@@ -19,7 +14,7 @@ mod shortcuts;
 mod tray;
 mod util;
 
-pub(super) type EventQueue = std::sync::Arc<std::sync::Mutex<Vec<sabine_platform::PlatformEvent>>>;
+pub(super) type EventQueue = crossbeam_channel::Sender<PlatformEvent>;
 
 use instance::SingleInstanceGuard;
 use links::{register_deep_links, register_native_messaging_host, write_autostart_entry};
@@ -27,7 +22,8 @@ use shortcuts::{ShortcutRuntime, spawn_global_shortcut};
 use tray::{TrayRuntime, spawn_tray_icon};
 
 pub struct DesktopServiceState {
-    events: EventQueue,
+    event_sender: EventQueue,
+    event_receiver: crossbeam_channel::Receiver<PlatformEvent>,
     tray: Option<TrayRuntime>,
     shortcuts: BTreeMap<String, ShortcutRuntime>,
     single_instance: Option<SingleInstanceGuard>,
@@ -37,10 +33,7 @@ impl std::fmt::Debug for DesktopServiceState {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("DesktopServiceState")
-            .field(
-                "queued_events",
-                &self.events.lock().map(|events| events.len()).ok(),
-            )
+            .field("queued_events", &self.event_receiver.len())
             .field("shortcuts", &self.shortcuts.keys().collect::<Vec<_>>())
             .field("single_instance", &self.single_instance.is_some())
             .finish()
@@ -49,8 +42,10 @@ impl std::fmt::Debug for DesktopServiceState {
 
 impl DesktopServiceState {
     fn new() -> Self {
+        let (event_sender, event_receiver) = crossbeam_channel::unbounded();
         Self {
-            events: Arc::new(Mutex::new(Vec::new())),
+            event_sender,
+            event_receiver,
             tray: None,
             shortcuts: BTreeMap::new(),
             single_instance: None,
@@ -58,10 +53,7 @@ impl DesktopServiceState {
     }
 
     pub fn take_events(&self) -> Vec<PlatformEvent> {
-        self.events
-            .lock()
-            .map(|mut events| events.drain(..).collect())
-            .unwrap_or_default()
+        self.event_receiver.try_iter().collect()
     }
 }
 
@@ -81,19 +73,19 @@ pub fn apply_desktop_services(
         state.single_instance = Some(SingleInstanceGuard::acquire(
             single_instance_id,
             policy,
-            Arc::clone(&state.events),
+            state.event_sender.clone(),
         )?);
     }
     for entry in autostart {
         write_autostart_entry(entry).map_err(|error| error.to_string())?;
     }
     if let Some(icon) = tray_icon {
-        state.tray = Some(spawn_tray_icon(icon, Arc::clone(&state.events))?);
+        state.tray = Some(spawn_tray_icon(icon, state.event_sender.clone())?);
     }
     for registration in global_shortcuts {
         state.shortcuts.insert(
             registration.id.clone(),
-            spawn_global_shortcut(registration, Arc::clone(&state.events)),
+            spawn_global_shortcut(registration, state.event_sender.clone()),
         );
     }
     for registration in deep_links {
@@ -107,20 +99,19 @@ pub fn apply_desktop_services(
 
 pub fn start_desktop_event_forwarder(
     services: &DesktopServiceState,
-    running: Arc<AtomicBool>,
+    stop: crossbeam_channel::Receiver<()>,
     mut emit: impl FnMut(PlatformEvent) + Send + 'static,
 ) -> JoinHandle<()> {
-    let events = Arc::clone(&services.events);
+    let events = services.event_receiver.clone();
     thread::spawn(move || {
-        while running.load(Ordering::Relaxed) {
-            let drained = events
-                .lock()
-                .map(|mut events| events.drain(..).collect::<Vec<_>>())
-                .unwrap_or_default();
-            for event in drained {
-                emit(event);
+        loop {
+            crossbeam_channel::select! {
+                recv(stop) -> _ => break,
+                recv(events) -> event => match event {
+                    Ok(event) => emit(event),
+                    Err(_) => break,
+                },
             }
-            thread::sleep(Duration::from_millis(8));
         }
     })
 }

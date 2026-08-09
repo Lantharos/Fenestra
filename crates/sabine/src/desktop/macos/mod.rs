@@ -6,12 +6,8 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
     thread::{self, JoinHandle},
-    time::Duration,
 };
 
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
@@ -21,13 +17,14 @@ use sabine_platform::{
 };
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent, menu::MenuEvent};
 
-pub(super) type EventQueue = Arc<Mutex<Vec<PlatformEvent>>>;
+pub(super) type EventQueue = crossbeam_channel::Sender<PlatformEvent>;
 
 mod helpers;
 use helpers::*;
 
 pub struct DesktopServiceState {
-    events: EventQueue,
+    _event_sender: EventQueue,
+    event_receiver: crossbeam_channel::Receiver<PlatformEvent>,
     _tray: Option<TrayRuntime>,
     _hotkeys: Option<HotkeyRuntime>,
     _single_instance: Option<SingleInstanceGuard>,
@@ -39,20 +36,14 @@ pub struct DesktopServiceState {
 impl std::fmt::Debug for DesktopServiceState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DesktopServiceState")
-            .field(
-                "queued_events",
-                &self.events.lock().map(|events| events.len()).ok(),
-            )
+            .field("queued_events", &self.event_receiver.len())
             .finish()
     }
 }
 
 impl DesktopServiceState {
     pub fn take_events(&self) -> Vec<PlatformEvent> {
-        self.events
-            .lock()
-            .map(|mut events| events.drain(..).collect())
-            .unwrap_or_default()
+        self.event_receiver.try_iter().collect()
     }
 }
 
@@ -65,9 +56,10 @@ pub fn apply_desktop_services(
     single_instance_id: Option<&str>,
     single_instance_policy: Option<SingleInstancePolicy>,
 ) -> Result<DesktopServiceState, String> {
-    let events = Arc::new(Mutex::new(Vec::new()));
+    let (event_sender, event_receiver) = crossbeam_channel::unbounded();
     let mut state = DesktopServiceState {
-        events: Arc::clone(&events),
+        _event_sender: event_sender.clone(),
+        event_receiver,
         _tray: None,
         _hotkeys: None,
         _single_instance: None,
@@ -82,7 +74,7 @@ pub fn apply_desktop_services(
         state._single_instance = Some(SingleInstanceGuard::acquire(
             single_instance_id,
             policy,
-            Arc::clone(&events),
+            event_sender.clone(),
         )?);
     }
 
@@ -112,87 +104,61 @@ pub fn apply_desktop_services(
 
 pub fn start_desktop_event_forwarder<F>(
     state: &DesktopServiceState,
-    running: Arc<AtomicBool>,
+    stop: crossbeam_channel::Receiver<()>,
     mut forwarder: F,
 ) -> JoinHandle<()>
 where
     F: FnMut(PlatformEvent) + Send + 'static,
 {
-    let events = Arc::clone(&state.events);
-    let services = MacosPollHandle {
-        menu_actions: Arc::clone(&state.menu_actions),
-        shortcut_actions: Arc::clone(&state.shortcut_actions),
-        tray_id: state.tray_id.clone(),
-        events: Arc::clone(&state.events),
-    };
+    let events = state.event_receiver.clone();
+    let menu_actions = Arc::clone(&state.menu_actions);
+    let shortcut_actions = Arc::clone(&state.shortcut_actions);
+    let tray_id = state.tray_id.clone();
     thread::spawn(move || {
-        while running.load(Ordering::Relaxed) {
-            services.poll();
-            let batch = events
-                .lock()
-                .map(|mut events| events.drain(..).collect::<Vec<_>>())
-                .unwrap_or_default();
-            for event in batch {
-                forwarder(event);
+        loop {
+            crossbeam_channel::select! {
+                recv(stop) -> _ => break,
+                recv(events) -> event => match event {
+                    Ok(event) => forwarder(event),
+                    Err(_) => break,
+                },
+                recv(TrayIconEvent::receiver()) -> event => {
+                    if let Ok(TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    }) = event
+                        && let Some(tray_id) = &tray_id
+                    {
+                        forwarder(PlatformEvent::Tray(TrayActivation::new(tray_id.clone())));
+                    }
+                },
+                recv(MenuEvent::receiver()) -> event => {
+                    if let Ok(event) = event
+                        && let Ok(actions) = menu_actions.lock()
+                        && let Some((tray_id, item_id, action)) = actions.get(&event.id.0)
+                    {
+                        forwarder(PlatformEvent::Tray(TrayActivation::item(
+                            tray_id.clone(),
+                            item_id.clone(),
+                            action.clone(),
+                        )));
+                    }
+                },
+                recv(GlobalHotKeyEvent::receiver()) -> event => {
+                    if let Ok(event) = event
+                        && event.state == HotKeyState::Pressed
+                        && let Ok(actions) = shortcut_actions.lock()
+                        && let Some((id, action)) = actions.get(&event.id())
+                    {
+                        forwarder(PlatformEvent::GlobalShortcut(
+                            GlobalShortcutActivation::new(id.clone(), action.clone()),
+                        ));
+                    }
+                },
             }
-            thread::sleep(Duration::from_millis(16));
         }
     })
-}
-
-pub(super) struct MacosPollHandle {
-    menu_actions: Arc<Mutex<HashMap<String, (String, String, Option<String>)>>>,
-    shortcut_actions: Arc<Mutex<HashMap<u32, (String, String)>>>,
-    tray_id: Option<String>,
-    events: EventQueue,
-}
-
-impl MacosPollHandle {
-    fn poll(&self) {
-        if let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            match event {
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                } => {
-                    if let Some(tray_id) = &self.tray_id {
-                        push_event(
-                            &self.events,
-                            PlatformEvent::Tray(TrayActivation::new(tray_id.clone())),
-                        );
-                    }
-                }
-                _ => {}
-            }
-        }
-        if let Ok(event) = MenuEvent::receiver().try_recv()
-            && let Ok(actions) = self.menu_actions.lock()
-            && let Some((tray_id, item_id, action)) = actions.get(&event.id.0)
-        {
-            push_event(
-                &self.events,
-                PlatformEvent::Tray(TrayActivation::item(
-                    tray_id.clone(),
-                    item_id.clone(),
-                    action.clone(),
-                )),
-            );
-        }
-        if let Ok(event) = GlobalHotKeyEvent::receiver().try_recv()
-            && event.state == HotKeyState::Pressed
-            && let Ok(actions) = self.shortcut_actions.lock()
-            && let Some((id, action)) = actions.get(&event.id())
-        {
-            push_event(
-                &self.events,
-                PlatformEvent::GlobalShortcut(GlobalShortcutActivation::new(
-                    id.clone(),
-                    action.clone(),
-                )),
-            );
-        }
-    }
 }
 
 pub(super) struct TrayRuntime {

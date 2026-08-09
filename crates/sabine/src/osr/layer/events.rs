@@ -330,6 +330,7 @@ impl OsrLayerHost {
                 height,
                 scale,
                 frame_rate: self.active_frame_rate(),
+                accelerated_paint: false,
             },
         );
         let child = match command.spawn() {

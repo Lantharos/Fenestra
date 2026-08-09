@@ -113,7 +113,7 @@ pub(crate) struct OsrAccelFrame {
     pub format: u32,
     /// Duplicated Windows NT handle for a Sabine-owned D3D11 texture.
     pub native_handle: u64,
-    /// Producer slot released only after the compositor copy completes.
+    /// Producer slot released only after the compositor finishes sampling it.
     pub slot_token: u64,
 }
 

@@ -11,7 +11,7 @@ const CEF_COLOR_TYPE_BGRA_8888: u32 = 1;
 /// This handle is deliberately not CEF's paint-callback handle. The native
 /// host has already copied the frame, completed a D3D11 fence, and duplicated
 /// the owned handle into this process. Importing the original handle here or
-/// acknowledging the slot before wgpu finishes its copy breaks frame lifetime.
+/// acknowledging the slot while wgpu may still sample it breaks frame lifetime.
 pub(crate) fn try_import_d3d12(
     renderer: &mut GpuRenderer,
     frame: &OsrAccelFrame,

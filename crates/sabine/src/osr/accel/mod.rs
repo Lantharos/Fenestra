@@ -1,14 +1,13 @@
 #[cfg(windows)]
 mod import_win;
-#[cfg(windows)]
-pub(crate) use import_win::{close_imported_handle, try_import_d3d12};
-
 use crate::osr::protocol::OsrAccelFrame;
 #[cfg(windows)]
 use crate::render::GpuRenderer;
+#[cfg(windows)]
+pub(crate) use import_win::{close_imported_handle, try_import_d3d12};
 
 #[cfg(windows)]
-pub(crate) fn copy_imported_texture(
+pub(crate) fn install_imported_texture(
     renderer: &mut GpuRenderer,
     texture_id: &str,
     frame: &OsrAccelFrame,
@@ -16,7 +15,7 @@ pub(crate) fn copy_imported_texture(
     completed: impl FnOnce() + Send + 'static,
 ) -> Result<(), String> {
     renderer
-        .copy_external_bgra_texture(
+        .set_external_bgra_texture(
             texture_id,
             texture,
             (frame.visible_x, frame.visible_y),

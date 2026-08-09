@@ -16,7 +16,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::Duration,
 };
 
 use global_hotkey::{
@@ -32,7 +31,7 @@ use tray_icon::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
 };
 use windows::Win32::{
-    Foundation::{ERROR_ALREADY_EXISTS, ERROR_SUCCESS, GetLastError},
+    Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, ERROR_SUCCESS, GetLastError, HANDLE},
     System::{
         Registry::{
             HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
@@ -275,9 +274,10 @@ pub(super) fn register_native_messaging_host(host: &NativeMessagingHost) -> Resu
 }
 
 pub(super) struct SingleInstanceGuard {
-    _mutex_name: String,
+    mutex: HANDLE,
     _listener: Option<JoinHandle<()>>,
     running: Arc<AtomicBool>,
+    wake_port: u16,
 }
 
 impl SingleInstanceGuard {
@@ -295,16 +295,28 @@ impl SingleInstanceGuard {
             .map_err(|error| error.to_string())?;
         let already = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
         if already {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
             notify_existing_instance(&name)?;
             return Err("another Sabine instance is already running".to_string());
         }
-        let _ = handle;
         let running = Arc::new(AtomicBool::new(true));
-        let listener = spawn_instance_listener(name.clone(), policy, events, Arc::clone(&running))?;
+        let (listener, wake_port) =
+            match spawn_instance_listener(name, policy, events, Arc::clone(&running)) {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    unsafe {
+                        let _ = CloseHandle(handle);
+                    }
+                    return Err(error);
+                }
+            };
         Ok(Self {
-            _mutex_name: name,
+            mutex: handle,
             _listener: Some(listener),
             running,
+            wake_port,
         })
     }
 }
@@ -312,8 +324,12 @@ impl SingleInstanceGuard {
 impl Drop for SingleInstanceGuard {
     fn drop(&mut self) {
         self.running.store(false, Ordering::Relaxed);
+        let _ = TcpStream::connect(("127.0.0.1", self.wake_port));
         if let Some(thread) = self._listener.take() {
             let _ = thread.join();
+        }
+        unsafe {
+            let _ = CloseHandle(self.mutex);
         }
     }
 }
@@ -323,21 +339,21 @@ pub(super) fn spawn_instance_listener(
     policy: SingleInstancePolicy,
     events: EventQueue,
     running: Arc<AtomicBool>,
-) -> Result<JoinHandle<()>, String> {
+) -> Result<(JoinHandle<()>, u16), String> {
     let port_path = instance_port_path(&name)?;
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
-    listener
-        .set_nonblocking(true)
-        .map_err(|error| error.to_string())?;
     let port = listener
         .local_addr()
         .map_err(|error| error.to_string())?
         .port();
     fs::write(&port_path, port.to_string()).map_err(|error| error.to_string())?;
-    Ok(thread::spawn(move || {
+    let thread = thread::spawn(move || {
         while running.load(Ordering::Relaxed) {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    if !running.load(Ordering::Relaxed) {
+                        break;
+                    }
                     let mut buffer = String::new();
                     let _ = stream.read_to_string(&mut buffer);
                     let arguments = buffer
@@ -352,14 +368,12 @@ pub(super) fn spawn_instance_listener(
                         )),
                     );
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(50));
-                }
                 Err(_) => break,
             }
         }
         let _ = fs::remove_file(port_path);
-    }))
+    });
+    Ok((thread, port))
 }
 
 pub(super) fn notify_existing_instance(name: &str) -> Result<(), String> {
@@ -441,9 +455,7 @@ pub(super) fn delete_registry_value(
 }
 
 pub(super) fn push_event(events: &EventQueue, event: PlatformEvent) {
-    if let Ok(mut queue) = events.lock() {
-        queue.push(event);
-    }
+    let _ = events.send(event);
 }
 
 pub(super) fn local_app_data() -> Result<PathBuf, String> {

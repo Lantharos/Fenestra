@@ -196,6 +196,10 @@ impl OsrNativeHost {
                 height,
                 scale,
                 frame_rate: self.active_frame_rate(),
+                accelerated_paint: self
+                    .renderer
+                    .as_ref()
+                    .is_some_and(|renderer| renderer.supports_accelerated_paint()),
             },
         );
         let child = match command.spawn() {

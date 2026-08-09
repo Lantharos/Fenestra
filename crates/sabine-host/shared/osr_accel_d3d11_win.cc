@@ -16,15 +16,17 @@
 namespace sabine_osr {
 namespace {
 
-// Windows GPU interop containment boundary.
+// ☢️ WARNING: RADIOACTIVE WINDOWS SLOP BELOW ☢️
 //
 // CEF owns an accelerated-paint texture only until its callback returns. This
 // module opens that texture on the same DXGI adapter, copies it into a Sabine-
 // owned D3D12 shareable resource through D3D11, waits for an ordered D3D11
 // fence, and retains the copied slot until the compositor acknowledges it.
 // Seemingly redundant COM interfaces and handle transitions enforce those
-// ownership and ordering rules. Do not reorder or simplify them without
-// testing Windows 10/11 on integrated, discrete, and hybrid-GPU systems.
+// ownership and ordering rules. Some of it may look unnecessary.
+// Unfortunately, Windows disagrees.
+//
+// If it works, assume there is a reason.
 
 constexpr uint32_t kCefColorTypeBgra8888 = 1;
 constexpr DWORD kGpuFenceTimeoutMs = 1000;

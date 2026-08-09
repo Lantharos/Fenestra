@@ -3,6 +3,10 @@ use std::{
     io::{Read, Write},
     os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread::{self, JoinHandle},
 };
 
@@ -13,7 +17,8 @@ use super::util::sanitize_desktop_id;
 
 pub(super) struct SingleInstanceGuard {
     socket_path: PathBuf,
-    thread: JoinHandle<()>,
+    running: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
 }
 
 impl SingleInstanceGuard {
@@ -54,7 +59,11 @@ impl SingleInstanceGuard {
 
 impl Drop for SingleInstanceGuard {
     fn drop(&mut self) {
-        let _ = self.thread.thread().id();
+        self.running.store(false, Ordering::Relaxed);
+        let _ = UnixStream::connect(&self.socket_path);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
         let _ = fs::remove_file(&self.socket_path);
     }
 }
@@ -65,18 +74,22 @@ pub(super) fn spawn_single_instance_listener(
     policy: SingleInstancePolicy,
     events: EventQueue,
 ) -> SingleInstanceGuard {
+    let running = Arc::new(AtomicBool::new(true));
+    let thread_running = Arc::clone(&running);
     let thread = thread::spawn(move || {
         for stream in listener.incoming().flatten() {
-            if let Some(activation) = read_single_instance_activation(policy, stream)
-                && let Ok(mut events) = events.lock()
-            {
-                events.push(PlatformEvent::SingleInstance(activation));
+            if !thread_running.load(Ordering::Relaxed) {
+                break;
+            }
+            if let Some(activation) = read_single_instance_activation(policy, stream) {
+                let _ = events.send(PlatformEvent::SingleInstance(activation));
             }
         }
     });
     SingleInstanceGuard {
         socket_path,
-        thread,
+        running,
+        thread: Some(thread),
     }
 }
 

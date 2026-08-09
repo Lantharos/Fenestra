@@ -20,7 +20,7 @@ struct AccelPaintMeta {
   uint32_t visible_height = 0;
   /// Duplicated NT HANDLE value in the compositor process.
   uint64_t native_handle = 0;
-  /// Identifies the producer slot released after the D3D12 copy completes.
+  /// Identifies the producer slot released after the compositor is done sampling.
   uint64_t slot_token = 0;
 };
 

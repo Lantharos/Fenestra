@@ -36,7 +36,7 @@ impl GpuRenderer {
         let recreate = self
             .texture_cache
             .get(&id)
-            .is_none_or(|entry| entry.width != width || entry.height != height);
+            .is_none_or(|entry| entry.external || entry.width != width || entry.height != height);
         if recreate {
             self.create_dynamic_bgra_image(id.clone(), width, height);
         }
@@ -108,7 +108,7 @@ impl GpuRenderer {
         let recreate = self
             .texture_cache
             .get(&id)
-            .is_none_or(|entry| entry.width != width || entry.height != height);
+            .is_none_or(|entry| entry.external || entry.width != width || entry.height != height);
         if recreate {
             self.create_dynamic_bgra_image(id.clone(), width, height);
             return self.set_dynamic_bgra_image(id, width, height, bytes);
@@ -151,25 +151,28 @@ impl GpuRenderer {
             let DisplayCommand::Image(image) = command else {
                 continue;
             };
-            let cached = self.texture_cache.get(&image.id).cloned();
-            let bind_group = match cached {
-                Some(entry) => entry.bind_group,
-                None => match self.load_image_texture(&image.id) {
-                    Ok(bind_group) => bind_group,
-                    Err(_) => continue,
-                },
+            let entry = match self.texture_cache.get(&image.id).cloned() {
+                Some(entry) => entry,
+                None => {
+                    if self.load_image_texture(&image.id).is_err() {
+                        continue;
+                    }
+                    let Some(entry) = self.texture_cache.get(&image.id).cloned() else {
+                        continue;
+                    };
+                    entry
+                }
             };
             let vertex_start = vertices.len() as u32;
             push_image_quad(
                 &mut vertices,
-                image.x,
-                image.y,
-                image.width,
-                image.height,
+                [image.x, image.y, image.width, image.height],
                 self.scale_factor,
+                entry.uv_origin,
+                entry.uv_size,
             );
             draws.push(ImageDraw {
-                bind_group,
+                bind_group: entry.bind_group,
                 vertices: vertex_start..vertices.len() as u32,
             });
         }
@@ -232,16 +235,19 @@ impl GpuRenderer {
                 bind_group: bind_group.clone(),
                 width: dimensions.0,
                 height: dimensions.1,
+                uv_origin: [0.0, 0.0],
+                uv_size: [1.0, 1.0],
+                external: false,
             },
         );
         Ok(bind_group)
     }
 
     #[cfg(windows)]
-    pub fn copy_external_bgra_texture(
+    pub fn set_external_bgra_texture(
         &mut self,
         id: impl Into<String>,
-        source: wgpu::Texture,
+        texture: wgpu::Texture,
         source_origin: (u32, u32),
         size: (u32, u32),
         completed: impl FnOnce() + Send + 'static,
@@ -249,57 +255,66 @@ impl GpuRenderer {
         let id = id.into();
         let (width, height) = size;
         if width == 0 || height == 0 {
+            completed();
             return Err(RendererError::Texture(
                 "external image has empty size".to_string(),
             ));
         }
-        let recreate = self
-            .texture_cache
-            .get(&id)
-            .is_none_or(|entry| entry.width != width || entry.height != height);
-        if recreate {
-            self.create_dynamic_bgra_image(id.clone(), width, height);
+        let source_width = texture.width();
+        let source_height = texture.height();
+        if source_origin.0.saturating_add(width) > source_width
+            || source_origin.1.saturating_add(height) > source_height
+        {
+            completed();
+            return Err(RendererError::Texture(format!(
+                "external image region {},{} {width}x{height} exceeds {source_width}x{source_height}",
+                source_origin.0, source_origin.1
+            )));
         }
-        let Some(destination) = self.texture_cache.get(&id) else {
-            return Err(RendererError::Texture(
-                "external image was not cached".to_string(),
-            ));
-        };
-        let texture = destination.texture.clone();
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("sabine-osr-d3d11-copy"),
-            });
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &source,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: source_origin.0,
-                    y: source_origin.1,
-                    z: 0,
+        self.retire_external_texture(&id);
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&id),
+            layout: &self.image_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&self.image_sampler),
                 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            texture.as_image_copy(),
-            wgpu::Extent3d {
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+            ],
+        });
+        self.texture_cache.insert(
+            id.clone(),
+            CachedTexture {
+                texture,
+                bind_group,
                 width,
                 height,
-                depth_or_array_layers: 1,
+                uv_origin: [
+                    (source_origin.0 as f32 + 0.5) / source_width as f32,
+                    (source_origin.1 as f32 + 0.5) / source_height as f32,
+                ],
+                uv_size: [
+                    width.saturating_sub(1) as f32 / source_width as f32,
+                    height.saturating_sub(1) as f32 / source_height as f32,
+                ],
+                external: true,
             },
         );
-        encoder.transition_resources(
-            std::iter::empty(),
-            std::iter::once(wgpu::TextureTransition {
-                texture: &source,
-                selector: None,
-                state: wgpu::TextureUses::empty(),
-            }),
-        );
-        self.queue.submit([encoder.finish()]);
-        self.queue.on_submitted_work_done(completed);
+        self.external_texture_releases
+            .insert(id, Box::new(completed));
         Ok(())
+    }
+
+    #[cfg(windows)]
+    fn retire_external_texture(&mut self, id: &str) {
+        if let Some(completed) = self.external_texture_releases.remove(id) {
+            self.queue.on_submitted_work_done(completed);
+        }
     }
 
     #[cfg(windows)]
@@ -308,6 +323,8 @@ impl GpuRenderer {
     }
 
     pub(super) fn create_dynamic_bgra_image(&mut self, id: String, width: u32, height: u32) {
+        #[cfg(windows)]
+        self.retire_external_texture(&id);
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(&id),
             size: wgpu::Extent3d {
@@ -344,6 +361,9 @@ impl GpuRenderer {
                 bind_group,
                 width,
                 height,
+                uv_origin: [0.0, 0.0],
+                uv_size: [1.0, 1.0],
+                external: false,
             },
         );
     }

@@ -50,6 +50,8 @@ pub struct GpuRenderer {
     image_vertex_buffer: DynamicVertexBuffer,
     text: Option<TextRendererState>,
     texture_cache: HashMap<String, CachedTexture>,
+    #[cfg(windows)]
+    external_texture_releases: HashMap<String, Box<dyn FnOnce() + Send + 'static>>,
     scale_factor: f32,
     surface_alpha_is_opaque: bool,
     window: Arc<dyn Window>,
@@ -61,6 +63,9 @@ pub(super) struct CachedTexture {
     pub(super) bind_group: wgpu::BindGroup,
     pub(super) width: u32,
     pub(super) height: u32,
+    pub(super) uv_origin: [f32; 2],
+    pub(super) uv_size: [f32; 2],
+    pub(super) external: bool,
 }
 
 fn select_surface_alpha_mode(
@@ -265,6 +270,8 @@ impl GpuRenderer {
             image_vertex_buffer: DynamicVertexBuffer::default(),
             text: None,
             texture_cache: HashMap::new(),
+            #[cfg(windows)]
+            external_texture_releases: HashMap::new(),
             scale_factor: window.scale_factor() as f32,
             surface_alpha_is_opaque,
             window,
@@ -273,6 +280,17 @@ impl GpuRenderer {
 
     pub(crate) fn surface_alpha_is_opaque(&self) -> bool {
         self.surface_alpha_is_opaque
+    }
+
+    pub(crate) fn supports_accelerated_paint(&self) -> bool {
+        #[cfg(windows)]
+        {
+            true
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
     }
 
     pub fn resize(&mut self, width: u32, height: u32, scale_factor: f32) {
@@ -456,5 +474,24 @@ impl GpuRenderer {
             }
         }
         vertices
+    }
+}
+
+#[cfg(windows)]
+impl Drop for GpuRenderer {
+    fn drop(&mut self) {
+        if self.external_texture_releases.is_empty() {
+            return;
+        }
+        let releases = self
+            .external_texture_releases
+            .drain()
+            .map(|(_, release)| release)
+            .collect::<Vec<_>>();
+        self.queue.on_submitted_work_done(move || {
+            for release in releases {
+                release();
+            }
+        });
     }
 }

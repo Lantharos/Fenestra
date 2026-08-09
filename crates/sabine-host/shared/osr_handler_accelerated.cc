@@ -16,13 +16,7 @@
 namespace sabine_osr {
 
 bool PreferSharedTexture(CefRefPtr<CefCommandLine> command_line) {
-#if defined(OS_WIN)
-  (void)command_line;
-  return true;
-#else
-  (void)command_line;
-  return false;
-#endif
+  return command_line && command_line->HasSwitch("sabine-shared-texture");
 }
 
 void ApplySharedTexture(CefWindowInfo* window_info, bool enabled) {
@@ -99,6 +93,7 @@ void SabineOsrHandler::OnAcceleratedPaint(
   (void)info;
   return;
 #else
+  (void)dirtyRects;
   if (!browser) {
     return;
   }
@@ -157,10 +152,9 @@ void SabineOsrHandler::OnAcceleratedPaint(
     browser->GetHost()->Invalidate(PET_VIEW);
     return;
   }
-  auto send_copied_accel = [&](const std::string& slot_key,
-                               uint32_t accel_kind,
-                               const std::string& guest_id,
-                               int32_t x, int32_t y) -> bool {
+  auto send_accel = [&](const std::string& slot_key, uint32_t accel_kind,
+                        const std::string& guest_id, int32_t x,
+                        int32_t y) -> bool {
     AccelD3d11CopiedFrame copied{};
     if (!CopyAcceleratedD3d11Frame(
             slot_key, info.shared_texture_handle, frame_w, frame_h,
@@ -220,13 +214,13 @@ void SabineOsrHandler::OnAcceleratedPaint(
 
   if (GuestView* guest = GuestForBrowser(browser)) {
     if (type == PET_POPUP) {
-      send_copied_accel(guest->id + "/popup", kGuestAccel, guest->id + "/popup",
-                        guest->bounds.x + guest_popup_rect_.x,
-                        guest->bounds.y + guest_popup_rect_.y);
+      send_accel(guest->id + "/popup", kGuestAccel, guest->id + "/popup",
+                 guest->bounds.x + guest_popup_rect_.x,
+                 guest->bounds.y + guest_popup_rect_.y);
       return;
     }
-    if (send_copied_accel(guest->id, kGuestAccel, guest->id, guest->bounds.x,
-                          guest->bounds.y) &&
+    if (send_accel(guest->id, kGuestAccel, guest->id, guest->bounds.x,
+                   guest->bounds.y) &&
         !guest->painted) {
       guest->painted = true;
       if (guest->id == kSabinePopupGuestId) {
@@ -241,8 +235,8 @@ void SabineOsrHandler::OnAcceleratedPaint(
   const uint32_t kind = type == PET_POPUP ? kPopupAccel : kMainAccel;
   const int32_t x = type == PET_POPUP ? popup_rect_.x : 0;
   const int32_t y = type == PET_POPUP ? popup_rect_.y : 0;
-  send_copied_accel(type == PET_POPUP ? "popup" : "main", kind, std::string(),
-                    x, y);
+  send_accel(type == PET_POPUP ? "popup" : "main", kind, std::string(), x,
+             y);
   if (type == PET_VIEW) {
     CompleteResizeFrame(reported_visible.width, reported_visible.height);
   }

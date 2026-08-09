@@ -78,9 +78,7 @@ pub(super) async fn run_portal_shortcut(
         if let Some(token) = activation_token_from_options(event.options()) {
             activation = activation.activation_token(token);
         }
-        if let Ok(mut events) = events.lock() {
-            events.push(PlatformEvent::GlobalShortcut(activation));
-        }
+        let _ = events.send(PlatformEvent::GlobalShortcut(activation));
     }
     Ok(())
 }

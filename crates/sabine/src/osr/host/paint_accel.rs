@@ -27,8 +27,11 @@ impl OsrNativeHost {
 
     #[cfg(windows)]
     fn try_install_accel_texture(&mut self, frame: &OsrAccelFrame) -> bool {
+        #[cfg(windows)]
         let release_socket = self.socket.clone();
+        #[cfg(windows)]
         let slot_token = frame.slot_token;
+        #[cfg(windows)]
         let release_slot = move || {
             let Some(socket) = release_socket else {
                 return;
@@ -42,6 +45,7 @@ impl OsrNativeHost {
             let frame_size = self.accel_frame_size(frame);
             let target = self.content_surface_size();
             if !self.should_accept_main_frame_size(frame_size, target) {
+                #[cfg(windows)]
                 crate::osr::accel::close_imported_handle(frame.native_handle);
                 release_slot();
                 self.retry_resize_paint();
@@ -49,6 +53,7 @@ impl OsrNativeHost {
             }
         }
         let Some(renderer) = self.renderer.as_mut() else {
+            #[cfg(windows)]
             crate::osr::accel::close_imported_handle(frame.native_handle);
             release_slot();
             return false;
@@ -57,6 +62,7 @@ impl OsrNativeHost {
             OsrSurface::Main => MAIN_TEXTURE_ID.to_string(),
             OsrSurface::Popup | OsrSurface::Guest(_) => {
                 let Some(overlay_id) = overlay_id_for_surface(&frame.surface) else {
+                    #[cfg(windows)]
                     crate::osr::accel::close_imported_handle(frame.native_handle);
                     release_slot();
                     return false;
@@ -65,9 +71,10 @@ impl OsrNativeHost {
             }
         };
 
+        #[cfg(windows)]
         let imported = crate::osr::accel::try_import_d3d12(renderer, frame);
         let installed = match imported {
-            Ok(texture) => crate::osr::accel::copy_imported_texture(
+            Ok(texture) => crate::osr::accel::install_imported_texture(
                 renderer,
                 &texture_id,
                 frame,
@@ -76,11 +83,12 @@ impl OsrNativeHost {
             )
             .is_ok(),
             Err(error) => {
-                eprintln!("Sabine OSR: D3D12 texture import failed: {error}");
+                eprintln!("Sabine OSR: accelerated texture import failed: {error}");
                 release_slot();
                 false
             }
         };
+        #[cfg(windows)]
         crate::osr::accel::close_imported_handle(frame.native_handle);
         installed
     }

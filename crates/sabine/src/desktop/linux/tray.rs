@@ -31,9 +31,7 @@ pub(super) struct LinuxTray {
 
 impl LinuxTray {
     fn push(&self, event: PlatformEvent) {
-        if let Ok(mut events) = self.events.lock() {
-            events.push(event);
-        }
+        let _ = self.events.send(event);
     }
 }
 

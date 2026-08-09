@@ -25,6 +25,7 @@ sabine-host.workspace = true
 sabine-platform.workspace = true
 sabine-service.workspace = true
 bytemuck.workspace = true
+crossbeam-channel.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 glyphon.workspace = true

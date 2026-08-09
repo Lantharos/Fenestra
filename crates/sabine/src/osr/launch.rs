@@ -65,17 +65,20 @@ pub(crate) fn launch_process(
         ),
         activity.clone(),
     );
+    let (child_exit_sender, child_exit_receiver) = crossbeam_channel::unbounded();
     Ok(SabineProcess {
-        child: ManagedChild::new(child),
+        child: ManagedChild::new(child, child_exit_sender.clone()),
         primary_alive: true,
         primary_status: None,
         extra_windows: Vec::new(),
+        child_exit_sender,
+        child_exit_receiver,
         bridge_thread: bridge_dispatch.thread,
         extra_bridge_threads: Vec::new(),
         bridge_emitter: bridge_dispatch.emitter,
         desktop_services: None,
         desktop_event_thread: None,
-        desktop_event_running: None,
+        desktop_event_stop: None,
         activity,
         metrics,
         open_window: Some(OpenWindowContext {
@@ -199,7 +202,9 @@ pub(crate) fn attach_open_window(
     if let Some(thread) = thread {
         process.extra_bridge_threads.push(thread);
     }
-    process.extra_windows.push(ManagedChild::new(child));
+    process
+        .extra_windows
+        .push(ManagedChild::new(child, process.child_exit_sender.clone()));
     Ok(window_id)
 }
 
@@ -208,6 +213,7 @@ pub(crate) struct CefViewport {
     pub(crate) height: u32,
     pub(crate) scale: f64,
     pub(crate) frame_rate: u32,
+    pub(crate) accelerated_paint: bool,
 }
 
 pub(crate) fn cef_osr_command(
@@ -237,6 +243,9 @@ pub(crate) fn cef_osr_command(
         .arg("--sabine-osr")
         .arg(format!("--sabine-osr-endpoint={}", endpoint.argument()))
         .arg(format!("--sabine-parent-pid={}", std::process::id()));
+    if viewport.accelerated_paint {
+        command.arg("--sabine-shared-texture");
+    }
     if !token_file.as_os_str().is_empty() {
         command.arg(format!("--sabine-osr-token-file={}", token_file.display()));
     }

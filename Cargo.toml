@@ -42,6 +42,7 @@ sabine-service = { path = "crates/sabine-service", version = "0.1.0" }
 
 ashpd = { version = "0.13.13", features = ["global_shortcuts"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }
+crossbeam-channel = "0.5.16"
 futures-util = "0.3.33"
 getrandom = "0.4.3"
 glyphon = "0.12.0"

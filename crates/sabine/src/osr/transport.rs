@@ -350,11 +350,13 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).expect("dir");
         let dead = dir.join("osr-dead.sock");
-        let listener = std::os::unix::net::UnixListener::bind(&dead).expect("bind");
-        drop(listener);
+        std::fs::write(&dead, []).expect("dead socket placeholder");
+        let live = dir.join("osr-live.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&live).expect("bind");
         assert!(dead.exists());
         sweep_stale_sockets(&dir);
         assert!(!dead.exists());
+        assert!(live.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -15,7 +15,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::Duration,
 };
 
 use global_hotkey::{
@@ -329,15 +328,15 @@ impl SingleInstanceGuard {
         }
         let _ = fs::remove_file(&socket_path);
         let listener = UnixListener::bind(&socket_path).map_err(|error| error.to_string())?;
-        listener
-            .set_nonblocking(true)
-            .map_err(|error| error.to_string())?;
         let running = Arc::new(AtomicBool::new(true));
         let thread_running = Arc::clone(&running);
         let thread = thread::spawn(move || {
             while thread_running.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        if !thread_running.load(Ordering::Relaxed) {
+                            break;
+                        }
                         let mut buffer = String::new();
                         let _ = stream.read_to_string(&mut buffer);
                         let arguments = buffer
@@ -351,9 +350,6 @@ impl SingleInstanceGuard {
                                 policy, arguments,
                             )),
                         );
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(50));
                     }
                     Err(_) => break,
                 }
@@ -371,6 +367,7 @@ impl SingleInstanceGuard {
 impl Drop for SingleInstanceGuard {
     fn drop(&mut self) {
         self.running.store(false, Ordering::Relaxed);
+        let _ = UnixStream::connect(&self.socket_path);
         if let Some(thread) = self._listener.take() {
             let _ = thread.join();
         }
@@ -389,9 +386,7 @@ pub(super) fn notify_existing_instance(socket_path: &Path) -> Result<(), String>
 }
 
 pub(super) fn push_event(events: &EventQueue, event: PlatformEvent) {
-    if let Ok(mut queue) = events.lock() {
-        queue.push(event);
-    }
+    let _ = events.send(event);
 }
 
 pub(super) fn home_dir() -> Result<PathBuf, String> {

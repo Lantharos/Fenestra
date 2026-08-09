@@ -3,10 +3,7 @@
 //! Linux, macOS, and Windows ship native desktop-service backends.
 //! Remaining targets keep these stubs so `sabine` still compiles.
 
-use std::{
-    sync::{Arc, atomic::AtomicBool},
-    thread::{self, JoinHandle},
-};
+use std::thread::{self, JoinHandle};
 
 use sabine_platform::{
     AutostartEntry, DeepLinkRegistration, GlobalShortcutRegistration, NativeMessagingHost,
@@ -37,7 +34,7 @@ pub fn apply_desktop_services(
 
 pub fn start_desktop_event_forwarder<F>(
     _state: &DesktopServiceState,
-    _running: Arc<AtomicBool>,
+    _stop: crossbeam_channel::Receiver<()>,
     _forwarder: F,
 ) -> JoinHandle<()>
 where

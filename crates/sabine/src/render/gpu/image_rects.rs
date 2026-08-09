@@ -19,7 +19,7 @@ impl GpuRenderer {
         let recreate = self
             .texture_cache
             .get(&id)
-            .is_none_or(|entry| entry.width != width || entry.height != height);
+            .is_none_or(|entry| entry.external || entry.width != width || entry.height != height);
         if recreate {
             self.create_dynamic_bgra_image(id.clone(), width, height);
         }

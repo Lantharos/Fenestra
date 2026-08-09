@@ -1,12 +1,4 @@
-use std::{
-    process::ExitStatus,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread::{self, JoinHandle},
-    time::Duration,
-};
+use std::{process::ExitStatus, thread::JoinHandle};
 
 use sabine_bridge::{
     ActivityOptions, ActivityRecord, LaunchMetrics, SabineActivityLease,
@@ -25,12 +17,14 @@ pub struct SabineProcess {
     pub(crate) primary_alive: bool,
     pub(crate) primary_status: Option<ExitStatus>,
     pub(crate) extra_windows: Vec<ManagedChild>,
+    pub(crate) child_exit_sender: crossbeam_channel::Sender<u32>,
+    pub(crate) child_exit_receiver: crossbeam_channel::Receiver<u32>,
     pub(crate) bridge_thread: Option<JoinHandle<()>>,
     pub(crate) extra_bridge_threads: Vec<JoinHandle<()>>,
     pub(crate) bridge_emitter: Option<BridgeEventEmitter>,
     pub(crate) desktop_services: Option<DesktopServiceState>,
     pub(crate) desktop_event_thread: Option<JoinHandle<()>>,
-    pub(crate) desktop_event_running: Option<Arc<AtomicBool>>,
+    pub(crate) desktop_event_stop: Option<crossbeam_channel::Sender<()>>,
     pub(crate) activity: sabine_bridge::ActivityRegistry,
     pub(crate) metrics: LaunchMetrics,
     pub(crate) open_window: Option<OpenWindowContext>,
@@ -113,7 +107,9 @@ impl SabineProcess {
             if !self.primary_alive && self.extra_windows.is_empty() {
                 break;
             }
-            thread::sleep(Duration::from_millis(50));
+            self.child_exit_receiver.recv().map_err(|_| {
+                std::io::Error::other("OSR host exit notification channel disconnected")
+            })?;
         }
 
         self.stop_desktop_event_forwarder();
@@ -213,11 +209,11 @@ impl SabineProcess {
         else {
             return;
         };
-        let running = Arc::new(AtomicBool::new(true));
-        self.desktop_event_running = Some(Arc::clone(&running));
+        let (stop, stopped) = crossbeam_channel::bounded(1);
+        self.desktop_event_stop = Some(stop);
         self.desktop_event_thread = Some(start_desktop_event_forwarder(
             services,
-            running,
+            stopped,
             move |event| {
                 if let PlatformEvent::SingleInstance(activation) = &event
                     && activation.policy == SingleInstancePolicy::FocusExisting
@@ -243,13 +239,12 @@ impl SabineProcess {
     }
 
     fn stop_desktop_event_forwarder(&mut self) {
-        if let Some(running) = &self.desktop_event_running {
-            running.store(false, Ordering::Relaxed);
+        if let Some(stop) = self.desktop_event_stop.take() {
+            let _ = stop.send(());
         }
         if let Some(thread) = self.desktop_event_thread.take() {
             let _ = thread.join();
         }
-        self.desktop_event_running = None;
     }
 
     fn join_bridge_threads(&mut self) {

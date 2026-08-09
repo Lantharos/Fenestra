@@ -1,54 +1,60 @@
 use std::{
     process::{Child, Command, ExitStatus},
     sync::atomic::{AtomicBool, Ordering},
-    thread,
     time::Duration,
 };
 
 pub(crate) struct ManagedChild {
-    child: Child,
+    id: u32,
+    exit: crossbeam_channel::Receiver<std::io::Result<ExitStatus>>,
     group: ProcessGroup,
 }
 
 impl ManagedChild {
-    pub(crate) fn new(child: Child) -> Self {
+    pub(crate) fn new(child: Child, exited: crossbeam_channel::Sender<u32>) -> Self {
+        let id = child.id();
+        let (exit_sender, exit) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            let mut child = child;
+            let status = child.wait();
+            let _ = exit_sender.send(status);
+            let _ = exited.send(id);
+        });
         Self {
-            group: ProcessGroup::register(child.id()),
-            child,
+            id,
+            exit,
+            group: ProcessGroup::register(id),
         }
     }
 
     pub(crate) fn id(&self) -> u32 {
-        self.child.id()
+        self.id
     }
 
     pub(crate) fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
-        match self.child.try_wait()? {
-            Some(status) => {
-                self.group.unregister();
-                Ok(Some(status))
-            }
-            None => Ok(None),
+        match self.exit.try_recv() {
+            Ok(status) => self.finish(status).map(Some),
+            Err(crossbeam_channel::TryRecvError::Empty) => Ok(None),
+            Err(crossbeam_channel::TryRecvError::Disconnected) => Err(std::io::Error::other(
+                "OSR host waiter exited without a status",
+            )),
         }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn wait(&mut self) -> std::io::Result<ExitStatus> {
-        let status = self.child.wait();
-        self.group.unregister();
-        status
     }
 
     pub(crate) fn terminate(&mut self) -> Option<ExitStatus> {
         self.group.terminate();
-        for _ in 0..10 {
-            if !matches!(self.child.try_wait(), Ok(None)) {
-                break;
-            }
-            thread::sleep(Duration::from_millis(25));
+        match self.exit.recv_timeout(Duration::from_millis(250)) {
+            Ok(status) => return self.finish(status).ok(),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return None,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
         }
         self.group.kill();
-        let status = self.child.wait().ok();
+        let status = self.exit.recv().ok()?.ok();
+        self.group.unregister();
+        status
+    }
+
+    fn finish(&self, status: std::io::Result<ExitStatus>) -> std::io::Result<ExitStatus> {
         self.group.unregister();
         status
     }
