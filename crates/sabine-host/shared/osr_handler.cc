@@ -68,9 +68,7 @@ SabineOsrHandler::SabineOsrHandler(std::string endpoint,
     g_instance = this;
   }
   RegisterHandler(this);
-  ConnectSocket();
-	  StartCommandReader();
-	}
+}
 
 SabineOsrHandler::~SabineOsrHandler() {
   if (socket_fd_ >= 0) {

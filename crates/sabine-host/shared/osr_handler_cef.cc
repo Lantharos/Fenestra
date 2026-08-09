@@ -98,9 +98,10 @@ bool SabineOsrHandler::OnContextMenuCommand(
 }
 
 void SabineOsrHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
-	  CEF_REQUIRE_UI_THREAD();
-	  browsers_.push_back(browser);
-  if (!browser_) {
+  CEF_REQUIRE_UI_THREAD();
+  browsers_.push_back(browser);
+  const bool primary_browser = !browser_;
+  if (primary_browser) {
     browser_ = browser;
   } else if (GuestView* pending = guests_.Find(pending_guest_id_)) {
     if (!pending->browser) {
@@ -108,9 +109,26 @@ void SabineOsrHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
       pending->pending = false;
     }
   }
-	  browser->GetHost()->SetWindowlessFrameRate(
-	      std::max(1, suspended_ ? background_frame_rate_ : active_frame_rate_));
-	}
+  CefRefPtr<CefBrowserHost> host = browser->GetHost();
+  host->SetWindowlessFrameRate(
+      std::max(1, suspended_ ? background_frame_rate_ : active_frame_rate_));
+  if (!primary_browser) {
+    return;
+  }
+  if (std::getenv("SABINE_TRACE")) {
+    std::fprintf(stderr, "Sabine CEF: primary browser ready windowless=%d\n",
+                 host->IsWindowRenderingDisabled() ? 1 : 0);
+    std::fflush(stderr);
+  }
+  if (!ConnectSocket()) {
+    std::fprintf(stderr, "Sabine OSR: failed to connect native host\n");
+    std::fflush(stderr);
+    return;
+  }
+  StartCommandReader();
+  host->WasResized();
+  host->Invalidate(PET_VIEW);
+}
 
 bool SabineOsrHandler::DoClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
@@ -352,11 +370,18 @@ void SabineOsrHandler::OnPopupSize(CefRefPtr<CefBrowser> browser,
 }
 
 void SabineOsrHandler::OnPaint(CefRefPtr<CefBrowser> browser,
-	                             PaintElementType type,
-	                             const RectList& dirtyRects,
-	                             const void* buffer,
-	                             int width,
-	                             int height) {
+                               PaintElementType type,
+                               const RectList& dirtyRects,
+                               const void* buffer,
+                               int width,
+                               int height) {
+  static bool traced_first_software_paint = false;
+  if (!traced_first_software_paint && std::getenv("SABINE_TRACE")) {
+    traced_first_software_paint = true;
+    std::fprintf(stderr, "Sabine CEF: first software paint size=%dx%d\n", width,
+                 height);
+    std::fflush(stderr);
+  }
   if (GuestView* guest = GuestForBrowser(browser)) {
     if (type == PET_POPUP) {
       SendPaintBatch(kGuestFrame, guest->id + "/popup",
@@ -393,4 +418,3 @@ void SabineOsrHandler::OnPaint(CefRefPtr<CefBrowser> browser,
     }
   }
 }
-
