@@ -21,7 +21,7 @@ cargo install --git https://github.com/Lantharos/Sabine --package sabine-service
 For the TypeScript helpers used by the web UI:
 
 ```sh
-bun add github:Lantharos/Sabine#path:packages/sabine
+bun add github:Lantharos/Sabine
 ```
 
 ## Why Sabine

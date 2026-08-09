@@ -1,0 +1,21 @@
+{
+  "name": "@lantharos/sabine",
+  "version": "0.1.0",
+  "description": "Typed helpers for the Sabine injected web bridge",
+  "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "repository": "https://github.com/Lantharos/Sabine.git",
+  "exports": {
+    ".": {
+      "types": "./packages/sabine/index.d.ts",
+      "import": "./packages/sabine/index.js",
+      "default": "./packages/sabine/index.js"
+    }
+  },
+  "files": [
+    "packages/sabine/index.js",
+    "packages/sabine/index.d.ts",
+    "packages/sabine/README.md"
+  ],
+  "sideEffects": false
+}
