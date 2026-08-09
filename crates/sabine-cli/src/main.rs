@@ -103,20 +103,13 @@ enum RuntimeSubcommand {
         #[arg(long)]
         json: bool,
     },
-    Install {
-        #[arg(long, default_value = "standard")]
-        package: String,
-    },
+    Install,
     Remove {
         version: Option<String>,
-        #[arg(long, default_value = "standard")]
-        package: String,
     },
     Prune {
         #[arg(long, default_value_t = 2)]
         keep: usize,
-        #[arg(long, default_value = "standard")]
-        package: String,
     },
     Doctor {
         #[arg(long)]
@@ -149,11 +142,9 @@ fn main() -> ExitCode {
         Command::Runtime { command } => runtime::run_runtime(match command {
             RuntimeSubcommand::Prepare => RuntimeCommand::Prepare,
             RuntimeSubcommand::List { json } => RuntimeCommand::List { json },
-            RuntimeSubcommand::Install { package } => RuntimeCommand::Install { package },
-            RuntimeSubcommand::Remove { version, package } => {
-                RuntimeCommand::Remove { version, package }
-            }
-            RuntimeSubcommand::Prune { keep, package } => RuntimeCommand::Prune { keep, package },
+            RuntimeSubcommand::Install => RuntimeCommand::Install,
+            RuntimeSubcommand::Remove { version } => RuntimeCommand::Remove { version },
+            RuntimeSubcommand::Prune { keep } => RuntimeCommand::Prune { keep },
             RuntimeSubcommand::Doctor { json } => RuntimeCommand::Doctor { json },
         }),
         Command::Install {

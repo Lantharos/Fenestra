@@ -1,17 +1,16 @@
 pub(crate) mod bootstrap;
 pub(crate) mod browser;
 
-pub use browser::BrowserOptions;
 pub(crate) use browser::apply_browser_launch_args;
 
 use crate::error::{SabineError, SabineResult};
 use crate::osr;
-use crate::window::SabineWindowConfig;
+use crate::window::config::SabineWindowConfig;
 use sabine_bridge::ContentSecurity;
-use std::{path::PathBuf, process::Command};
+use std::path::PathBuf;
 use winit::{dpi::PhysicalPosition, event_loop::ActiveEventLoop};
 
-pub fn run_sabine_host_from_args(args: &[String]) -> bool {
+pub(crate) fn run_sabine_host_from_args(args: &[String]) -> bool {
     osr::run_from_args(args) || bootstrap::run_from_args(args)
 }
 
@@ -22,22 +21,6 @@ pub(crate) fn metrics_label(config: &SabineWindowConfig) -> String {
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(&config.title)
         .to_string()
-}
-
-pub(crate) fn shell_command(command: &str) -> Command {
-    #[cfg(target_os = "windows")]
-    {
-        let mut process = Command::new("cmd");
-        process.arg("/C").arg(command);
-        process
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let mut process = Command::new("sh");
-        process.arg("-lc").arg(command);
-        process
-    }
 }
 
 pub(crate) fn centered_window_position(
@@ -245,7 +228,7 @@ mod tests {
 
     use sabine_platform::WindowBackgroundEffect;
 
-    use crate::window::{GlassSpec, SabineLifecyclePolicy, SabineWindow};
+    use crate::window::{SabineLifecyclePolicy, SabineWindow};
 
     #[test]
     fn recipes_set_expected_defaults() {
@@ -323,49 +306,6 @@ mod tests {
     }
 
     #[test]
-    fn glass_spec_uses_overridden_material() {
-        let window = SabineWindow::new().glass_spec(GlassSpec::new().windows("mica"));
-        assert!(window.config.transparent);
-        let expected = if cfg!(target_os = "windows") {
-            WindowBackgroundEffect::Mica
-        } else {
-            match sabine_platform::current_desktop_os() {
-                sabine_platform::PlatformOs::Macos => WindowBackgroundEffect::Vibrancy,
-                sabine_platform::PlatformOs::Linux => WindowBackgroundEffect::Blur,
-                _ => WindowBackgroundEffect::None,
-            }
-        };
-        assert_eq!(window.config.background_effect, expected);
-    }
-
-    #[test]
-    fn glass_spec_drops_unknown_effect_names() {
-        let window = SabineWindow::new().glass_spec(GlassSpec::new().windows("sparkles"));
-        let expected = match sabine_platform::current_desktop_os() {
-            sabine_platform::PlatformOs::Windows => WindowBackgroundEffect::Acrylic,
-            sabine_platform::PlatformOs::Macos => WindowBackgroundEffect::Vibrancy,
-            sabine_platform::PlatformOs::Linux => WindowBackgroundEffect::Blur,
-            _ => WindowBackgroundEffect::None,
-        };
-        assert_eq!(window.config.background_effect, expected);
-    }
-
-    #[test]
-    fn glass_effect_tracks_low_power_fallback() {
-        let window = SabineWindow::new()
-            .glass_effect(WindowBackgroundEffect::Acrylic)
-            .glass_low_power_effect(WindowBackgroundEffect::Mica);
-        assert_eq!(
-            window.config.background_effect,
-            WindowBackgroundEffect::Acrylic
-        );
-        assert_eq!(
-            window.config.low_power_background_effect,
-            Some(WindowBackgroundEffect::Mica)
-        );
-    }
-
-    #[test]
     fn url_sets_production_url_and_bridge_origin() {
         let window = SabineWindow::new().url("https://raday.lantharos.com/dashboard");
 
@@ -407,5 +347,15 @@ mod tests {
                 .iter()
                 .any(|origin| origin == "http://localhost:5173")
         );
+    }
+
+    #[test]
+    fn window_config_rejects_ambiguous_content_sources() {
+        let window = SabineWindow::new()
+            .app_id("com.sabine.notes")
+            .entry("ui/index.html")
+            .url("https://example.com");
+
+        assert!(window.config.validate().is_err());
     }
 }

@@ -1,9 +1,7 @@
 #include "osr_handler_accel_ipc.h"
 
-#include <algorithm>
 #include <cstring>
 #include <limits>
-#include <vector>
 
 #include "osr_handler_util.h"
 
@@ -26,21 +24,12 @@ std::string GuestPrefix(const std::string& guest_id) {
 }  // namespace
 
 std::string BuildAccelPayload(const std::string& guest_id,
-                              const AccelPaintMeta& meta,
-                              const CefRenderHandler::RectList& dirty_rects,
-                              uint32_t width,
-                              uint32_t height) {
-  std::vector<CefRect> rects;
-  if (dirty_rects.empty()) {
-    rects.push_back(
-        CefRect(0, 0, static_cast<int>(width), static_cast<int>(height)));
-  } else {
-    rects.assign(dirty_rects.begin(), dirty_rects.end());
+                              const AccelPaintMeta& meta) {
+  if (guest_id.size() > std::numeric_limits<uint16_t>::max()) {
+    return {};
   }
-
   const std::string prefix = GuestPrefix(guest_id);
-  const size_t meta_len =
-      prefix.size() + 4 + 8 + 4 + 8 + 8 + 8 + 4 + rects.size() * 16;
+  const size_t meta_len = prefix.size() + 4 + 8 + 8;
   if (meta_len > std::numeric_limits<uint32_t>::max()) {
     return {};
   }
@@ -50,28 +39,9 @@ std::string BuildAccelPayload(const std::string& guest_id,
   at += prefix.size();
   PutU32(&payload, at, meta.format);
   at += 4;
-  PutU64(&payload, at, meta.modifier);
-  at += 8;
-  PutU32(&payload, at, meta.stride);
-  at += 4;
-  PutU64(&payload, at, meta.offset);
-  at += 8;
-  PutU64(&payload, at, meta.size);
-  at += 8;
   PutU64(&payload, at, meta.native_handle);
   at += 8;
-  PutU32(&payload, at, static_cast<uint32_t>(rects.size()));
-  at += 4;
-  for (const auto& rect : rects) {
-    PutI32(&payload, at, rect.x);
-    at += 4;
-    PutI32(&payload, at, rect.y);
-    at += 4;
-    PutU32(&payload, at, static_cast<uint32_t>(std::max(0, rect.width)));
-    at += 4;
-    PutU32(&payload, at, static_cast<uint32_t>(std::max(0, rect.height)));
-    at += 4;
-  }
+  PutU64(&payload, at, meta.slot_token);
   return std::string(payload.begin(), payload.end());
 }
 

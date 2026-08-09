@@ -1,6 +1,6 @@
 //! Sabine launch metrics.
 //!
-//! Launch stages (`dev_command.spawned`, `host.spawned.pid.<pid>`, etc.) are
+//! Launch stages (`host.ready`, `osr_host.spawned.pid.<pid>`, etc.) are
 //! exposed by `SabineProcess::metrics()` for tracing and profiling.
 
 use std::{

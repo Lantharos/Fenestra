@@ -11,6 +11,7 @@ namespace sabine_osr {
 
 struct AccelD3d11CopiedFrame {
   HANDLE shared_handle = nullptr;
+  uint64_t slot_token = 0;
   uint32_t width = 0;
   uint32_t height = 0;
 };
@@ -24,6 +25,10 @@ bool CopyAcceleratedD3d11Frame(const std::string& slot_key,
                                int height,
                                uint32_t cef_format,
                                AccelD3d11CopiedFrame* out);
+
+/// Allow a copied texture slot to be reused after the compositor confirms its
+/// D3D12 copy has completed.
+void ReleaseAcceleratedD3d11Frame(uint64_t slot_token);
 
 /// CPU bridge when shared-texture copy is unavailable.
 bool ReadAcceleratedD3d11FrameToBgra(HANDLE cef_shared_handle,

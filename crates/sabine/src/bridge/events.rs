@@ -387,5 +387,6 @@ mod tests {
         emitter.detach(child.id());
         assert!(!emitter.emit("ping", serde_json::json!({})));
         let _ = child.kill();
+        let _ = child.wait();
     }
 }

@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::path::Path;
+use std::path::PathBuf;
 
 mod process;
 mod process_tree;
@@ -7,9 +9,9 @@ pub use process::{SabineProcess, WindowId};
 pub(crate) use process_tree::{
     ManagedChild, prepare_child_command, prepare_detachable_child_command,
 };
-pub use sabine_host::{ensure_host, host_release_binary};
+pub(crate) use sabine_host::ensure_host;
 
-pub fn browser_profile_dir(profile_key: &str) -> PathBuf {
+pub(crate) fn browser_profile_dir(profile_key: &str) -> PathBuf {
     user_cache_home()
         .join("sabine")
         .join("profiles")
@@ -17,7 +19,8 @@ pub fn browser_profile_dir(profile_key: &str) -> PathBuf {
         .join("profile")
 }
 
-pub fn ld_library_path(release_dir: &Path) -> String {
+#[cfg(target_os = "linux")]
+pub(crate) fn ld_library_path(release_dir: &Path) -> String {
     let existing = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
     if existing.is_empty() {
         release_dir.display().to_string()

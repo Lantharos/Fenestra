@@ -40,7 +40,7 @@ fn apply_windows(window: &Arc<dyn Window>, effect: WindowBackgroundEffect) -> bo
         _ => apply_acrylic(window, None),
     };
     if let Err(error) = &result {
-        eprintln!("failed to apply Windows glass effect: {error}");
+        eprintln!("failed to apply Windows background effect: {error}");
     }
     result.is_ok()
 }

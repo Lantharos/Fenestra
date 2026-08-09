@@ -225,27 +225,19 @@ impl ApplicationHandler for OsrNativeHost {
             WindowEvent::MouseWheel { delta, .. } => {
                 self.forward_mouse_wheel(delta);
             }
-            WindowEvent::OutgoingDragDropped { id, action } => {
-                if self.active_file_drag == Some(id) {
-                    self.finish_file_drag(action);
-                }
+            WindowEvent::OutgoingDragDropped { id, action }
+                if self.active_file_drag == Some(id) =>
+            {
+                self.finish_file_drag(action);
             }
-            WindowEvent::OutgoingDragCanceled { id } => {
-                if self.active_file_drag == Some(id) {
-                    self.finish_file_drag(None);
-                }
+            WindowEvent::OutgoingDragCanceled { id } if self.active_file_drag == Some(id) => {
+                self.finish_file_drag(None);
             }
             _ => {}
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
-        if !self.config.software_osr_fallback
-            && crate::osr::accel::should_relaunch_software(&self.accel_fallback)
-        {
-            self.relaunch_software_osr();
-            return;
-        }
         if let Some(child) = self.child.as_mut()
             && let Ok(Some(status)) = child.try_wait()
         {
@@ -327,10 +319,6 @@ impl ApplicationHandler for OsrNativeHost {
         }
         if self.cef_handed_off && self.socket.is_some() {
             self.handoff_deadline = None;
-        }
-        if let Some(deadline) = self.accel_fallback.paint_watch_deadline() {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
-            return;
         }
         if self.config.visible
             && !self.presented

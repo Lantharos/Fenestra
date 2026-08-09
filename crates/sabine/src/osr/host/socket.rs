@@ -11,7 +11,7 @@ pub(super) fn start_socket_reader(
     listener: IpcListener,
     endpoint: IpcEndpoint,
     authentication_token: String,
-    sender: mpsc::Sender<OsrHostEvent>,
+    sender: mpsc::SyncSender<OsrHostEvent>,
     proxy: EventLoopProxy,
 ) {
     thread::spawn(move || {

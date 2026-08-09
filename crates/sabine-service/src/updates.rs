@@ -15,7 +15,7 @@ use crate::types::{
 impl SabineService {
     pub fn maintain(&self) -> ServiceResult<MaintenanceReport> {
         let runtime = update_user_runtime_with_progress(&self.runtime, |_| {})?;
-        let pruned_runtimes = prune_user_runtimes(&self.runtime, 2)?;
+        let pruned_runtimes = prune_user_runtimes(2)?;
         let apps = self.apps()?;
         let mut updated_apps = Vec::new();
         let mut update_failures = Vec::new();

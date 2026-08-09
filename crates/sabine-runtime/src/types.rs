@@ -4,10 +4,8 @@ use std::path::PathBuf;
 pub enum RuntimeMode {
     SystemRequired,
     SystemPreferred,
-    UserPreferred,
     SharedPreferred,
     Bundled,
-    Disabled,
 }
 
 impl RuntimeMode {
@@ -15,46 +13,9 @@ impl RuntimeMode {
         match value {
             "system-required" => Some(Self::SystemRequired),
             "system-preferred" => Some(Self::SystemPreferred),
-            "user-preferred" => Some(Self::UserPreferred),
             "shared-preferred" => Some(Self::SharedPreferred),
             "bundled" => Some(Self::Bundled),
-            "disabled" => Some(Self::Disabled),
             _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RuntimePackage {
-    Minimal,
-    Client,
-    #[default]
-    Standard,
-}
-
-impl RuntimePackage {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "minimal" => Some(Self::Minimal),
-            "client" => Some(Self::Client),
-            "standard" => Some(Self::Standard),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Minimal => "minimal",
-            Self::Client => "client",
-            Self::Standard => "standard",
-        }
-    }
-
-    pub(crate) fn install_suffix(self) -> &'static str {
-        match self {
-            Self::Minimal => "",
-            Self::Client => "-client",
-            Self::Standard => "-standard",
         }
     }
 }
@@ -64,7 +25,6 @@ pub struct RuntimeInfo {
     pub version: String,
     pub location: RuntimeLocation,
     pub verified: bool,
-    pub package: RuntimePackage,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,7 +45,6 @@ impl RuntimeLocation {
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     pub mode: RuntimeMode,
-    pub package: RuntimePackage,
     pub min_version: String,
     pub index_url: Option<String>,
     pub allow_user_install: bool,
@@ -97,7 +56,6 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             mode: RuntimeMode::SharedPreferred,
-            package: RuntimePackage::Standard,
             min_version: "151".to_string(),
             index_url: None,
             allow_user_install: true,
@@ -109,7 +67,6 @@ impl Default for RuntimeConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeInstallPlan {
-    pub package: RuntimePackage,
     pub version: String,
     pub platform: String,
     pub archive_name: String,

@@ -10,11 +10,9 @@ mod version;
 
 pub use download::{DEFAULT_CEF_INDEX_URL, latest_install_plan};
 pub use error::RuntimeError;
-pub use host::{has_host_binary, host_candidates, launchable_host_candidates};
 pub use install::{
     install_user_runtime, install_user_runtime_with_progress, prune_user_runtimes,
-    remove_user_minimal_runtime_if_client_requested, remove_user_runtime_version,
-    update_user_runtime_with_progress,
+    remove_user_runtime_version, update_user_runtime_with_progress,
 };
 pub use paths::{
     bundled_runtime_path, runtime_version_path, system_runtime_path, user_runtime_path,
@@ -22,7 +20,7 @@ pub use paths::{
 pub use resolve::{ensure_runtime, resolve_runtime};
 pub use types::{
     RuntimeConfig, RuntimeInfo, RuntimeInstallPlan, RuntimeInstallProgress, RuntimeInstallStep,
-    RuntimeLocation, RuntimeMode, RuntimePackage,
+    RuntimeLocation, RuntimeMode,
 };
 
 pub use detect::detect_runtime;
@@ -47,28 +45,9 @@ mod tests {
     }
 
     #[test]
-    fn runtime_package_round_trips() {
-        assert_eq!(
-            RuntimePackage::Client,
-            RuntimePackage::parse("client").unwrap()
-        );
-        assert_eq!(
-            RuntimePackage::Minimal,
-            RuntimePackage::parse("minimal").unwrap()
-        );
-        assert_eq!(
-            RuntimePackage::Standard,
-            RuntimePackage::parse("standard").unwrap()
-        );
-        assert_eq!(RuntimePackage::Standard.as_str(), "standard");
-        assert!(RuntimePackage::parse("browser").is_none());
-    }
-
-    #[test]
     fn runtime_config_has_sane_defaults() {
         let config = RuntimeConfig::default();
         assert_eq!(config.mode, RuntimeMode::SharedPreferred);
-        assert_eq!(config.package, RuntimePackage::Standard);
         assert_eq!(config.index_url, None);
         assert!(config.allow_user_install);
         assert!(config.allow_bundled);

@@ -50,13 +50,13 @@ layershellev = "0.19.1"
 ksni = { version = "0.3.6", features = ["blocking"] }
 libc = "0.2.189"
 pollster = "1.0.1"
-clap = { version = "4.6.5", features = ["derive"] }
+clap = { version = "4.6.6", features = ["derive"] }
 raw-window-handle = "0.6.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha1 = "0.11.0"
 sha2 = "0.11.0"
-thiserror = "2.0.19"
+thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt", "sync", "time", "macros"] }
 toml = "1.1.4"
 wayland-client = "0.31.15"
@@ -64,3 +64,8 @@ wgpu = "30.0.0"
 winit = { git = "https://github.com/rust-windowing/winit", rev = "42366231b0d92480a933339bd5eaa7fba8106f42" }
 window-vibrancy = "0.8.0"
 x11rb = "0.14.0"
+
+[patch.crates-io]
+dpi = { git = "https://github.com/rust-windowing/winit", rev = "42366231b0d92480a933339bd5eaa7fba8106f42" }
+winit-common = { git = "https://github.com/rust-windowing/winit", rev = "42366231b0d92480a933339bd5eaa7fba8106f42" }
+winit-core = { git = "https://github.com/rust-windowing/winit", rev = "42366231b0d92480a933339bd5eaa7fba8106f42" }

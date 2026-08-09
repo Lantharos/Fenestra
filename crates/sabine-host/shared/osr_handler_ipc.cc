@@ -1,6 +1,7 @@
 #include "osr_handler.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cerrno>
 #include <cmath>
@@ -44,6 +45,24 @@
 #include "osr_handler_util.h"
 
 using namespace sabine_osr;
+
+namespace {
+
+void PutHeaderU32(std::array<char, 28>* header,
+                  size_t offset,
+                  uint32_t value) {
+  for (size_t i = 0; i < 4; ++i) {
+    (*header)[offset + i] = static_cast<char>((value >> (i * 8)) & 0xff);
+  }
+}
+
+void PutHeaderI32(std::array<char, 28>* header,
+                  size_t offset,
+                  int32_t value) {
+  PutHeaderU32(header, offset, static_cast<uint32_t>(value));
+}
+
+}  // namespace
 
 bool SabineOsrHandler::ConnectSocket() {
 #ifdef _WIN32
@@ -161,17 +180,17 @@ bool SabineOsrHandler::SendMessage(uint32_t kind,
     return false;
   }
   std::lock_guard<std::mutex> lock(socket_mutex_);
-  std::vector<char> header(28, 0);
-  header[0] = 'M';
-  header[1] = 'L';
-  header[2] = 'O';
-  header[3] = 'N';
-  PutU32(&header, 4, kind);
-  PutU32(&header, 8, width);
-  PutU32(&header, 12, height);
-  PutI32(&header, 16, x);
-  PutI32(&header, 20, y);
-  PutU32(&header, 24, payload_len);
+  std::array<char, 28> header{};
+  header[0] = 'S';
+  header[1] = 'A';
+  header[2] = 'B';
+  header[3] = '1';
+  PutHeaderU32(&header, 4, kind);
+  PutHeaderU32(&header, 8, width);
+  PutHeaderU32(&header, 12, height);
+  PutHeaderI32(&header, 16, x);
+  PutHeaderI32(&header, 20, y);
+  PutHeaderU32(&header, 24, payload_len);
   return SendAll(socket_fd_, header.data(), header.size()) &&
          (payload_len == 0 ||
           SendAll(socket_fd_, static_cast<const char*>(payload), payload_len));
@@ -192,17 +211,17 @@ bool SabineOsrHandler::SendMessageWithFd(uint32_t kind,
     return false;
   }
   std::lock_guard<std::mutex> lock(socket_mutex_);
-  std::vector<char> header(28, 0);
-  header[0] = 'M';
-  header[1] = 'L';
-  header[2] = 'O';
-  header[3] = 'N';
-  PutU32(&header, 4, kind);
-  PutU32(&header, 8, width);
-  PutU32(&header, 12, height);
-  PutI32(&header, 16, x);
-  PutI32(&header, 20, y);
-  PutU32(&header, 24, payload_len);
+  std::array<char, 28> header{};
+  header[0] = 'S';
+  header[1] = 'A';
+  header[2] = 'B';
+  header[3] = '1';
+  PutHeaderU32(&header, 4, kind);
+  PutHeaderU32(&header, 8, width);
+  PutHeaderU32(&header, 12, height);
+  PutHeaderI32(&header, 16, x);
+  PutHeaderI32(&header, 20, y);
+  PutHeaderU32(&header, 24, payload_len);
 
   iovec iov{};
   iov.iov_base = header.data();
@@ -335,4 +354,3 @@ bool SabineOsrHandler::SendPaintBatch(uint32_t kind,
                      payload.data(),
                      static_cast<uint32_t>(payload.size()));
 }
-

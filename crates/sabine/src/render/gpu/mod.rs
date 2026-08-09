@@ -16,8 +16,10 @@ use crate::render::{DisplayCommand, DisplayList, TextCommand};
 mod image_rects;
 mod images;
 mod text;
+mod vertex_buffer;
 
 use text::text_areas;
+use vertex_buffer::DynamicVertexBuffer;
 
 #[derive(Debug, Error)]
 pub enum RendererError {
@@ -47,6 +49,8 @@ pub struct GpuRenderer {
     image_bind_group_layout: wgpu::BindGroupLayout,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
+    rect_vertex_buffer: DynamicVertexBuffer,
+    image_vertex_buffer: DynamicVertexBuffer,
     font_system: FontSystem,
     swash_cache: SwashCache,
     viewport: Viewport,
@@ -97,9 +101,7 @@ fn select_surface_alpha_mode(
 fn preferred_backends() -> wgpu::Backends {
     #[cfg(target_os = "windows")]
     {
-        // CEF D3D11 shared-handle import is Vulkan-only in wgpu-hal
-        // (`texture_from_d3d11_shared_handle`). DX12 cannot import those handles.
-        wgpu::Backends::VULKAN
+        wgpu::Backends::DX12
     }
     #[cfg(target_os = "linux")]
     {
@@ -113,27 +115,6 @@ fn preferred_backends() -> wgpu::Backends {
     {
         wgpu::Backends::all()
     }
-}
-
-fn external_memory_features(adapter: &wgpu::Adapter) -> wgpu::Features {
-    let supported = adapter.features();
-    let mut features = wgpu::Features::empty();
-    #[cfg(target_os = "linux")]
-    {
-        let dma = wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF;
-        if supported.contains(dma) {
-            features |= dma;
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let win32 = wgpu::Features::VULKAN_EXTERNAL_MEMORY_WIN32;
-        if supported.contains(win32) {
-            features |= win32;
-        }
-    }
-    let _ = supported;
-    features
 }
 
 impl GpuRenderer {
@@ -154,11 +135,9 @@ impl GpuRenderer {
             })
             .await
             .map_err(|error| RendererError::Adapter(error.to_string()))?;
-        let required_features = external_memory_features(&adapter);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("sabine-gpu"),
-                required_features,
                 ..Default::default()
             })
             .await
@@ -285,6 +264,8 @@ impl GpuRenderer {
             image_bind_group_layout,
             globals_buffer,
             globals_bind_group,
+            rect_vertex_buffer: DynamicVertexBuffer::default(),
+            image_vertex_buffer: DynamicVertexBuffer::default(),
             font_system,
             swash_cache: SwashCache::new(),
             viewport,
@@ -343,7 +324,7 @@ impl GpuRenderer {
         );
 
         let rect_vertices = self.rect_vertices(display_list);
-        let image_draws = self.image_draws(display_list);
+        let (image_draws, image_vertices) = self.image_draws(display_list);
         self.rebuild_text_buffers(display_list);
         let text_areas = text_areas(&self.text_buffers, self.scale_factor);
         if !text_areas.is_empty() {
@@ -372,6 +353,18 @@ impl GpuRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("sabine render encoder"),
             });
+        let rect_vertex_buffer = self.rect_vertex_buffer.upload(
+            &self.device,
+            &self.queue,
+            "sabine rounded rect vertices",
+            &rect_vertices,
+        );
+        let image_vertex_buffer = self.image_vertex_buffer.upload(
+            &self.device,
+            &self.queue,
+            "sabine image vertices",
+            &image_vertices,
+        );
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -391,14 +384,7 @@ impl GpuRenderer {
                 multiview_mask: None,
             });
 
-            if !rect_vertices.is_empty() {
-                let vertex_buffer =
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("sabine rounded rect vertices"),
-                            contents: bytemuck::cast_slice(&rect_vertices),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        });
+            if let Some(vertex_buffer) = &rect_vertex_buffer {
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &self.globals_bind_group, &[]);
                 pass.set_vertex_buffer(0, vertex_buffer.slice(..));
@@ -410,15 +396,10 @@ impl GpuRenderer {
                 pass.set_bind_group(0, &self.globals_bind_group, &[]);
                 pass.set_bind_group(1, &draw.bind_group, &[]);
 
-                let vertex_buffer =
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("sabine image vertices"),
-                            contents: bytemuck::cast_slice(&draw.vertices),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        });
-                pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                pass.draw(0..draw.vertices.len() as u32, 0..1);
+                if let Some(vertex_buffer) = &image_vertex_buffer {
+                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    pass.draw(draw.vertices.clone(), 0..1);
+                }
             }
 
             if !self.text_buffers.is_empty() {

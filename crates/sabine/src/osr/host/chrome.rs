@@ -133,7 +133,7 @@ pub(super) fn configured_control_at(
     y: f32,
 ) -> Option<TitlebarControl> {
     controls.iter().find_map(|region| {
-        rect_region_contains(&region.rect, width, x, y).then(|| match region.action {
+        rect_region_contains(&region.rect, width, x, y).then_some(match region.action {
             crate::SabineWindowControlAction::Minimize => TitlebarControl::Minimize,
             crate::SabineWindowControlAction::Maximize => TitlebarControl::Maximize,
             crate::SabineWindowControlAction::Close => TitlebarControl::Close,

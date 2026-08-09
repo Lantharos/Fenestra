@@ -1,9 +1,8 @@
 use std::path::PathBuf;
 
 use sabine::{
-    BridgeCommandDescriptor, BridgeResponse, RuntimeConfig, RuntimeMode, SabineLifecyclePolicy,
-    SabineWindow, SabineWindowControlAction, WindowRegion, WindowRegionRect,
-    run_sabine_host_from_args, user_runtime_path,
+    BridgeCommandDescriptor, BridgeResponse, SabineLifecyclePolicy, SabineWindow,
+    SabineWindowControlAction, WindowRegion, WindowRegionRect,
 };
 
 const APP_TITLEBAR_HEIGHT: i32 = 38;
@@ -11,59 +10,40 @@ const SIDEBAR_WIDTH: i32 = 260;
 
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
-    if run_sabine_host_from_args(&args) {
-        return;
-    }
-
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let runtime = RuntimeConfig {
-        mode: RuntimeMode::SharedPreferred,
-        allow_user_install: true,
-        bundled_dir: Some(manifest_dir.clone()),
-        ..RuntimeConfig::default()
-    };
     let mode = ExampleChromeMode::from_args(&args);
     let entry = mode.entry(&manifest_dir);
-    let mut window = mode.apply(
-        SabineWindow::new()
-            .app_id("com.sabine.notes")
-            .title("Sabine Notes")
-            .size(900, 640)
-            .entry(entry)
-            .runtime(runtime.clone())
-            .lifecycle_policy(SabineLifecyclePolicy::browser_tab())
-            .bridge_descriptor_handler(
-                BridgeCommandDescriptor::new("notes.create").target("desktop"),
-                |command| {
-                    let id = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|duration| duration.as_nanos())
-                        .unwrap_or_default();
-                    Ok(BridgeResponse::json(serde_json::json!({
-                        "ok": true,
-                        "id": format!("sabine-{id}"),
-                        "params": command.params
-                    })))
-                },
-            ),
-    );
-    if args.iter().any(|arg| arg == "--hidden") {
-        window = window.hidden();
-    }
-
     println!("Sabine standalone notes example");
     println!("chrome mode: {}", mode.label());
-    println!("user runtime dir: {}", user_runtime_path().display());
-    match window.launch() {
-        Ok(process) => {
-            println!("launched Sabine process {}", process.id());
-            let _ = process.wait();
+    SabineWindow::main(move |window| {
+        let window = mode.apply(
+            window
+                .app_id("com.sabine.notes")
+                .title("Sabine Notes")
+                .size(900, 640)
+                .entry(entry)
+                .lifecycle_policy(SabineLifecyclePolicy::browser_tab())
+                .bridge_descriptor_handler(
+                    BridgeCommandDescriptor::new("notes.create").target("desktop"),
+                    |command| {
+                        let id = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|duration| duration.as_nanos())
+                            .unwrap_or_default();
+                        Ok(BridgeResponse::json(serde_json::json!({
+                            "ok": true,
+                            "id": format!("sabine-{id}"),
+                            "params": command.params
+                        })))
+                    },
+                ),
+        );
+        if args.iter().any(|arg| arg == "--hidden") {
+            Ok(window.hidden())
+        } else {
+            Ok(window)
         }
-        Err(error) => {
-            eprintln!("failed to launch Sabine window: {error}");
-            std::process::exit(1);
-        }
-    }
+    });
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -82,8 +62,6 @@ impl ExampleChromeMode {
             Self::SabineChrome
         } else if args.iter().any(|arg| arg == "--frameless") {
             Self::Frameless
-        } else if args.iter().any(|arg| arg == "--glass") {
-            Self::Glass
         } else {
             Self::Glass
         }
@@ -131,8 +109,7 @@ impl ExampleChromeMode {
                     ))
                     .input_region(WindowRegion::adaptive_rounded_rect(14)),
             ),
-            // Native Win32 titlebar + DWM Acrylic (default glass). Use
-            // `.glass_spec(GlassSpec::new().windows("mica"))` for Mica.
+            // Native titlebar with the platform's default glass material.
             Self::Glass => window
                 .system_chrome()
                 .glass()

@@ -209,24 +209,14 @@ impl OsrLayerHost {
                 }
             }
             LayerHostEvent::Message(OsrMessage::PaintBatch(batch)) => {
-                if self.visible {
-                    if let Some(return_data) = self.refresh_batch_surface(batch, state, id) {
-                        return return_data;
-                    }
+                if self.visible
+                    && let Some(return_data) = self.refresh_batch_surface(batch, state, id)
+                {
+                    return return_data;
                 }
             }
             LayerHostEvent::Message(OsrMessage::AccelFrame(frame)) => {
-                if self.visible {
-                    match crate::osr::accel::accel_to_paint_batch(frame) {
-                        Ok(batch) => {
-                            if let Some(return_data) = self.refresh_batch_surface(batch, state, id)
-                            {
-                                return return_data;
-                            }
-                        }
-                        Err(_) => {}
-                    }
-                }
+                crate::osr::accel::discard_frame(frame);
             }
             LayerHostEvent::Message(OsrMessage::PopupHidden) => {
                 self.close_popup(state);
@@ -335,10 +325,12 @@ impl OsrLayerHost {
             &endpoint,
             &authentication_token,
             &self.config,
-            width,
-            height,
-            scale,
-            self.active_frame_rate(),
+            crate::osr::CefViewport {
+                width,
+                height,
+                scale,
+                frame_rate: self.active_frame_rate(),
+            },
         );
         let child = match command.spawn() {
             Ok(child) => child,

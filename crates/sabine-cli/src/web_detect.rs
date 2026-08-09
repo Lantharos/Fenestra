@@ -202,12 +202,11 @@ fn detect_vite_port(root: &Path) -> Option<u16> {
     ] {
         if let Some(parent) = root.parent() {
             let path = parent.join(name);
-            if path.is_file() {
-                if let Ok(text) = fs::read_to_string(path) {
-                    if let Some(port) = extract_port_from_vite_config(&text) {
-                        return Some(port);
-                    }
-                }
+            if path.is_file()
+                && let Ok(text) = fs::read_to_string(path)
+                && let Some(port) = extract_port_from_vite_config(&text)
+            {
+                return Some(port);
             }
         }
     }
@@ -285,10 +284,10 @@ fn parse_localhost_port(url: &str) -> Option<u16> {
         .strip_prefix("http://")
         .or_else(|| url.strip_prefix("https://"))?;
     let host_port = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-    if let Some((host, port)) = host_port.rsplit_once(':') {
-        if matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1") {
-            return port.parse().ok();
-        }
+    if let Some((host, port)) = host_port.rsplit_once(':')
+        && matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1")
+    {
+        return port.parse().ok();
     }
     None
 }

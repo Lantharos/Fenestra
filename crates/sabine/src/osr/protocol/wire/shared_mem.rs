@@ -7,7 +7,8 @@ use std::{
 use std::{io, sync::Arc};
 
 /// Owns a mapped shared paint buffer for the lifetime of a batch decode.
-pub(super) struct SharedMapping {
+#[derive(Debug)]
+pub(crate) struct SharedMapping {
     #[cfg(unix)]
     ptr: *mut u8,
     #[cfg(unix)]
@@ -25,14 +26,24 @@ unsafe impl Sync for SharedMapping {}
 
 impl SharedMapping {
     #[cfg(unix)]
-    pub(super) fn map_fd(fd: i32) -> io::Result<Arc<Self>> {
+    pub(super) fn map_fd(fd: i32, max_len: usize) -> io::Result<Arc<Self>> {
         let file = unsafe { File::from_raw_fd(fd) };
-        let len = file.metadata()?.len() as usize;
+        let len = usize::try_from(file.metadata()?.len()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "shared OSR buffer does not fit this platform",
+            )
+        })?;
         if len == 0 {
-            let _ = file.into_raw_fd();
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "shared OSR buffer is empty",
+            ));
+        }
+        if len > max_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "shared OSR paint buffer exceeds the protocol limit",
             ));
         }
         let raw = file.into_raw_fd();
@@ -60,14 +71,14 @@ impl SharedMapping {
     }
 
     #[cfg(not(unix))]
-    pub(super) fn map_fd(_fd: i32) -> io::Result<Arc<Self>> {
+    pub(super) fn map_fd(_fd: i32, _max_len: usize) -> io::Result<Arc<Self>> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "shared OSR buffers are unavailable on this transport",
         ))
     }
 
-    pub(super) fn as_slice(&self) -> &[u8] {
+    pub(crate) fn as_slice(&self) -> &[u8] {
         #[cfg(unix)]
         {
             unsafe { std::slice::from_raw_parts(self.ptr, self.len) }

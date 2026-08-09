@@ -140,7 +140,7 @@ pub(super) fn startup_activation_token() -> Option<String> {
 pub(super) fn single_instance_socket_path(instance_id: Option<&str>) -> io::Result<PathBuf> {
     let runtime = env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| env::temp_dir());
+        .unwrap_or_else(env::temp_dir);
     let id = instance_id
         .map(str::trim)
         .filter(|id| !id.is_empty())

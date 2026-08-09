@@ -14,20 +14,14 @@ namespace sabine_osr {
 
 struct AccelPaintMeta {
   uint32_t format = 0;
-  uint64_t modifier = 0;
-  uint32_t stride = 0;
-  uint64_t offset = 0;
-  uint64_t size = 0;
-  /// Windows: duplicated HANDLE value in the compositor process.
-  /// macOS: IOSurfaceID. Linux: unused (0); plane travels via SCM_RIGHTS.
+  /// Duplicated NT HANDLE value in the compositor process.
   uint64_t native_handle = 0;
+  /// Identifies the producer slot released after the D3D12 copy completes.
+  uint64_t slot_token = 0;
 };
 
 std::string BuildAccelPayload(const std::string& guest_id,
-                              const AccelPaintMeta& meta,
-                              const CefRenderHandler::RectList& dirty_rects,
-                              uint32_t width,
-                              uint32_t height);
+                              const AccelPaintMeta& meta);
 
 }  // namespace sabine_osr
 

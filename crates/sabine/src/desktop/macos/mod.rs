@@ -6,10 +6,6 @@
 
 use std::{
     collections::HashMap,
-    env, fs, io,
-    io::{Read, Write},
-    os::unix::net::{UnixListener, UnixStream},
-    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -18,19 +14,12 @@ use std::{
     time::Duration,
 };
 
-use global_hotkey::{
-    GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
-    hotkey::{Code, HotKey, Modifiers},
-};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
 use sabine_platform::{
     AutostartEntry, DeepLinkRegistration, GlobalShortcutActivation, GlobalShortcutRegistration,
-    NativeMessagingHost, PlatformEvent, Shortcut, SingleInstanceActivation, SingleInstancePolicy,
-    TrayActivation, TrayIcon,
+    NativeMessagingHost, PlatformEvent, SingleInstancePolicy, TrayActivation, TrayIcon,
 };
-use tray_icon::{
-    Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent,
-    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
-};
+use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent, menu::MenuEvent};
 
 pub(super) type EventQueue = Arc<Mutex<Vec<PlatformEvent>>>;
 
@@ -64,52 +53,6 @@ impl DesktopServiceState {
             .lock()
             .map(|mut events| events.drain(..).collect())
             .unwrap_or_default()
-    }
-
-    pub fn poll_native_events(&self) {
-        if let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            match event {
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                } => {
-                    if let Some(tray_id) = &self.tray_id {
-                        push_event(
-                            &self.events,
-                            PlatformEvent::Tray(TrayActivation::new(tray_id.clone())),
-                        );
-                    }
-                }
-                _ => {}
-            }
-        }
-        if let Ok(event) = MenuEvent::receiver().try_recv()
-            && let Ok(actions) = self.menu_actions.lock()
-            && let Some((tray_id, item_id, action)) = actions.get(&event.id.0)
-        {
-            push_event(
-                &self.events,
-                PlatformEvent::Tray(TrayActivation::item(
-                    tray_id.clone(),
-                    item_id.clone(),
-                    action.clone(),
-                )),
-            );
-        }
-        if let Ok(event) = GlobalHotKeyEvent::receiver().try_recv()
-            && event.state == HotKeyState::Pressed
-            && let Ok(actions) = self.shortcut_actions.lock()
-            && let Some((id, action)) = actions.get(&event.id())
-        {
-            push_event(
-                &self.events,
-                PlatformEvent::GlobalShortcut(GlobalShortcutActivation::new(
-                    id.clone(),
-                    action.clone(),
-                )),
-            );
-        }
     }
 }
 

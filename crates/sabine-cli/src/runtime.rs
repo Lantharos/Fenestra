@@ -1,30 +1,17 @@
 use std::process::ExitCode;
 
 use sabine_runtime::{
-    RuntimeConfig, RuntimeError, RuntimePackage, detect_runtime, latest_install_plan,
-    prune_user_runtimes, remove_user_runtime_version, resolve_runtime,
-    update_user_runtime_with_progress,
+    RuntimeConfig, RuntimeError, detect_runtime, latest_install_plan, prune_user_runtimes,
+    remove_user_runtime_version, resolve_runtime, update_user_runtime_with_progress,
 };
 
 pub enum RuntimeCommand {
     Prepare,
-    List {
-        json: bool,
-    },
-    Install {
-        package: String,
-    },
-    Remove {
-        version: Option<String>,
-        package: String,
-    },
-    Prune {
-        keep: usize,
-        package: String,
-    },
-    Doctor {
-        json: bool,
-    },
+    List { json: bool },
+    Install,
+    Remove { version: Option<String> },
+    Prune { keep: usize },
+    Doctor { json: bool },
 }
 
 pub fn run_runtime(command: RuntimeCommand) -> ExitCode {
@@ -40,9 +27,9 @@ pub fn run_runtime(command: RuntimeCommand) -> ExitCode {
             }
         },
         RuntimeCommand::List { json } => list_runtimes(json),
-        RuntimeCommand::Install { package } => install_runtime(&package),
-        RuntimeCommand::Remove { version, package } => remove_runtime(version.as_deref(), &package),
-        RuntimeCommand::Prune { keep, package } => prune_runtime(keep, &package),
+        RuntimeCommand::Install => install_runtime(),
+        RuntimeCommand::Remove { version } => remove_runtime(version.as_deref()),
+        RuntimeCommand::Prune { keep } => prune_runtime(keep),
         RuntimeCommand::Doctor { json } => doctor_runtime(json),
     }
 }
@@ -68,11 +55,7 @@ pub fn ensure_runtime_ready() -> Result<std::path::PathBuf, String> {
 fn install_default_runtime(config: &RuntimeConfig) -> Result<sabine_runtime::RuntimeInfo, String> {
     let plan = latest_install_plan(config)
         .map_err(|error| format!("failed to plan runtime install: {error}"))?;
-    eprintln!(
-        "sabine: installing {} runtime {}…",
-        plan.package.as_str(),
-        plan.version
-    );
+    eprintln!("sabine: installing CEF runtime {}…", plan.version);
     let mut last_message = String::new();
     update_user_runtime_with_progress(config, |progress| {
         let percent = progress
@@ -102,8 +85,7 @@ fn list_runtimes(json: bool) -> ExitCode {
                     sabine_runtime::RuntimeLocation::Bundled(_) => "bundled",
                 };
                 format!(
-                    "{{\"package\":\"{}\",\"version\":\"{}\",\"location_type\":\"{}\",\"path\":\"{}\"}}",
-                    r.package.as_str(),
+                    "{{\"version\":\"{}\",\"location_type\":\"{}\",\"path\":\"{}\"}}",
                     r.version,
                     location_type,
                     r.location.path().display()
@@ -126,9 +108,8 @@ fn list_runtimes(json: bool) -> ExitCode {
                     sabine_runtime::RuntimeLocation::Bundled(_) => "bundled",
                 };
                 println!(
-                    "  {} {} {} {}",
+                    "  {} {} {}",
                     runtime.version,
-                    runtime.package.as_str(),
                     location_type,
                     runtime.location.path().display()
                 );
@@ -139,10 +120,8 @@ fn list_runtimes(json: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn install_runtime(package: &str) -> ExitCode {
-    let Ok(config) = runtime_config(package) else {
-        return ExitCode::from(1);
-    };
+fn install_runtime() -> ExitCode {
+    let config = RuntimeConfig::default();
 
     let plan = match latest_install_plan(&config) {
         Ok(plan) => plan,
@@ -156,19 +135,14 @@ fn install_runtime(package: &str) -> ExitCode {
         && runtime.version == plan.version
     {
         println!(
-            "Latest {} runtime {} is already installed at {}.",
-            package,
+            "Latest CEF runtime {} is already installed at {}.",
             runtime.version,
             runtime.location.path().display()
         );
         return ExitCode::SUCCESS;
     }
 
-    println!(
-        "Installing {} runtime {}.",
-        plan.package.as_str(),
-        plan.version
-    );
+    println!("Installing CEF runtime {}.", plan.version);
     println!("Download: {}", plan.url);
     println!("Destination: {}", plan.install_dir.display());
 
@@ -181,8 +155,7 @@ fn install_runtime(package: &str) -> ExitCode {
     }) {
         Ok(runtime) => {
             println!(
-                "Installed {} runtime {} at {}.",
-                runtime.package.as_str(),
+                "Installed CEF runtime {} at {}.",
                 runtime.version,
                 runtime.location.path().display()
             );
@@ -195,48 +168,40 @@ fn install_runtime(package: &str) -> ExitCode {
     }
 }
 
-fn remove_runtime(version: Option<&str>, package: &str) -> ExitCode {
-    let Ok(config) = runtime_config(package) else {
-        return ExitCode::from(1);
-    };
-
+fn remove_runtime(version: Option<&str>) -> ExitCode {
     let Some(version) = version else {
         eprintln!("specify a version; run `sabine runtime list` to see installed versions");
         return ExitCode::from(1);
     };
 
-    match remove_user_runtime_version(&config, version) {
+    match remove_user_runtime_version(version) {
         Ok(true) => {
-            println!("Removed CEF {package} runtime {version}.");
+            println!("Removed CEF runtime {version}.");
             ExitCode::SUCCESS
         }
         Ok(false) => {
-            eprintln!("No user-local CEF {package} runtime {version} found.");
+            eprintln!("No user-local CEF runtime {version} found.");
             ExitCode::from(1)
         }
         Err(error) => {
-            eprintln!("failed to remove CEF {package} runtime {version}: {error}");
+            eprintln!("failed to remove CEF runtime {version}: {error}");
             ExitCode::from(1)
         }
     }
 }
 
-fn prune_runtime(keep: usize, package: &str) -> ExitCode {
-    let Ok(config) = runtime_config(package) else {
-        return ExitCode::from(1);
-    };
-
-    match prune_user_runtimes(&config, keep) {
+fn prune_runtime(keep: usize) -> ExitCode {
+    match prune_user_runtimes(keep) {
         Ok(0) => {
-            println!("No stale CEF {package} runtimes found.");
+            println!("No stale CEF runtimes found.");
             ExitCode::SUCCESS
         }
         Ok(removed) => {
-            println!("Removed {removed} stale CEF {package} runtime(s).");
+            println!("Removed {removed} stale CEF runtime(s).");
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("failed to prune CEF {package} runtimes: {error}");
+            eprintln!("failed to prune CEF runtimes: {error}");
             ExitCode::from(1)
         }
     }
@@ -280,10 +245,7 @@ fn doctor_runtime(json: bool) -> ExitCode {
                 println!("  Install with: sabine runtime install");
             }
             "outdated" => {
-                println!(
-                    "{} runtime: outdated (found versions below minimum 151)",
-                    "CEF"
-                );
+                println!("CEF runtime: outdated (found versions below minimum 151)");
                 println!("  Update with: sabine runtime install");
             }
             _ => {}
@@ -305,16 +267,4 @@ fn doctor_runtime(json: bool) -> ExitCode {
     } else {
         ExitCode::from(1)
     }
-}
-
-fn runtime_config(package: &str) -> Result<RuntimeConfig, ()> {
-    let Some(package) = RuntimePackage::parse(package) else {
-        eprintln!("unknown runtime package `{package}`; use standard, client, or minimal");
-        return Err(());
-    };
-
-    Ok(RuntimeConfig {
-        package,
-        ..RuntimeConfig::default()
-    })
 }

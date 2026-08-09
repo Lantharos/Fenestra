@@ -1,28 +1,25 @@
 use sabine_bridge::BridgeHandlers;
 
-pub mod app_chrome;
+mod app_chrome;
 mod builder;
-pub mod config;
+pub(crate) mod config;
 mod dev;
-pub mod glass;
 mod launch;
-pub mod manifest;
-pub mod style;
+mod manifest;
+pub(crate) mod style;
 
 pub use app_chrome::AppChrome;
+use config::SabineWindowConfig;
 pub use config::{
-    DesktopServiceConfig, SabineLifecyclePolicy, SabineWindowChrome, SabineWindowConfig,
-    SabineWindowControlAction, SabineWindowControlRegion,
+    SabineLifecyclePolicy, SabineWindowChrome, SabineWindowControlAction, SabineWindowControlRegion,
 };
-pub use dev::{parse_localhost_port, vite_dev_command, vite_dev_url};
-pub use glass::GlassSpec;
 
 use crate::error::SabineResult;
 
 /// Cross-platform Sabine window builder.
 #[derive(Clone, Debug)]
 pub struct SabineWindow {
-    pub config: SabineWindowConfig,
+    pub(crate) config: SabineWindowConfig,
     bridge_handlers: BridgeHandlers,
 }
 

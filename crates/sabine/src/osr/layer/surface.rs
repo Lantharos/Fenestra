@@ -98,11 +98,11 @@ impl OsrLayerHost {
             Ok(damage) => damage,
             Err(_) => return,
         };
-        if let Some(id) = id {
-            if let Some(unit) = state.get_unit_with_id(id) {
-                self.commit_surface(unit, damage);
-                return;
-            }
+        if let Some(id) = id
+            && let Some(unit) = state.get_unit_with_id(id)
+        {
+            self.commit_surface(unit, damage);
+            return;
         }
         self.commit_surface(state.main_window(), damage);
     }
@@ -129,12 +129,11 @@ impl OsrLayerHost {
         let Ok(mut file) = file.try_clone() else {
             return None;
         };
-        let main_frames = batch.frames.iter().collect::<Vec<_>>();
         let damage = match paint_frames_buffer_file(
             &mut file,
             self.buffer_size.0,
             self.buffer_size.1,
-            &main_frames,
+            &batch.frames,
             &[],
             &mut self.main_buffer,
             &mut self.scratch,
@@ -228,16 +227,15 @@ impl OsrLayerHost {
     }
 
     fn layer_commit_size(&self) -> (u32, u32) {
-        if let Some(shell_surface) = &self.config.shell_surface {
-            if let Some((width, height)) = shell_surface.size {
-                let width = if width == 0 && shell_surface.anchor.left && shell_surface.anchor.right
-                {
-                    0
-                } else {
-                    width.max(1)
-                };
-                return (width, height.max(1));
-            }
+        if let Some(shell_surface) = &self.config.shell_surface
+            && let Some((width, height)) = shell_surface.size
+        {
+            let width = if width == 0 && shell_surface.anchor.left && shell_surface.anchor.right {
+                0
+            } else {
+                width.max(1)
+            };
+            return (width, height.max(1));
         }
         (self.surface_size.0.max(1), self.surface_size.1.max(1))
     }

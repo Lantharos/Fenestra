@@ -37,19 +37,16 @@ pub(super) fn upload_composed_damage(
                     frame.y as u32,
                     frame.width,
                     frame.height,
-                    frame.bytes.as_slice(),
+                    frame.bytes(),
                 ))
             }),
         );
     }
     renderer.update_dynamic_bgra_image_region(
         texture_id,
-        buffer_width,
-        buffer_height,
-        damage.x,
-        damage.y,
-        damage.width,
-        damage.height,
+        (buffer_width, buffer_height),
+        (damage.x, damage.y),
+        (damage.width, damage.height),
         buffer,
     )
 }

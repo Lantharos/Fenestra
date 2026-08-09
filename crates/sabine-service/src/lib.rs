@@ -16,7 +16,7 @@ pub use registry::SabineService;
 pub use types::{
     AppArtifact, AppManifest, AppReleaseManifest, AppUpdateConfig, MaintenanceReport,
     RegisteredApp, ServiceError, ServiceResult, UpdatePolicy, default_maintenance_interval,
-    service_data_dir,
+    service_data_dir, valid_app_id,
 };
 
 #[cfg(test)]

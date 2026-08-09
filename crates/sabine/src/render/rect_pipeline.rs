@@ -82,10 +82,7 @@ pub(crate) fn create_rounded_rect_pipeline(
 pub(crate) fn push_rect_command(vertices: &mut Vec<RectVertex>, command: &RectCommand, scale: f32) {
     push_rect(
         vertices,
-        command.x,
-        command.y,
-        command.width,
-        command.height,
+        [command.x, command.y, command.width, command.height],
         0.0,
         command.color,
         scale,
@@ -99,10 +96,7 @@ pub(crate) fn push_rounded_rect_command(
 ) {
     push_rect(
         vertices,
-        command.x,
-        command.y,
-        command.width,
-        command.height,
+        [command.x, command.y, command.width, command.height],
         command.radius,
         command.color,
         scale,
@@ -120,14 +114,12 @@ pub(crate) fn to_wgpu_color(color: Color) -> wgpu::Color {
 
 fn push_rect(
     vertices: &mut Vec<RectVertex>,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
+    bounds: [f32; 4],
     radius: f32,
     color: Color,
     scale: f32,
 ) {
+    let [x, y, width, height] = bounds;
     let x = x * scale;
     let y = y * scale;
     let width = width * scale;
@@ -233,7 +225,9 @@ pub(crate) fn create_image_pipeline(
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                // CEF supplies premultiplied BGRA pixels. Multiplying alpha a
+                // second time produces dark translucent edges over glass.
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),

@@ -46,18 +46,17 @@ impl FrameBuffer {
         compose_frame(frame, &mut self.bytes, width, height, false).then_some(damage)
     }
 
-    pub(crate) fn compose_batch<'a>(
+    pub(crate) fn compose_batch(
         &mut self,
         width: u32,
         height: u32,
-        frames: impl IntoIterator<Item = &'a OsrFrame>,
+        frames: &[OsrFrame],
     ) -> Option<FrameDamage> {
         if width == 0 || height == 0 {
             return None;
         }
-        let frames = frames.into_iter().collect::<Vec<_>>();
         let mut damage: Option<FrameDamage> = None;
-        for frame in &frames {
+        for frame in frames {
             let frame_damage = frame_damage(frame, width, height)?;
             if !frame_payload_is_valid(frame, width, height) {
                 return None;
@@ -163,7 +162,7 @@ pub(crate) fn compose_frame(
         for y in 0..draw_height {
             let source_index = (((y + source_y) * frame.width + source_x) * 4) as usize;
             let target_index = (((y + y_offset) * width + x_offset) * 4) as usize;
-            let Some(source) = frame.bytes.get(source_index..source_index + row_bytes) else {
+            let Some(source) = frame.bytes().get(source_index..source_index + row_bytes) else {
                 return false;
             };
             let Some(destination) = target.get_mut(target_index..target_index + row_bytes) else {
@@ -177,7 +176,7 @@ pub(crate) fn compose_frame(
         for x in 0..draw_width {
             let source_index = (((y + source_y) * frame.width + x + source_x) * 4) as usize;
             let target_index = (((y + y_offset) * width + x + x_offset) * 4) as usize;
-            let Some(source) = frame.bytes.get(source_index..source_index + 4) else {
+            let Some(source) = frame.bytes().get(source_index..source_index + 4) else {
                 return false;
             };
             let Some(destination) = target.get_mut(target_index..target_index + 4) else {
@@ -207,7 +206,7 @@ fn frame_payload_is_valid(frame: &OsrFrame, width: u32, height: u32) -> bool {
     let last_source_index = ((last_row * frame.width + source_x) * 4) as usize;
     last_source_index
         .checked_add(row_bytes)
-        .is_some_and(|end| end <= frame.bytes.len())
+        .is_some_and(|end| end <= frame.bytes().len())
 }
 
 fn blend_bgra(source: &[u8], destination: &mut [u8]) {
@@ -242,7 +241,8 @@ mod tests {
             y: 0,
             bytes: vec![
                 1, 1, 1, 255, 2, 2, 2, 255, 3, 3, 3, 255, 4, 4, 4, 255, 5, 5, 5, 255, 6, 6, 6, 255,
-            ],
+            ]
+            .into(),
         };
         let dirty = OsrFrame {
             surface: OsrSurface::Main,
@@ -250,7 +250,7 @@ mod tests {
             height: 1,
             x: 1,
             y: 0,
-            bytes: vec![9, 9, 9, 255],
+            bytes: vec![9, 9, 9, 255].into(),
         };
 
         assert_eq!(
@@ -287,7 +287,7 @@ mod tests {
             height: 1,
             x: 0,
             y: 0,
-            bytes: vec![1, 1, 1, 255],
+            bytes: vec![1, 1, 1, 255].into(),
         };
         let right = OsrFrame {
             surface: OsrSurface::Main,
@@ -295,11 +295,11 @@ mod tests {
             height: 1,
             x: 3,
             y: 2,
-            bytes: vec![2, 2, 2, 255],
+            bytes: vec![2, 2, 2, 255].into(),
         };
 
         assert_eq!(
-            buffer.compose_batch(4, 3, [&left, &right]),
+            buffer.compose_batch(4, 3, &[left, right]),
             Some(FrameDamage {
                 x: 0,
                 y: 0,
@@ -320,7 +320,7 @@ mod tests {
             height: 2,
             x: -1,
             y: -1,
-            bytes: vec![1, 1, 1, 255, 2, 2, 2, 255, 3, 3, 3, 255, 4, 4, 4, 255],
+            bytes: vec![1, 1, 1, 255, 2, 2, 2, 255, 3, 3, 3, 255, 4, 4, 4, 255].into(),
         };
 
         assert_eq!(
@@ -345,7 +345,7 @@ mod tests {
             height: 1,
             x: 0,
             y: 0,
-            bytes: vec![7, 7, 7, 255],
+            bytes: vec![7, 7, 7, 255].into(),
         };
         let invalid = OsrFrame {
             surface: OsrSurface::Main,
@@ -353,7 +353,7 @@ mod tests {
             height: 2,
             x: 0,
             y: 0,
-            bytes: vec![9, 9, 9, 255],
+            bytes: vec![9, 9, 9, 255].into(),
         };
 
         assert!(buffer.compose(1, 1, &full).is_some());

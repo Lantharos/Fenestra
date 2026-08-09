@@ -51,14 +51,14 @@ pub(super) fn paint_buffer_file(
     main_buffer: &mut Vec<u8>,
     scratch: &mut Vec<u8>,
 ) -> std::io::Result<DamageRect> {
-    let main_frames = main_frame.into_iter().collect::<Vec<_>>();
-    let popup_frames = popup_frame.into_iter().collect::<Vec<_>>();
+    let main_frames = main_frame.map(std::slice::from_ref).unwrap_or_default();
+    let popup_frames = popup_frame.map(std::slice::from_ref).unwrap_or_default();
     paint_frames_buffer_file(
         file,
         width,
         height,
-        &main_frames,
-        &popup_frames,
+        main_frames,
+        popup_frames,
         main_buffer,
         scratch,
     )
@@ -68,8 +68,8 @@ pub(super) fn paint_frames_buffer_file(
     file: &mut File,
     width: u32,
     height: u32,
-    main_frames: &[&OsrFrame],
-    popup_frames: &[&OsrFrame],
+    main_frames: &[OsrFrame],
+    popup_frames: &[OsrFrame],
     main_buffer: &mut Vec<u8>,
     scratch: &mut Vec<u8>,
 ) -> std::io::Result<DamageRect> {
@@ -100,7 +100,6 @@ pub(super) fn paint_frames_buffer_file(
 
     if !scratch.is_empty() {
         scratch.clear();
-        scratch.shrink_to_fit();
         write_full(file, main_buffer)?;
         file.flush()?;
         return Ok(DamageRect::full(width, height));

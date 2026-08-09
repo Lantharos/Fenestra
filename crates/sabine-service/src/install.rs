@@ -63,7 +63,7 @@ pub fn ensure_service_executable(
                 message: "Sabine service ready".to_string(),
                 fraction: Some(0.08),
             });
-            return Ok(destination);
+            Ok(destination)
         }
         Err(download_error) => {
             on_progress(PrepareProgress {

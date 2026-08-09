@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use serde::Deserialize;
 
 use super::SabineWindow;
-use super::dev::{parse_localhost_port, vite_dev_command, vite_dev_url};
+use super::dev::vite_dev_url;
 use crate::error::{SabineError, SabineResult};
 
 #[derive(Debug, Default, Deserialize)]
@@ -27,7 +27,6 @@ struct WebSection {
     url: Option<String>,
     dev_url: Option<String>,
     dev_port: Option<u16>,
-    dev_command: Option<String>,
     #[serde(default)]
     allowed_origins: Vec<String>,
 }
@@ -43,18 +42,15 @@ impl SabineWindow {
 
     pub fn with_manifest(mut self, path: impl AsRef<Path>) -> SabineResult<Self> {
         let path = path.as_ref();
-        let text = fs::read_to_string(path).map_err(|error| {
-            SabineError::Io(format!(
-                "failed to read Sabine.toml at {}: {error}",
-                path.display()
-            ))
+        let text = fs::read_to_string(path).map_err(|source| SabineError::ManifestRead {
+            path: path.to_path_buf(),
+            source,
         })?;
-        let file: SabineFile = toml::from_str(&text).map_err(|error| {
-            SabineError::Io(format!(
-                "failed to parse Sabine.toml at {}: {error}",
-                path.display()
-            ))
-        })?;
+        let file: SabineFile =
+            toml::from_str(&text).map_err(|source| SabineError::ManifestParse {
+                path: path.to_path_buf(),
+                source,
+            })?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
         if let Some(id) = file.app.id {
             self = self.app_id(id);
@@ -74,13 +70,6 @@ impl SabineWindow {
         }
 
         let mut allowed_origins = file.web.allowed_origins;
-        let explicit_dev_command = file
-            .web
-            .dev_command
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned);
         let mut dev_url = file
             .web
             .dev_url
@@ -88,25 +77,16 @@ impl SabineWindow {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned);
-        if dev_url.is_none() {
-            if let Some(port) = file.web.dev_port {
-                dev_url = Some(vite_dev_url(port));
-            }
+        if dev_url.is_none()
+            && let Some(port) = file.web.dev_port
+        {
+            dev_url = Some(vite_dev_url(port));
         }
-        let port = file
-            .web
-            .dev_port
-            .or_else(|| dev_url.as_deref().and_then(parse_localhost_port));
         if let Some(url) = &dev_url {
             if allowed_origins.is_empty() {
                 allowed_origins.push(url.clone());
             }
             self = self.dev_url(url.clone());
-        }
-        if let Some(command) = explicit_dev_command {
-            self = self.dev_command(command);
-        } else if let Some(port) = port {
-            self = self.dev_command(vite_dev_command(port, "bun"));
         }
         for origin in allowed_origins {
             self = self.allowed_origin(origin);

@@ -113,12 +113,12 @@ fn wait_for_port(port: u16, url: &str, mut child: Option<&mut Child>) -> Result<
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut last_error = None;
     while Instant::now() < deadline {
-        if let Some(child) = child.as_mut() {
-            if let Ok(Some(status)) = child.try_wait() {
-                return Err(format!(
-                    "frontend exited before `{url}` became available: {status}"
-                ));
-            }
+        if let Some(child) = child.as_mut()
+            && let Ok(Some(status)) = child.try_wait()
+        {
+            return Err(format!(
+                "frontend exited before `{url}` became available: {status}"
+            ));
         }
         for host in ["127.0.0.1", "localhost"] {
             match (host, port).to_socket_addrs() {
@@ -156,7 +156,6 @@ fn run_cargo(
     if release {
         command.arg("--release");
     }
-    command.env("SABINE_SKIP_DEV_COMMAND", "1");
     if let Some(frontend) = frontend {
         command.env("SABINE_DEV_URL", &frontend.url);
     }

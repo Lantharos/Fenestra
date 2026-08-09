@@ -29,8 +29,8 @@ pub(crate) fn select_runtime(
 ) -> Option<RuntimeInfo> {
     let mut compatible = runtimes
         .into_iter()
+        .filter(|runtime| runtime.verified)
         .filter(|runtime| version_satisfies(&runtime.version, &config.min_version))
-        .filter(|runtime| runtime.package == config.package)
         .filter(|runtime| location_allowed(config.mode, &runtime.location))
         .collect::<Vec<_>>();
 
@@ -47,10 +47,7 @@ fn location_allowed(mode: RuntimeMode, location: &RuntimeLocation) -> bool {
     match mode {
         RuntimeMode::SystemRequired => matches!(location, RuntimeLocation::System(_)),
         RuntimeMode::Bundled => matches!(location, RuntimeLocation::Bundled(_)),
-        RuntimeMode::Disabled => false,
-        RuntimeMode::SystemPreferred
-        | RuntimeMode::UserPreferred
-        | RuntimeMode::SharedPreferred => true,
+        RuntimeMode::SystemPreferred | RuntimeMode::SharedPreferred => true,
     }
 }
 
@@ -65,7 +62,7 @@ fn runtime_priority(mode: RuntimeMode, location: &RuntimeLocation) -> u8 {
             RuntimeLocation::UserLocal(_) => 1,
             RuntimeLocation::Bundled(_) => 2,
         },
-        RuntimeMode::UserPreferred | RuntimeMode::SharedPreferred => match location {
+        RuntimeMode::SharedPreferred => match location {
             RuntimeLocation::UserLocal(_) => 0,
             RuntimeLocation::System(_) => 1,
             RuntimeLocation::Bundled(_) => 2,
@@ -74,13 +71,12 @@ fn runtime_priority(mode: RuntimeMode, location: &RuntimeLocation) -> u8 {
             RuntimeLocation::Bundled(_) => 0,
             _ => 9,
         },
-        RuntimeMode::Disabled => 9,
     }
 }
 
 pub(crate) fn should_install_user_runtime(config: &RuntimeConfig) -> bool {
     matches!(
         config.mode,
-        RuntimeMode::SystemPreferred | RuntimeMode::UserPreferred | RuntimeMode::SharedPreferred
+        RuntimeMode::SystemPreferred | RuntimeMode::SharedPreferred
     )
 }

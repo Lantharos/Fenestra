@@ -11,9 +11,8 @@ use sabine_platform::{
 };
 use sabine_runtime::RuntimeConfig;
 
-use super::dev::{vite_dev_command, vite_dev_url};
 use super::{
-    GlassSpec, SabineLifecyclePolicy, SabineWindow, SabineWindowChrome, SabineWindowControlAction,
+    SabineLifecyclePolicy, SabineWindow, SabineWindowChrome, SabineWindowControlAction,
     SabineWindowControlRegion,
 };
 use crate::launch::{allow_dev_origins, allow_origin, allow_url_origin};
@@ -35,22 +34,6 @@ impl SabineWindow {
         let url = url.into();
         allow_dev_origins(&mut self.config.security, &url);
         self.config.dev_url = Some(url);
-        self
-    }
-
-    pub fn vite_dev_server(self, port: u16) -> Self {
-        self.dev_url(vite_dev_url(port))
-            .dev_command(vite_dev_command(port, "bun"))
-    }
-
-    pub fn vite_dev_server_with_query(self, port: u16, query: impl AsRef<str>) -> Self {
-        let query = query.as_ref().trim_start_matches('?');
-        self.dev_url(format!("{}?{query}", vite_dev_url(port)))
-            .dev_command(vite_dev_command(port, "bun"))
-    }
-
-    pub fn dev_command(mut self, command: impl Into<String>) -> Self {
-        self.config.dev_command = Some(command.into());
         self
     }
 
@@ -76,17 +59,6 @@ impl SabineWindow {
     #[cfg(target_os = "linux")]
     pub fn vaapi_hardware_decode(mut self, enabled: bool) -> Self {
         self.config.browser.vaapi_hardware_decode = enabled;
-        self
-    }
-
-    /// Linux only: opt into CEF shared-texture (DMA-BUF) OSR.
-    ///
-    /// Disabled by default — Chromium still fails SkSurface init on NVIDIA.
-    /// When enabled, CEF is launched with X11 ozone + ANGLE gl-egl (CEF requirement);
-    /// the default Linux path stays on Wayland ozone with software paints.
-    #[cfg(target_os = "linux")]
-    pub fn shared_texture_osr(mut self, enabled: bool) -> Self {
-        self.config.browser.shared_texture_osr = enabled;
         self
     }
 
@@ -170,7 +142,6 @@ impl SabineWindow {
         self.config.transparent = transparent;
         if !transparent {
             self.config.background_effect = WindowBackgroundEffect::None;
-            self.config.low_power_background_effect = None;
             self.config.regions.blur = None;
         }
         self
@@ -179,60 +150,43 @@ impl SabineWindow {
     pub fn opaque(mut self) -> Self {
         self.config.transparent = false;
         self.config.background_effect = WindowBackgroundEffect::None;
-        self.config.low_power_background_effect = None;
         self.config.regions.blur = None;
         self
     }
 
     pub fn frameless(mut self) -> Self {
-        self.config.frameless = true;
         self.config.chrome = SabineWindowChrome::Frameless;
         self
     }
 
     pub fn sabine_chrome(mut self) -> Self {
-        self.config.frameless = true;
         self.config.chrome = SabineWindowChrome::Sabine;
         self
     }
 
     pub fn system_chrome(mut self) -> Self {
-        self.config.frameless = false;
         self.config.chrome = SabineWindowChrome::System;
         self
     }
 
     pub fn no_chrome(mut self) -> Self {
-        self.config.frameless = true;
         self.config.chrome = SabineWindowChrome::None;
         self
     }
 
     pub fn chrome(mut self, chrome: SabineWindowChrome) -> Self {
-        self.config.frameless = !chrome.uses_native_decorations();
         self.config.chrome = chrome;
         self
     }
 
     pub fn glass(self) -> Self {
-        self.glass_spec(GlassSpec::new())
-    }
-
-    pub fn glass_spec(mut self, spec: GlassSpec) -> Self {
-        self.config.transparent = true;
-        self.config.background_effect = spec.resolve();
-        self
-    }
-
-    pub fn glass_effect(mut self, effect: WindowBackgroundEffect) -> Self {
-        self.config.transparent = true;
-        self.config.background_effect = effect;
-        self
-    }
-
-    pub fn glass_low_power_effect(mut self, effect: WindowBackgroundEffect) -> Self {
-        self.config.low_power_background_effect = Some(effect);
-        self
+        let effect = match sabine_platform::current_desktop_os() {
+            sabine_platform::PlatformOs::Windows => WindowBackgroundEffect::Acrylic,
+            sabine_platform::PlatformOs::Macos => WindowBackgroundEffect::Vibrancy,
+            sabine_platform::PlatformOs::Linux => WindowBackgroundEffect::Blur,
+            _ => WindowBackgroundEffect::None,
+        };
+        self.background_effect(effect)
     }
 
     pub fn background_effect(mut self, effect: WindowBackgroundEffect) -> Self {
@@ -250,7 +204,6 @@ impl SabineWindow {
 
     pub fn shell_surface(mut self, shell_surface: ShellSurfaceOptions) -> Self {
         self.config.shell_surface = Some(shell_surface);
-        self.config.frameless = true;
         self.config.chrome = SabineWindowChrome::None;
         self.config.transparent = true;
         self

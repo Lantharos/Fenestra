@@ -9,13 +9,13 @@ use sabine_platform::{
 use sabine_runtime::RuntimeConfig;
 
 use crate::launch::browser::BrowserOptions;
+use crate::{SabineError, SabineResult};
 
 #[derive(Clone, Debug)]
-pub struct SabineWindowConfig {
+pub(crate) struct SabineWindowConfig {
     pub entry: Option<String>,
     pub url: Option<String>,
     pub dev_url: Option<String>,
-    pub dev_command: Option<String>,
     pub app_id: Option<String>,
     pub app_version: Option<String>,
     pub title: String,
@@ -30,10 +30,8 @@ pub struct SabineWindowConfig {
     pub hide_on_blur: bool,
     pub always_on_top: bool,
     pub transparent: bool,
-    pub frameless: bool,
     pub chrome: SabineWindowChrome,
     pub background_effect: WindowBackgroundEffect,
-    pub low_power_background_effect: Option<WindowBackgroundEffect>,
     pub regions: WindowRegions,
     pub shell_surface: Option<ShellSurfaceOptions>,
     pub drag_regions: Vec<WindowRegionRect>,
@@ -53,7 +51,6 @@ impl Default for SabineWindowConfig {
             entry: None,
             url: None,
             dev_url: None,
-            dev_command: None,
             app_id: None,
             app_version: None,
             title: "Sabine".to_string(),
@@ -68,10 +65,8 @@ impl Default for SabineWindowConfig {
             hide_on_blur: false,
             always_on_top: false,
             transparent: false,
-            frameless: false,
             chrome: SabineWindowChrome::System,
             background_effect: WindowBackgroundEffect::None,
-            low_power_background_effect: None,
             regions: WindowRegions::default(),
             shell_surface: None,
             drag_regions: Vec::new(),
@@ -88,13 +83,40 @@ impl Default for SabineWindowConfig {
 }
 
 impl SabineWindowConfig {
-    pub fn effective_background_effect(&self) -> WindowBackgroundEffect {
-        if let Some(effect) = self.low_power_background_effect
-            && low_power_glass_requested()
-        {
-            return effect;
+    pub(crate) fn validate(&self) -> SabineResult<()> {
+        let app_id = self.app_id.as_deref().map(str::trim).unwrap_or_default();
+        if !sabine_service::valid_app_id(app_id) {
+            return Err(SabineError::CreationFailed {
+                message: "app_id is required and may contain only lowercase letters, digits, dots, and hyphens"
+                    .to_string(),
+            });
         }
-        self.background_effect
+        if self.title.trim().is_empty() {
+            return Err(SabineError::CreationFailed {
+                message: "window title cannot be empty".to_string(),
+            });
+        }
+        if self.width == 0 || self.height == 0 || self.min_width == 0 || self.min_height == 0 {
+            return Err(SabineError::CreationFailed {
+                message: "window and minimum dimensions must be greater than zero".to_string(),
+            });
+        }
+        match (self.entry.is_some(), self.url.is_some()) {
+            (false, false) => {
+                return Err(SabineError::CreationFailed {
+                    message:
+                        "configure one production content source with .entry(...) or .url(...)"
+                            .to_string(),
+                });
+            }
+            (true, true) => {
+                return Err(SabineError::CreationFailed {
+                    message: ".entry(...) and .url(...) are mutually exclusive".to_string(),
+                });
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     pub fn dev_mode(&self) -> bool {
@@ -104,20 +126,6 @@ impl SabineWindowConfig {
     pub fn effective_remote_devtools_port(&self) -> Option<u16> {
         self.browser.effective_remote_devtools_port(self.dev_mode())
     }
-
-    pub fn browser_options(&self) -> BrowserOptions {
-        self.browser.clone()
-    }
-}
-
-pub(crate) fn low_power_glass_requested() -> bool {
-    env_flag("SABINE_LOW_POWER_GLASS")
-}
-
-pub(crate) fn env_flag(name: &str) -> bool {
-    std::env::var(name)
-        .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

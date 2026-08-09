@@ -41,12 +41,11 @@ impl OsrLayerHost {
                 &mut popup.scratch,
             )
         } else {
-            let frames = popup.pending_frames.iter().collect::<Vec<_>>();
             paint_frames_buffer_file(
                 file,
                 width,
                 height,
-                &frames,
+                &popup.pending_frames,
                 &[],
                 &mut popup.buffer,
                 &mut popup.scratch,
@@ -67,9 +66,7 @@ impl OsrLayerHost {
         state: &mut WindowState<()>,
         parent_id: Option<id::Id>,
     ) -> Option<ReturnData<()>> {
-        if self.main_frame.is_none() {
-            return None;
-        }
+        self.main_frame.as_ref()?;
         let position = (frame.x, frame.y);
         let size = (frame.width.max(1), frame.height.max(1));
         let local_frame = local_popup_frame(frame);
@@ -93,9 +90,7 @@ impl OsrLayerHost {
         state: &mut WindowState<()>,
         parent_id: Option<id::Id>,
     ) -> Option<ReturnData<()>> {
-        if self.main_frame.is_none() {
-            return None;
-        }
+        self.main_frame.as_ref()?;
         let position = (batch.x, batch.y);
         let size = (batch.width.max(1), batch.height.max(1));
         if self
@@ -284,12 +279,11 @@ impl OsrLayerHost {
             .cloned()
             .map(local_popup_frame)
             .collect::<Vec<_>>();
-        let frames = local_frames.iter().collect::<Vec<_>>();
         let damage = match paint_frames_buffer_file(
             &mut file,
             popup.size.0,
             popup.size.1,
-            &frames,
+            &local_frames,
             &[],
             &mut popup.buffer,
             &mut popup.scratch,
@@ -315,7 +309,7 @@ fn empty_popup_frame(size: (u32, u32)) -> OsrFrame {
         height: size.1,
         x: 0,
         y: 0,
-        bytes: vec![0; buffer_len(size.0, size.1)],
+        bytes: vec![0; buffer_len(size.0, size.1)].into(),
     }
 }
 

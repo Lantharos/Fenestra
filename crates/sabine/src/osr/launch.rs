@@ -4,16 +4,16 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::host::{ManagedChild, prepare_child_command};
 #[cfg(target_os = "linux")]
-use crate::ld_library_path;
+use crate::host::ld_library_path;
+use crate::host::{ManagedChild, browser_profile_dir, prepare_child_command};
 use crate::osr::transport::IpcEndpoint;
+use crate::window::config::SabineWindowConfig;
 use crate::{
-    BridgeHandlers, SabineError, SabineProcess, SabineResult, SabineWindowConfig,
-    browser_profile_dir, prepare_bridge_command, spawn_bridge_dispatch,
+    SabineError, SabineProcess, SabineResult, prepare_bridge_command, spawn_bridge_dispatch,
     spawn_bridge_dispatch_for_window,
 };
-use sabine_bridge::{BridgeRuntime, LaunchMetrics};
+use sabine_bridge::{BridgeHandlers, BridgeRuntime, LaunchMetrics};
 
 pub(crate) const OSR_HOST_ARG: &str = "--sabine-osr-host";
 
@@ -33,14 +33,12 @@ pub(crate) fn run_from_args(args: &[String]) -> bool {
 }
 
 pub(crate) fn require_app_id(config: &SabineWindowConfig) -> SabineResult<&str> {
-    config
-        .app_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    let app_id = config.app_id.as_deref().map(str::trim).unwrap_or_default();
+    sabine_service::valid_app_id(app_id)
+        .then_some(app_id)
         .ok_or_else(|| SabineError::CreationFailed {
-            message: "Sabine requires a non-empty app_id (set via .app_id(...) or with_manifest)"
-                .into(),
+            message: "app_id is required and may contain only lowercase letters, digits, dots, and hyphens"
+                .to_string(),
         })
 }
 
@@ -52,7 +50,7 @@ pub(crate) fn launch_process(
     metrics: LaunchMetrics,
 ) -> SabineResult<SabineProcess> {
     let app_id = require_app_id(config)?.to_string();
-    let host_binary = crate::ensure_host(runtime_dir)
+    let host_binary = crate::host::ensure_host(runtime_dir)
         .map_err(|message| SabineError::CreationFailed { message })?;
     metrics.mark("host.ready");
     let mut child = spawn_osr_host_child(runtime_dir, &host_binary, config, url)?;
@@ -71,7 +69,6 @@ pub(crate) fn launch_process(
         child: ManagedChild::new(child),
         primary_alive: true,
         primary_status: None,
-        sidecars: Vec::new(),
         extra_windows: Vec::new(),
         bridge_thread: bridge_dispatch.thread,
         extra_bridge_threads: Vec::new(),
@@ -110,10 +107,6 @@ pub(crate) fn spawn_osr_host_child(
     let _ = require_app_id(config)?;
     let host_config_path =
         std::env::temp_dir().join(format!("sabine-osr-{}.json", osr_instance_key()));
-    #[cfg(target_os = "linux")]
-    let shared_texture_osr = config.browser.shared_texture_osr;
-    #[cfg(not(target_os = "linux"))]
-    let shared_texture_osr = false;
     let body = serde_json::json!({
         "runtime_dir": runtime_dir,
         "host_binary": host_binary,
@@ -132,7 +125,7 @@ pub(crate) fn spawn_osr_host_child(
         "always_on_top": config.always_on_top,
         "transparent": config.transparent,
         "shell_surface": crate::osr::protocol::shell_surface_to_json(config.shell_surface.as_ref()),
-        "background_effect": config.effective_background_effect().as_str(),
+        "background_effect": config.background_effect.as_str(),
         "chrome": config.chrome.as_str(),
         "bridge_commands": sabine_bridge::bridge_commands_with_all_internal(config.bridge.commands()),
         "regions": crate::osr::protocol::regions_to_json(&config.regions),
@@ -143,7 +136,6 @@ pub(crate) fn spawn_osr_host_child(
         "dev_mode": config.dev_mode(),
         "remote_devtools_port": config.effective_remote_devtools_port(),
         "remote_devtools_disabled": config.browser.remote_devtools_disabled,
-        "shared_texture_osr": shared_texture_osr,
         "vaapi_hardware_decode": config.browser.hardware_decode_enabled(),
     });
     std::fs::write(&host_config_path, body.to_string()).map_err(|error| {
@@ -211,16 +203,20 @@ pub(crate) fn attach_open_window(
     Ok(window_id)
 }
 
+pub(crate) struct CefViewport {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) scale: f64,
+    pub(crate) frame_rate: u32,
+}
+
 pub(crate) fn cef_osr_command(
     runtime_dir: &Path,
     host_binary: &Path,
     endpoint: &IpcEndpoint,
     authentication_token: &str,
     config: &crate::osr::host::OsrHostConfig,
-    width: u32,
-    height: u32,
-    scale: f64,
-    active_frame_rate: u32,
+    viewport: CefViewport,
 ) -> Command {
     let release_dir = runtime_dir.join("Release");
     let profile_key = config
@@ -245,16 +241,16 @@ pub(crate) fn cef_osr_command(
         command.arg(format!("--sabine-osr-token-file={}", token_file.display()));
     }
     command
-        .arg(format!("--sabine-width={width}"))
-        .arg(format!("--sabine-height={height}"))
-        .arg(format!("--sabine-scale={scale:.4}"))
+        .arg(format!("--sabine-width={}", viewport.width))
+        .arg(format!("--sabine-height={}", viewport.height))
+        .arg(format!("--sabine-scale={:.4}", viewport.scale))
         .arg(format!(
             "--sabine-bridge-commands={}",
             config.bridge_commands.join(",")
         ))
         .arg(format!(
             "--sabine-active-frame-rate={}",
-            active_frame_rate.max(1)
+            viewport.frame_rate.max(1)
         ))
         .arg(format!(
             "--sabine-background-frame-rate={}",
@@ -287,21 +283,10 @@ pub(crate) fn cef_osr_command(
     }
     #[cfg(target_os = "linux")]
     {
-        let ozone = if config.browser_options().shared_texture_osr
-            && !config.browser_options().software_osr_fallback
-        {
-            // CEF shared-texture OSR still requires X11 ozone + ANGLE GL-EGL.
-            "x11"
-        } else {
-            "wayland"
-        };
         command
-            .arg(format!("--sabine-ozone-platform={ozone}"))
-            .env("GDK_BACKEND", ozone)
-            .env("XDG_SESSION_TYPE", ozone);
-        if ozone == "x11" {
-            command.env_remove("WAYLAND_DISPLAY");
-        }
+            .arg("--sabine-ozone-platform=wayland")
+            .env("GDK_BACKEND", "wayland")
+            .env("XDG_SESSION_TYPE", "wayland");
     }
     // Env remains a fallback for non-handoff launches; the token file is what
     // survives CEF process-singleton relaunch into the primary process.

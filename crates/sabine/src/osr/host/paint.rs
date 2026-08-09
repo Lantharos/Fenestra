@@ -130,7 +130,7 @@ impl OsrNativeHost {
                     height,
                     x: 0,
                     y: 0,
-                    bytes: Vec::new(),
+                    bytes: Vec::new().into(),
                 });
                 self.clear_pending_resize_paint();
             }
@@ -153,12 +153,10 @@ impl OsrNativeHost {
                     };
                     damage
                 };
-                let bytes = self
-                    .overlays
-                    .get(&overlay_id)
-                    .map(|overlay| overlay.buffer.bytes().to_vec())
-                    .unwrap_or_default();
                 let Some(renderer) = self.renderer.as_mut() else {
+                    return false;
+                };
+                let Some(overlay) = self.overlays.get(&overlay_id) else {
                     return false;
                 };
                 if upload_composed_damage(
@@ -166,7 +164,7 @@ impl OsrNativeHost {
                     &texture_id,
                     frame.width,
                     frame.height,
-                    &bytes,
+                    overlay.buffer.bytes(),
                     damage,
                     std::slice::from_ref(&local),
                 )
@@ -181,7 +179,7 @@ impl OsrNativeHost {
                         height: frame.height,
                         x: frame.x,
                         y: frame.y,
-                        bytes: Vec::new(),
+                        bytes: Vec::new().into(),
                     };
                 }
             }
@@ -233,7 +231,7 @@ impl OsrNativeHost {
                     height: batch.height,
                     x: 0,
                     y: 0,
-                    bytes: Vec::new(),
+                    bytes: Vec::new().into(),
                 });
                 if batch_size == content_size {
                     self.clear_pending_resize_paint();
@@ -244,7 +242,7 @@ impl OsrNativeHost {
                     return false;
                 };
                 let texture_id = overlay_texture_id(&overlay_id);
-                let (damage, bytes) = {
+                let damage = {
                     let overlay = self.overlays.entry(overlay_id.clone()).or_insert_with(|| {
                         super::types::OverlayLayer {
                             frame: OsrFrame {
@@ -253,7 +251,7 @@ impl OsrNativeHost {
                                 height: batch.height,
                                 x: batch.x,
                                 y: batch.y,
-                                bytes: Vec::new(),
+                                bytes: Vec::new().into(),
                             },
                             buffer: crate::osr::frame_buffer::FrameBuffer::new(),
                         }
@@ -265,9 +263,12 @@ impl OsrNativeHost {
                     else {
                         return false;
                     };
-                    (damage, overlay.buffer.bytes().to_vec())
+                    damage
                 };
                 let Some(renderer) = self.renderer.as_mut() else {
+                    return false;
+                };
+                let Some(overlay) = self.overlays.get(&overlay_id) else {
                     return false;
                 };
                 if upload_composed_damage(
@@ -275,7 +276,7 @@ impl OsrNativeHost {
                     &texture_id,
                     batch.width,
                     batch.height,
-                    &bytes,
+                    overlay.buffer.bytes(),
                     damage,
                     &batch.frames,
                 )
@@ -290,7 +291,7 @@ impl OsrNativeHost {
                         height: batch.height,
                         x: batch.x,
                         y: batch.y,
-                        bytes: Vec::new(),
+                        bytes: Vec::new().into(),
                     };
                 }
             }

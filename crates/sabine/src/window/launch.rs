@@ -1,6 +1,5 @@
 use std::{
     net::{TcpStream, ToSocketAddrs},
-    process::{Child, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -11,17 +10,16 @@ use sabine_runtime::{RuntimeInfo, resolve_runtime};
 use super::{SabineWindow, SabineWindowConfig};
 use crate::desktop::apply_desktop_services;
 use crate::error::{SabineError, SabineResult};
-use crate::host::{ManagedChild, SabineProcess, prepare_child_command};
+use crate::host::SabineProcess;
 use crate::launch::{
     allow_dev_origins, allow_url_origin, bootstrap, canonical_entry, dev_server_candidates,
-    metrics_label, shell_command, split_entry_suffix,
+    metrics_label, split_entry_suffix,
 };
 use crate::osr;
-use crate::window::config::env_flag;
-use crate::window::dev::{parse_localhost_port, vite_dev_command};
 
 impl SabineWindow {
     pub fn launch(self) -> SabineResult<SabineProcess> {
+        self.config.validate()?;
         bootstrap::prepare(&self.config)?;
         let runtime = resolve_runtime(&self.config.runtime)?;
         self.launch_with_runtime(runtime)
@@ -30,6 +28,7 @@ impl SabineWindow {
     /// Resolve entry URL and config for [`SabineProcess::open_window`].
     /// Does not start desktop services or a second process island.
     pub(crate) fn into_open_window_parts(mut self) -> SabineResult<(SabineWindowConfig, String)> {
+        self.config.validate()?;
         self.ensure_default_bridge_handlers();
         self.allow_configured_url_origins();
         let url = self.entry_url()?;
@@ -68,21 +67,15 @@ impl SabineWindow {
             self.ensure_default_bridge_handlers();
             self.apply_dev_env_overrides();
             self.allow_configured_url_origins();
-            let mut dev_server = self.start_dev_command(&metrics)?;
             let mut url = self.entry_url()?;
-            if self.config.dev_url.is_some() || dev_server.is_some() {
-                match self.wait_for_dev_server(dev_server.as_mut(), &url) {
+            if self.config.dev_url.is_some() {
+                match self.wait_for_dev_server(&url) {
                     Ok(ready_url) => {
                         url = ready_url;
                         allow_dev_origins(&mut self.config.security, &url);
                         metrics.mark("dev_server.ready");
                     }
-                    Err(error) => {
-                        if let Some(child) = dev_server {
-                            let _ = ManagedChild::new(child).terminate();
-                        }
-                        return Err(error);
-                    }
+                    Err(error) => return Err(error),
                 }
             }
             let mut process = osr::launch_process(
@@ -92,40 +85,11 @@ impl SabineWindow {
                 &url,
                 metrics.clone(),
             )?;
-            if let Some(dev_server) = dev_server {
-                metrics.mark("dev_server.attached");
-                process.sidecars.push(ManagedChild::new(dev_server));
-            }
             process.desktop_services = desktop_services;
             process.start_desktop_event_forwarder();
             metrics.mark("launch.ready");
             Ok(process)
         }
-    }
-
-    fn start_dev_command(&self, metrics: &LaunchMetrics) -> SabineResult<Option<Child>> {
-        if env_flag("SABINE_SKIP_DEV_COMMAND") {
-            return Ok(None);
-        }
-        let Some(command) = &self.config.dev_command else {
-            return Ok(None);
-        };
-        if command.trim().is_empty() {
-            return Ok(None);
-        }
-        let mut process = shell_command(command);
-        prepare_child_command(&mut process);
-        process
-            .stdin(Stdio::null())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-        let child = process
-            .spawn()
-            .map_err(|error| SabineError::CreationFailed {
-                message: format!("failed to start dev command `{command}`: {error}"),
-            })?;
-        metrics.mark("dev_command.spawned");
-        Ok(Some(child))
     }
 
     fn apply_dev_env_overrides(&mut self) {
@@ -136,28 +100,9 @@ impl SabineWindow {
                 self.config.dev_url = Some(url.to_string());
             }
         }
-        if let Ok(command) = std::env::var("SABINE_DEV_COMMAND") {
-            let command = command.trim();
-            if !command.is_empty() {
-                self.config.dev_command = Some(command.to_string());
-            }
-        } else if self.config.dev_command.is_none() {
-            if let Some(port) = self
-                .config
-                .dev_url
-                .as_deref()
-                .and_then(parse_localhost_port)
-            {
-                self.config.dev_command = Some(vite_dev_command(port, "bun"));
-            }
-        }
     }
 
-    fn wait_for_dev_server(
-        &self,
-        mut dev_server: Option<&mut Child>,
-        url: &str,
-    ) -> SabineResult<String> {
+    fn wait_for_dev_server(&self, url: &str) -> SabineResult<String> {
         let candidates = dev_server_candidates(url);
         if candidates.is_empty() {
             return Ok(url.to_string());
@@ -165,15 +110,6 @@ impl SabineWindow {
         let deadline = Instant::now() + Duration::from_secs(20);
         let mut last_error = None;
         while Instant::now() < deadline {
-            if let Some(child) = dev_server.as_mut() {
-                if let Ok(Some(status)) = child.try_wait() {
-                    return Err(SabineError::CreationFailed {
-                        message: format!(
-                            "dev command exited before `{url}` became available: {status}"
-                        ),
-                    });
-                }
-            }
             for candidate in &candidates {
                 match (candidate.host.as_str(), candidate.port).to_socket_addrs() {
                     Ok(addresses) => {

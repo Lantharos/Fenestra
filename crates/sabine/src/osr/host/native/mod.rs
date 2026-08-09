@@ -9,8 +9,6 @@ use std::{
 };
 
 use sabine_platform::{WindowChrome as PlatformWindowChrome, WindowOptions, WindowRegionRect};
-#[cfg(target_os = "windows")]
-use winit::platform::windows::BackdropType;
 use winit::{
     cursor::CursorIcon,
     data_transfer::DataTransferId,
@@ -23,8 +21,6 @@ use crate::osr::protocol::OsrFrame;
 use crate::osr::transport::IpcStream;
 use crate::render::GpuRenderer;
 use crate::{SabineWindowChrome, osr};
-#[cfg(target_os = "windows")]
-use sabine_platform::WindowBackgroundEffect;
 use sabine_platform::WindowEffect;
 
 use super::config::OsrHostConfig;
@@ -36,7 +32,7 @@ use super::types::{
 
 pub(super) struct OsrNativeHost {
     pub(super) config: OsrHostConfig,
-    pub(super) sender: mpsc::Sender<OsrHostEvent>,
+    pub(super) sender: mpsc::SyncSender<OsrHostEvent>,
     pub(super) receiver: mpsc::Receiver<OsrHostEvent>,
     pub(super) proxy: EventLoopProxy,
     pub(super) window: Option<Arc<dyn WinitWindow>>,
@@ -80,13 +76,12 @@ pub(super) struct OsrNativeHost {
     pub(super) cef_handed_off: bool,
     /// Deadline for the primary CEF process to connect after exit-24 handoff.
     pub(super) handoff_deadline: Option<Instant>,
-    pub(super) accel_fallback: crate::osr::accel::AccelFallbackPolicy,
 }
 
 impl OsrNativeHost {
     pub(super) fn new(
         config: OsrHostConfig,
-        sender: mpsc::Sender<OsrHostEvent>,
+        sender: mpsc::SyncSender<OsrHostEvent>,
         receiver: mpsc::Receiver<OsrHostEvent>,
         proxy: EventLoopProxy,
     ) -> Self {
@@ -150,7 +145,6 @@ impl OsrNativeHost {
             started: Instant::now(),
             cef_handed_off: false,
             handoff_deadline: None,
-            accel_fallback: crate::osr::accel::AccelFallbackPolicy::default(),
         }
     }
 
@@ -197,10 +191,12 @@ impl OsrNativeHost {
             &endpoint,
             &authentication_token,
             &self.config,
-            width,
-            height,
-            scale,
-            self.active_frame_rate(),
+            osr::CefViewport {
+                width,
+                height,
+                scale,
+                frame_rate: self.active_frame_rate(),
+            },
         );
         let child = match command.spawn() {
             Ok(child) => child,
@@ -210,24 +206,6 @@ impl OsrNativeHost {
             }
         };
         self.child = Some(child);
-    }
-
-    pub(super) fn relaunch_software_osr(&mut self) {
-        if self.accel_fallback.is_software() || self.config.software_osr_fallback {
-            return;
-        }
-        eprintln!("Sabine OSR: switching CEF to software OSR after accelerated paint failures");
-        self.accel_fallback.mark_software();
-        self.config.software_osr_fallback = true;
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        self.socket = None;
-        self.main_frame = None;
-        self.main_buffer.release();
-        self.overlays.clear();
-        self.launch_child();
     }
 
     pub(super) fn content_size_for_cef(&self) -> (u32, u32, f64) {
@@ -275,7 +253,6 @@ impl OsrNativeHost {
             transparent: self.config.transparent,
             background_effect: self.config.background_effect,
             regions: self.config.regions.clone(),
-            ..WindowOptions::default()
         }
     }
 
@@ -366,19 +343,6 @@ pub(super) fn platform_chrome(chrome: SabineWindowChrome) -> PlatformWindowChrom
     }
 }
 
-#[cfg(target_os = "windows")]
-pub(super) fn windows_system_backdrop(effect: WindowBackgroundEffect) -> Option<BackdropType> {
-    match effect {
-        WindowBackgroundEffect::Acrylic | WindowBackgroundEffect::Glass => {
-            Some(BackdropType::TransientWindow)
-        }
-        WindowBackgroundEffect::Mica => Some(BackdropType::MainWindow),
-        WindowBackgroundEffect::MicaAlt => Some(BackdropType::TabbedWindow),
-        WindowBackgroundEffect::None => None,
-        _ => Some(BackdropType::TransientWindow),
-    }
-}
-
 pub(super) fn present_window(window: &Arc<dyn WinitWindow>) {
     window.set_visible(true);
     window.set_minimized(false);
@@ -387,18 +351,18 @@ pub(super) fn present_window(window: &Arc<dyn WinitWindow>) {
     window.request_redraw();
 }
 
-fn start_parent_bridge_reader(sender: mpsc::Sender<OsrHostEvent>, proxy: EventLoopProxy) {
+fn start_parent_bridge_reader(sender: mpsc::SyncSender<OsrHostEvent>, proxy: EventLoopProxy) {
     std::thread::spawn(move || {
         let input = std::io::stdin();
         for line in input.lock().lines().map_while(std::result::Result::ok) {
-            if let Some((command, value)) = crate::parse_host_control(&line) {
-                if let Some(control) = super::events::host_control_from_parts(command, value) {
-                    if sender.send(OsrHostEvent::HostControl(control)).is_err() {
-                        break;
-                    }
-                    proxy.wake_up();
-                    continue;
+            if let Some((command, value)) = crate::parse_host_control(&line)
+                && let Some(control) = super::events::host_control_from_parts(command, value)
+            {
+                if sender.send(OsrHostEvent::HostControl(control)).is_err() {
+                    break;
                 }
+                proxy.wake_up();
+                continue;
             }
             if sender.send(OsrHostEvent::ControlLine(line)).is_err() {
                 break;

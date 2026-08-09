@@ -2,8 +2,6 @@ use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
 use winit::platform::wayland::WindowAttributesWayland;
-#[cfg(target_os = "windows")]
-use winit::platform::windows::WindowAttributesWindows;
 use winit::{
     cursor::CursorIcon,
     dpi::LogicalSize,
@@ -17,8 +15,6 @@ use winit::{
 use crate::osr::protocol::MAIN_TEXTURE_ID;
 use crate::render::GpuRenderer;
 
-#[cfg(target_os = "windows")]
-use super::windows_system_backdrop;
 use super::{OsrNativeHost, can_defer_window_visibility};
 
 impl OsrNativeHost {
@@ -58,11 +54,6 @@ impl OsrNativeHost {
         // blur/opaque/input regions). winit's `with_blur(true)` also creates an
         // effect on the same surface, and a second bind is a protocol error that
         // kills the Wayland connection.
-        #[cfg(not(target_os = "linux"))]
-        {
-            attributes =
-                attributes.with_blur(self.config.background_effect.requires_transparency());
-        }
         #[cfg(target_os = "linux")]
         {
             let mut wayland_attributes = WindowAttributesWayland::default();
@@ -78,12 +69,6 @@ impl OsrNativeHost {
             if has_wayland_attributes {
                 attributes = attributes.with_platform_attributes(Box::new(wayland_attributes));
             }
-        }
-        #[cfg(target_os = "windows")]
-        if let Some(backdrop) = windows_system_backdrop(self.config.background_effect) {
-            attributes = attributes.with_platform_attributes(Box::new(
-                WindowAttributesWindows::default().with_system_backdrop(backdrop),
-            ));
         }
         if let Some(position) =
             crate::centered_window_position(event_loop, self.config.width, self.config.height)
@@ -180,24 +165,18 @@ impl OsrNativeHost {
         if let Some((width, height)) = main_frame {
             let _ = renderer.update_dynamic_bgra_image_region(
                 MAIN_TEXTURE_ID,
-                width,
-                height,
-                0,
-                0,
-                width,
-                height,
+                (width, height),
+                (0, 0),
+                (width, height),
                 &main_bytes,
             );
         }
         for (texture_id, width, height, bytes) in overlays {
             let _ = renderer.update_dynamic_bgra_image_region(
                 &texture_id,
-                width,
-                height,
-                0,
-                0,
-                width,
-                height,
+                (width, height),
+                (0, 0),
+                (width, height),
                 &bytes,
             );
         }

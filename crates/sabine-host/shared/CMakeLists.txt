@@ -58,6 +58,13 @@ set(SABINE_HOST_SOURCES
   osr_handler_util.h
 )
 
+if(NOT OS_WINDOWS)
+  list(REMOVE_ITEM SABINE_HOST_SOURCES
+    osr_accel_d3d11_win.cc
+    osr_accel_d3d11_win.h
+  )
+endif()
+
 if(OS_WINDOWS)
   add_executable(sabine-host WIN32 ${SABINE_HOST_SOURCES})
 elseif(OS_MAC)
@@ -73,10 +80,6 @@ target_link_libraries(sabine-host libcef_lib libcef_dll_wrapper ${CEF_STANDARD_L
 if(OS_WINDOWS)
   target_link_libraries(sabine-host ws2_32 d3d11 dxgi)
 endif()
-if(OS_MAC)
-  target_link_libraries(sabine-host "-framework IOSurface" "-framework CoreFoundation")
-endif()
-
 if(OS_LINUX)
   set_target_properties(sabine-host PROPERTIES INSTALL_RPATH "$ORIGIN")
   set_target_properties(sabine-host PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE)

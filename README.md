@@ -87,10 +87,10 @@ const tab = await guest.create({
 });
 ```
 
-On first launch (or `sabine dev`), Sabine prepares the shared Chromium runtime when it is missing
-(with progress). App launches also register with the shared Sabine service. Later runs adopt that
-install and open immediately. If the service binary is missing, Sabine tries GitHub Releases first,
-then falls back to `cargo install --git` (Rust must be installed) until release binaries are published.
+On first launch (or `sabine dev`), Sabine prepares and validates the shared Chromium runtime when it
+is missing. App launches register with the shared Sabine service and later runs reuse the verified
+install. `sabine dev` owns the web development process; the app only connects to the configured
+development URL.
 
 ## Window recipes
 
@@ -189,7 +189,7 @@ Override the release URL with `SABINE_SERVICE_URL`.
 
 ```sh
 sabine runtime doctor
-sabine runtime install --package standard
+sabine runtime install
 sabine runtime list
 sabine runtime prune --keep 2
 

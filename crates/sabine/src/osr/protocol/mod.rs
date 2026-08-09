@@ -11,10 +11,42 @@ pub(crate) use encode::encode_component;
 pub(crate) use wire::read_message;
 
 use sabine_platform::WindowRegionRect;
+use std::{ops::Range, sync::Arc};
+
+use self::wire::SharedMapping;
 
 pub(crate) const MAIN_TEXTURE_ID: &str = "__sabine_main";
 pub(crate) const POPUP_TEXTURE_ID: &str = "__sabine_popup";
 pub(crate) const POPUP_OVERLAY_ID: &str = "__sabine_popup";
+
+#[derive(Clone, Debug)]
+pub(crate) enum FrameBytes {
+    Owned(Vec<u8>),
+    Inline {
+        source: Arc<[u8]>,
+        range: Range<usize>,
+    },
+    Shared {
+        source: Arc<SharedMapping>,
+        range: Range<usize>,
+    },
+}
+
+impl FrameBytes {
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Inline { source, range } => &source[range.clone()],
+            Self::Shared { source, range } => &source.as_slice()[range.clone()],
+        }
+    }
+}
+
+impl From<Vec<u8>> for FrameBytes {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Owned(bytes)
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum OsrMessage {
@@ -66,14 +98,7 @@ pub(crate) struct OsrPaintBatch {
     pub frames: Vec<OsrFrame>,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct OsrAccelRect {
-    pub x: i32,
-    pub y: i32,
-    pub width: u32,
-    pub height: u32,
-}
-
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug)]
 pub(crate) struct OsrAccelFrame {
     pub surface: OsrSurface,
@@ -82,16 +107,10 @@ pub(crate) struct OsrAccelFrame {
     pub x: i32,
     pub y: i32,
     pub format: u32,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    pub modifier: u64,
-    pub stride: u32,
-    pub offset: u64,
-    pub size: u64,
-    /// Platform native share handle: Linux unused (0), Windows `HANDLE`, macOS `IOSurfaceID`.
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    /// Duplicated Windows NT handle for a Sabine-owned D3D11 texture.
     pub native_handle: u64,
-    pub dirty: Vec<OsrAccelRect>,
-    pub fd: i32,
+    /// Producer slot released only after the compositor copy completes.
+    pub slot_token: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -101,7 +120,13 @@ pub(crate) struct OsrFrame {
     pub height: u32,
     pub x: i32,
     pub y: i32,
-    pub bytes: Vec<u8>,
+    pub bytes: FrameBytes,
+}
+
+impl OsrFrame {
+    pub(crate) fn bytes(&self) -> &[u8] {
+        self.bytes.as_slice()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

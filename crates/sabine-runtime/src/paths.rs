@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use crate::types::RuntimePackage;
-
 pub fn system_runtime_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -50,6 +48,6 @@ pub fn bundled_runtime_path(app_dir: &Path) -> PathBuf {
     app_dir.join("runtimes").join("cef")
 }
 
-pub fn runtime_version_path(package: RuntimePackage, version: &str) -> PathBuf {
-    user_runtime_path().join(format!("{}{}", version, package.install_suffix()))
+pub fn runtime_version_path(version: &str) -> PathBuf {
+    user_runtime_path().join(format!("{version}-standard"))
 }

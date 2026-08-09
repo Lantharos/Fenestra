@@ -12,8 +12,9 @@ A Sabine app can run in three modes from the same executable:
    the first launch prepares the machine for every future Sabine app.
 3. The OSR native-host child owns the winit window, wgpu renderer, input, composition, and CEF helper.
 
-Every app must call `run_sabine_host_from_args` before constructing its normal application state.
-This dispatches internal child modes without requiring an additional app-specific executable.
+Apps enter through `SabineWindow::main`. It dispatches internal child modes, builds the app window,
+launches it, and owns the process wait. `SabineWindow::launch` remains available when an application
+needs to integrate Sabine into an existing native process loop.
 
 The CEF helper is built from the C++ source embedded in the `sabine` crate. It always enables
 windowless rendering and always creates `SabineOsrHandler`; there is no windowed CEF handler.
@@ -48,58 +49,52 @@ not outlive a crashed parent.
 
 ## Paint and composition
 
-Accelerated OSR is preferred on Windows and macOS. On Linux, software `OnPaint` is the default
-because Chromium's shared-texture (DMA-BUF) path still fails SkSurface initialization on many
-drivers — especially NVIDIA. Opt in with `WindowBuilder::shared_texture_osr(true)` /
-`--sabine-shared-texture`. Software is also forced with `--sabine-software-osr`.
+Sabine uses one paint policy per platform. Apps cannot select a renderer or opt into experimental
+transport branches.
 
-Linux CEF ozone defaults to **Wayland** (same as the Sabine shell). Shared-texture opt-in
-still forces **X11** ozone + ANGLE `gl-egl` because that is what CEF/Chromium currently require
-for DMA-BUF OSR — not because Sabine wants X11. Windows and macOS do not pass ozone overrides.
+- **Windows** uses accelerated `OnAcceleratedPaint`. CEF owns and pools the callback texture, so the
+  CEF host first opens it on D3D11 and copies it into one of four Sabine-owned NT shared textures
+  before returning. The compositor opens that texture on wgpu's D3D12 device, copies it into its
+  texture cache, and sends a release acknowledgement only after D3D12 reports the copy complete.
+  The producer never reuses a slot before that acknowledgement. A copy/import failure is surfaced
+  and the host can bridge that frame through BGRA without relaunching the browser.
+- **Linux** uses CEF software `OnPaint` on Wayland. The previous DMA-BUF/X11/Vulkan branch was not a
+  valid ownership implementation and has been removed.
+- **macOS** currently uses software `OnPaint`. An IOSurface path must copy or retain CEF's pooled
+  resource before the callback returns; passing an IOSurface ID asynchronously is not sufficient.
 
-On Windows the compositor uses the **Vulkan** wgpu backend so CEF D3D11 shared handles can be
-imported (`VULKAN_EXTERNAL_MEMORY_WIN32`). DX12 cannot import those handles.
-
-- **Linux** — when shared textures are enabled, the host sends DMA-BUF file descriptors for
-  `OnAcceleratedPaint`; the compositor imports them zero-copy into wgpu (Vulkan external memory)
-  when the adapter supports it, otherwise maps the plane into the existing dirty-rect framebuffer
-  path.
-- **Windows** — the host opens CEF's pooled D3D11 shared texture with
-  `OpenSharedResource1`, copies it into a Sabine-owned shared texture (CEF
-  requires this before `OnAcceleratedPaint` returns), duplicates that stable
-  handle into the compositor process, and wgpu imports it on a Vulkan device
-  when `VULKAN_EXTERNAL_MEMORY_WIN32` is available. If copy fails, the host
-  readbacks BGRA into the software paint path.
-- **macOS** — the host sends the `IOSurfaceID` for `OnAcceleratedPaint`; the compositor looks
-  it up and wraps a Metal texture into wgpu. If IPC fails, the host locks the surface and bridges
-  BGRA into the paint path.
-
-If accelerated paint cannot run, Sabine silently relaunches the CEF helper with software `OnPaint`
-— there is no public paint-mode switch or CEF handle exposure.
+Windows uses wgpu D3D12 rather than forcing Vulkan. Acrylic/Mica is applied once to the final HWND
+through the version-aware DWM composition path, which supports both Windows 10 Acrylic and Windows
+11 system backdrops.
 
 CEF still delivers BGRA dirty rectangles on the software path (and as a CPU bridge after GPU
-raster). The native host retains a backing store per surface and patches only the changed ranges.
-Each surface is then uploaded to an independent GPU texture (sparse per-rect uploads when damage is
-disjoint):
+raster). Inline and shared-memory batches retain one immutable byte backing instead of copying every
+rectangle into a separate allocation. The native host patches one backing store per surface and
+uploads only the changed ranges to an independent GPU texture (sparse per-rect uploads when damage
+is disjoint):
 
 - main page
 - popup overlay
 - one texture per guest (including guest `<select>` popups)
 
-The display list damages the union of the old and new bounds when a primitive changes. Resize waits
-for a correctly sized CEF paint rather than stretching a stale frame indefinitely.
+The display list damages the union of the old and new bounds when a primitive changes. GPU vertex
+buffers grow geometrically and are reused across redraws. Resize waits for a correctly sized CEF
+paint rather than stretching a stale frame indefinitely.
 
 Transport is platform-specific without changing the protocol. On Unix, sockets live under
 `$XDG_RUNTIME_DIR/sabine/<app_id>/` (mode `0700`) with socket mode `0600`, and each window
-authenticates with a first-line token delivered via `SABINE_OSR_TOKEN` (not argv).
+authenticates with a first-line token read from a one-use `0600` token file. The environment is
+only a fallback for launches that do not need Chromium process-singleton handoff.
 
-| Platform | Transport | Accelerated paint path |
+Paint messages use the versioned `SAB1` wire signature. Surface dimensions, inline payloads, and
+shared mappings are bounded before allocation or mapping, and the native host uses a bounded event
+queue so a stalled compositor applies backpressure instead of accumulating frames indefinitely.
+
+| Platform | Transport | Paint path |
 | --- | --- | --- |
-| Linux | Unix domain socket | DMA-BUF FD + Vulkan → wgpu (mmap fallback) |
-| macOS | Unix domain socket | IOSurfaceID → Metal → wgpu (BGRA bridge if IPC fails) |
-| Windows | localhost TCP | CEF handle → D3D11 copy → duplicated shared HANDLE → Vulkan → wgpu |
-
-Software `OnPaint` dirty-rect batches remain the silent fallback when accelerated paint cannot run.
+| Linux | Unix domain socket | dirty-rect BGRA `OnPaint` → sparse wgpu uploads |
+| macOS | Unix domain socket | dirty-rect BGRA `OnPaint` → sparse wgpu uploads |
+| Windows | localhost TCP | CEF D3D11 → acknowledged NT texture slots → wgpu D3D12 |
 
 Linux layer-shell surfaces use their dedicated host because layer-shell configuration must happen
 before a regular winit surface is created. Other platforms express palette behavior with a normal
@@ -119,7 +114,10 @@ plan -> lock -> download -> SHA-1 verify -> extract -> atomic version install ->
 
 The Spotify CEF index supplies archive metadata and checksums. Runtime versions are immutable
 directories, allowing existing apps to finish on an older version while the service installs a newer
-one. Runtime and CEF-host builds have independent stale-aware locks.
+one. Runtime and CEF-host builds have independent stale-aware locks. Detection validates the exact
+package and current platform: a Standard runtime requires its SDK tree, the platform CEF binary,
+`icudtl.dat`, `resources.pak`, and at least one locale pack. Partial extraction directories are never
+adopted or reused.
 
 `sabine-service` owns the machine/user-level catalog. Its registry writes use a temporary file,
 `sync_all`, and atomic rename. Re-registering an app preserves its original registration timestamp.
@@ -130,16 +128,19 @@ The maintenance loop updates CEF to the newest compatible archive and keeps two 
 The primary API is a fluent `SabineWindow` builder. Configuration is grouped by concern even though
 the builder keeps common cases one method away:
 
-- content: local entry, production URL, dev URL and command
+- content: local entry, production URL, or a dev URL already owned by the CLI
 - window: size, chrome, visibility, transparency, blur and control regions
 - browser: Chromium flags, devtools, profiles and security
 - bridge: descriptors, sync handlers and async handlers
 - lifecycle: foreground/background rates, suspend and hibernate policy
 - services: tray, autostart, shortcuts, deep links, native messaging and single instance
-- runtime: package, minimum version, bundled/shared policy
+- runtime: minimum version and bundled/shared policy
 
-The API deliberately avoids backend types. `BrowserOptions` contains browser-process tuning; apps do
-not select a renderer. Sabine always uses the shared OSR host.
+The API deliberately avoids backend types. Apps do not select paint transports or Chromium launch
+flags. The primary surface is `SabineWindow`, its recipes, typed background effects and regions,
+bridge handlers, lifecycle policy, desktop integrations, and `RuntimeConfig`. Runtime maintenance,
+service policy, and native-host build helpers stay in their owning crates instead of being re-exported
+through `sabine`.
 
 ## Bridge security
 
@@ -216,6 +217,9 @@ cargo build --workspace
 cargo test --workspace
 cargo check --target x86_64-pc-windows-gnu --workspace
 ```
+
+CI enforces formatting, warning-free Clippy, and workspace tests on Linux, then runs the workspace
+tests natively on Windows MSVC and macOS as well.
 
 The Windows cross-check validates Rust cfg coverage. A release still needs a native Windows CEF-host
 build and an actual GPU/input smoke test. The same rule applies to macOS. Linux tests do not prove

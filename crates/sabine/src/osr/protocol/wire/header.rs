@@ -7,7 +7,7 @@ use super::HEADER_LEN;
 
 pub(super) fn read_header(
     reader: &mut IpcStream,
-) -> io::Result<Option<([u8; HEADER_LEN], Option<i32>)>> {
+) -> io::Result<Option<([u8; HEADER_LEN], ReceivedFd)>> {
     let mut header = [0_u8; HEADER_LEN];
     let mut filled = 0;
     let mut fd = None;
@@ -28,7 +28,26 @@ pub(super) fn read_header(
             }
         }
     }
-    Ok(Some((header, fd)))
+    Ok(Some((header, ReceivedFd(fd))))
+}
+
+pub(super) struct ReceivedFd(Option<i32>);
+
+impl ReceivedFd {
+    pub(super) fn take(&mut self) -> Option<i32> {
+        self.0.take()
+    }
+}
+
+impl Drop for ReceivedFd {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(fd) = self.0.take() {
+            unsafe {
+                libc::close(fd);
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -85,17 +104,6 @@ unsafe fn received_fd(message: &libc::msghdr) -> Option<i32> {
         control = unsafe { libc::CMSG_NXTHDR(message, control) };
     }
     None
-}
-
-pub(super) fn close_optional_fd(fd: Option<i32>) {
-    #[cfg(unix)]
-    if let Some(fd) = fd {
-        unsafe {
-            libc::close(fd);
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = fd;
 }
 
 pub(super) fn read_u32(bytes: &[u8]) -> u32 {

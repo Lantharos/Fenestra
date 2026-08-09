@@ -44,6 +44,9 @@
 #include "osr_handler_ime.h"
 #include "osr_handler_screen.h"
 #include "osr_handler_util.h"
+#if defined(OS_WIN)
+#include "osr_accel_d3d11_win.h"
+#endif
 
 using namespace sabine_osr;
 
@@ -69,6 +72,12 @@ void SabineOsrHandler::HandleControlLine(const std::string& line) {
     return;
   }
   const auto parts = Split(line, '\t');
+#if defined(OS_WIN)
+  if (parts.size() == 2 && parts[0] == "accel_release") {
+    ReleaseAcceleratedD3d11Frame(std::strtoull(parts[1].c_str(), nullptr, 10));
+    return;
+  }
+#endif
   if (parts.empty() || !browser_) {
     return;
   }
@@ -312,4 +321,3 @@ void SabineOsrHandler::DispatchLifecycle(const std::string& state,
         script, browser->GetMainFrame()->GetURL(), 0);
   }
 }
-

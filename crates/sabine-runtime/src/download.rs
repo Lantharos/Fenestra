@@ -164,7 +164,7 @@ pub fn latest_install_plan(config: &RuntimeConfig) -> Result<RuntimeInstallPlan,
             version
                 .files
                 .iter()
-                .find(|file| file.kind == config.package.as_str())
+                .find(|file| file.kind == "standard")
                 .map(|file| (version, file))
         })
         .collect::<Vec<_>>();
@@ -178,15 +178,13 @@ pub fn latest_install_plan(config: &RuntimeConfig) -> Result<RuntimeInstallPlan,
 
     let Some((version, file)) = candidates.into_iter().next() else {
         return Err(RuntimeError::NotFound(format!(
-            "no {} CEF build found for {platform} at Chromium {} or newer",
-            config.package.as_str(),
-            config.min_version
+            "no Standard CEF build found for {platform} at Chromium {} or newer",
+            config.min_version,
         )));
     };
 
-    let install_dir = runtime_version_path(config.package, &version.cef_version);
+    let install_dir = runtime_version_path(&version.cef_version);
     Ok(RuntimeInstallPlan {
-        package: config.package,
         version: version.cef_version.clone(),
         platform: platform.to_string(),
         archive_name: file.name.clone(),

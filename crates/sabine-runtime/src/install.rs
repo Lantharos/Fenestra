@@ -9,17 +9,17 @@ use std::{
 #[cfg(windows)]
 use std::process::{Command, Stdio};
 
-use crate::detect::{detect_package, is_runtime_dir};
+use crate::detect::is_runtime_dir;
 use crate::download::{
     download_file, extract_archive, first_extracted_runtime_dir, latest_install_plan,
     verify_sha1_with_progress,
 };
 use crate::error::RuntimeError;
+use crate::host::runtime_is_valid;
 use crate::paths::user_runtime_path;
 use crate::resolve::resolve_runtime;
 use crate::types::{
     RuntimeConfig, RuntimeInfo, RuntimeInstallProgress, RuntimeInstallStep, RuntimeLocation,
-    RuntimePackage,
 };
 use crate::version::{detect_version, runtime_sort_key};
 
@@ -68,17 +68,14 @@ fn install_user_runtime_inner(
         Some(0.02),
         "Preparing runtime",
     ));
-    remove_user_minimal_runtime_if_client_requested_with_progress(config, &mut progress)?;
-
     let plan = latest_install_plan(config)?;
-    if plan.install_dir.is_dir() {
+    if runtime_is_valid(&plan.install_dir) && detect_version(&plan.install_dir) == plan.version {
         progress(RuntimeInstallProgress::new(
             RuntimeInstallStep::Complete,
             Some(1.0),
             "Runtime ready",
         ));
         return Ok(RuntimeInfo {
-            package: config.package,
             version: plan.version,
             location: RuntimeLocation::UserLocal(plan.install_dir),
             verified: true,
@@ -151,18 +148,17 @@ fn install_user_runtime_inner(
     ));
     std::fs::rename(&extracted, &plan.install_dir)?;
     std::fs::write(plan.install_dir.join("VERSION"), &plan.version)?;
-    if config.package == RuntimePackage::Standard
-        && !crate::host::standard_sdk_present(&plan.install_dir)
-    {
+    if !runtime_is_valid(&plan.install_dir) {
         let path = plan.install_dir.clone();
         let _ = std::fs::remove_dir_all(&path);
         let _ = std::fs::remove_dir_all(&work_dir);
         return Err(RuntimeError::InstallationFailed(format!(
-            "extracted CEF archive at {} is missing the standard SDK layout \
-             (cmake/, include/cef_version.h, libcef_dll/, Release/libcef.*). \
+            "extracted CEF archive at {} is missing the required Standard runtime layout. \
+             The Standard archive requires cmake/, include/cef_version.h, libcef_dll/, \
+             Release/libcef.*, and runtime resources. \
              On Windows, ensure `tar` is the OS/bsdtar build — Git's GNU tar \
              mishandles drive-letter extract paths.",
-            path.display()
+            path.display(),
         )));
     }
     let _ = std::fs::remove_dir_all(&work_dir);
@@ -173,7 +169,6 @@ fn install_user_runtime_inner(
     ));
 
     Ok(RuntimeInfo {
-        package: config.package,
         version: plan.version,
         location: RuntimeLocation::UserLocal(plan.install_dir),
         verified: true,
@@ -245,16 +240,7 @@ fn extract_archive_with_progress(
     Ok(())
 }
 
-pub fn remove_user_minimal_runtime_if_client_requested(
-    config: &RuntimeConfig,
-) -> Result<(), RuntimeError> {
-    remove_user_minimal_runtime_if_client_requested_with_progress(config, |_| {})
-}
-
-pub fn prune_user_runtimes(
-    config: &RuntimeConfig,
-    keep_latest: usize,
-) -> Result<usize, RuntimeError> {
+pub fn prune_user_runtimes(keep_latest: usize) -> Result<usize, RuntimeError> {
     std::fs::create_dir_all(user_runtime_path())?;
     let _lock = RuntimeInstallLock::acquire(|_| {})?;
     let base = user_runtime_path();
@@ -266,7 +252,6 @@ pub fn prune_user_runtimes(
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.is_dir() && is_runtime_dir(path))
-        .filter(|path| detect_package(path) == config.package)
         .collect::<Vec<_>>();
     runtimes.sort_by_key(|path| std::cmp::Reverse(runtime_sort_key(path)));
 
@@ -278,10 +263,7 @@ pub fn prune_user_runtimes(
     Ok(removed)
 }
 
-pub fn remove_user_runtime_version(
-    config: &RuntimeConfig,
-    version: &str,
-) -> Result<bool, RuntimeError> {
+pub fn remove_user_runtime_version(version: &str) -> Result<bool, RuntimeError> {
     std::fs::create_dir_all(user_runtime_path())?;
     let _lock = RuntimeInstallLock::acquire(|_| {})?;
     let base = user_runtime_path();
@@ -294,7 +276,6 @@ pub fn remove_user_runtime_version(
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.is_dir() && is_runtime_dir(path))
-        .filter(|path| detect_package(path) == config.package)
         .filter(|path| detect_version(path) == version)
     {
         std::fs::remove_dir_all(path)?;
@@ -373,35 +354,6 @@ impl Drop for RuntimeInstallLock {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
     }
-}
-
-fn remove_user_minimal_runtime_if_client_requested_with_progress(
-    config: &RuntimeConfig,
-    mut progress: impl FnMut(RuntimeInstallProgress),
-) -> Result<(), RuntimeError> {
-    if config.package == RuntimePackage::Minimal {
-        return Ok(());
-    }
-
-    let base = user_runtime_path();
-    if !base.is_dir() {
-        return Ok(());
-    }
-
-    for entry in std::fs::read_dir(base)? {
-        let path = entry?.path();
-        if !path.is_dir() || detect_package(&path) != RuntimePackage::Minimal {
-            continue;
-        }
-        progress(RuntimeInstallProgress::new(
-            RuntimeInstallStep::RemovingOldRuntime,
-            None,
-            "Removing minimal runtime",
-        ));
-        std::fs::remove_dir_all(path)?;
-    }
-
-    Ok(())
 }
 
 fn lock_is_stale(path: &Path) -> bool {

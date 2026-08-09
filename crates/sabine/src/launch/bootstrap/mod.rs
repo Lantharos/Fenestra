@@ -1,8 +1,8 @@
 mod ui;
 
-use crate::window::SabineWindowConfig;
+use crate::window::config::SabineWindowConfig;
 use crate::{SabineError, SabineResult};
-use sabine_runtime::{RuntimeConfig, RuntimeMode, RuntimePackage, resolve_runtime};
+use sabine_runtime::{RuntimeConfig, RuntimeMode, resolve_runtime};
 use sabine_service::{AppManifest, prepare_machine_with_progress};
 use serde_json::Value;
 use std::{
@@ -120,14 +120,11 @@ fn write_bootstrap(
     let mode = match config.mode {
         RuntimeMode::SystemRequired => "system-required",
         RuntimeMode::SystemPreferred => "system-preferred",
-        RuntimeMode::UserPreferred => "user-preferred",
         RuntimeMode::SharedPreferred => "shared-preferred",
         RuntimeMode::Bundled => "bundled",
-        RuntimeMode::Disabled => "disabled",
     };
     let mut body = serde_json::json!({
         "mode": mode,
-        "package": config.package.as_str(),
         "min_version": config.min_version,
         "index_url": config.index_url,
         "allow_user_install": config.allow_user_install,
@@ -161,11 +158,6 @@ fn read_bootstrap(path: PathBuf) -> Result<(RuntimeConfig, Option<AppManifest>),
             .and_then(Value::as_str)
             .and_then(RuntimeMode::parse)
             .unwrap_or(RuntimeMode::SharedPreferred),
-        package: value
-            .get("package")
-            .and_then(Value::as_str)
-            .and_then(RuntimePackage::parse)
-            .unwrap_or_default(),
         min_version: value
             .get("min_version")
             .and_then(Value::as_str)
@@ -187,7 +179,6 @@ fn read_bootstrap(path: PathBuf) -> Result<(RuntimeConfig, Option<AppManifest>),
             .get("bundled_dir")
             .and_then(Value::as_str)
             .map(PathBuf::from),
-        ..RuntimeConfig::default()
     };
     let register = value.get("register").and_then(|entry| {
         Some(AppManifest {

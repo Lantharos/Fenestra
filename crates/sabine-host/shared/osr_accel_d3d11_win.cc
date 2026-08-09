@@ -32,6 +32,8 @@ struct OwnedSharedSlot {
   int width = 0;
   int height = 0;
   DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+  bool in_use = false;
+  uint64_t token = 0;
 
   void Reset() {
     if (texture) {
@@ -45,11 +47,16 @@ struct OwnedSharedSlot {
     width = 0;
     height = 0;
     format = DXGI_FORMAT_UNKNOWN;
+    in_use = false;
+    token = 0;
   }
 };
 
 D3d11Context g_d3d11;
 std::map<std::string, OwnedSharedSlot> g_slots;
+std::map<std::string, uint32_t> g_next_slot;
+uint64_t g_next_token = 1;
+constexpr uint32_t kSlotsPerSurface = 4;
 
 bool EnsureDevice() {
   if (g_d3d11.device && g_d3d11.device1 && g_d3d11.context) {
@@ -103,9 +110,9 @@ bool EnsureDevice() {
   return true;
 }
 
-void WaitForGpu() {
+bool WaitForGpu() {
   if (!g_d3d11.context || !g_d3d11.sync_query) {
-    return;
+    return false;
   }
   g_d3d11.context->End(g_d3d11.sync_query);
   g_d3d11.context->Flush();
@@ -113,13 +120,14 @@ void WaitForGpu() {
     const HRESULT hr = g_d3d11.context->GetData(
         g_d3d11.sync_query, nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
     if (hr == S_OK) {
-      return;
+      return true;
     }
     if (hr != S_FALSE) {
-      return;
+      return false;
     }
-    Sleep(0);
+    Sleep(1);
   }
+  return false;
 }
 
 bool EnsureOwnedSharedSlot(OwnedSharedSlot* slot,
@@ -144,16 +152,12 @@ bool EnsureOwnedSharedSlot(OwnedSharedSlot* slot,
   desc.SampleDesc.Count = 1;
   desc.SampleDesc.Quality = 0;
   desc.Usage = D3D11_USAGE_DEFAULT;
-  desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+  desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
   desc.CPUAccessFlags = 0;
   desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
 
   ID3D11Texture2D* texture = nullptr;
   HRESULT hr = g_d3d11.device1->CreateTexture2D(&desc, nullptr, &texture);
-  if (FAILED(hr) || !texture) {
-    desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
-    hr = g_d3d11.device->CreateTexture2D(&desc, nullptr, &texture);
-  }
   if (FAILED(hr) || !texture) {
     std::fprintf(stderr,
                  "Sabine CEF: failed to create owned D3D11 shared texture (hr=0x%08lx)\n",
@@ -170,15 +174,6 @@ bool EnsureOwnedSharedSlot(OwnedSharedSlot* slot,
         nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
         &shared_handle);
     dxgi_resource1->Release();
-  }
-  if (FAILED(hr) || !shared_handle) {
-    IDXGIResource* dxgi_resource = nullptr;
-    hr = texture->QueryInterface(__uuidof(IDXGIResource),
-                                 reinterpret_cast<void**>(&dxgi_resource));
-    if (SUCCEEDED(hr) && dxgi_resource) {
-      hr = dxgi_resource->GetSharedHandle(&shared_handle);
-      dxgi_resource->Release();
-    }
   }
   if (FAILED(hr) || !shared_handle) {
     std::fprintf(stderr,
@@ -227,6 +222,9 @@ bool CopyOpenedTexture(ID3D11Texture2D* source,
   }
 
   OwnedSharedSlot& slot = g_slots[slot_key];
+  if (slot.in_use) {
+    return false;
+  }
   if (!EnsureOwnedSharedSlot(&slot, static_cast<int>(source_desc.Width),
                              static_cast<int>(source_desc.Height),
                              source_desc.Format)) {
@@ -234,12 +232,20 @@ bool CopyOpenedTexture(ID3D11Texture2D* source,
   }
 
   g_d3d11.context->CopyResource(slot.texture, source);
-  WaitForGpu();
+  if (!WaitForGpu()) {
+    return false;
+  }
 
   out->shared_handle = slot.shared_handle;
+  slot.in_use = true;
+  slot.token = g_next_token++;
+  if (slot.token == 0) {
+    slot.token = g_next_token++;
+  }
+  out->slot_token = slot.token;
   out->width = source_desc.Width;
   out->height = source_desc.Height;
-  return out->shared_handle != nullptr;
+  return out->shared_handle != nullptr && out->slot_token != 0;
 }
 
 }  // namespace
@@ -251,8 +257,7 @@ bool CopyAcceleratedD3d11Frame(const std::string& slot_key,
                                uint32_t cef_format,
                                AccelD3d11CopiedFrame* out) {
   if (!cef_shared_handle || width <= 0 || height <= 0 || !out ||
-      (cef_format != kCefColorTypeRgba8888 &&
-       cef_format != kCefColorTypeBgra8888)) {
+      cef_format != kCefColorTypeBgra8888) {
     return false;
   }
   if (!EnsureDevice()) {
@@ -263,9 +268,32 @@ bool CopyAcceleratedD3d11Frame(const std::string& slot_key,
   if (!source) {
     return false;
   }
-  const bool copied = CopyOpenedTexture(source, slot_key, out);
+  const uint32_t first_slot = g_next_slot[slot_key]++ % kSlotsPerSurface;
+  bool copied = false;
+  for (uint32_t offset = 0; offset < kSlotsPerSurface; ++offset) {
+    const uint32_t slot_index = (first_slot + offset) % kSlotsPerSurface;
+    if (CopyOpenedTexture(source,
+                          slot_key + "#" + std::to_string(slot_index), out)) {
+      copied = true;
+      break;
+    }
+  }
   source->Release();
   return copied;
+}
+
+void ReleaseAcceleratedD3d11Frame(uint64_t slot_token) {
+  if (slot_token == 0) {
+    return;
+  }
+  for (auto& [key, slot] : g_slots) {
+    (void)key;
+    if (slot.in_use && slot.token == slot_token) {
+      slot.in_use = false;
+      slot.token = 0;
+      return;
+    }
+  }
 }
 
 bool ReadAcceleratedD3d11FrameToBgra(HANDLE cef_shared_handle,
@@ -305,7 +333,11 @@ bool ReadAcceleratedD3d11FrameToBgra(HANDLE cef_shared_handle,
   }
 
   g_d3d11.context->CopyResource(staging, source);
-  WaitForGpu();
+  if (!WaitForGpu()) {
+    source->Release();
+    staging->Release();
+    return false;
+  }
   source->Release();
 
   D3D11_MAPPED_SUBRESOURCE mapped{};

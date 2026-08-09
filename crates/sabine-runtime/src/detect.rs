@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use crate::host::{runtime_is_launchable_client, runtime_is_standard};
+use crate::host::runtime_is_valid;
 use crate::paths::{bundled_runtime_path, system_runtime_path, user_runtime_path};
-use crate::types::{RuntimeConfig, RuntimeInfo, RuntimeLocation, RuntimePackage};
+use crate::types::{RuntimeConfig, RuntimeInfo, RuntimeLocation};
 use crate::version::detect_version;
 
 #[derive(Clone, Copy)]
@@ -67,28 +67,12 @@ pub(crate) fn runtime_info(kind: RuntimeLocationKind, path: PathBuf) -> RuntimeI
         RuntimeLocationKind::Bundled => RuntimeLocation::Bundled(path.clone()),
     };
     RuntimeInfo {
-        package: detect_package(&path),
         version: detect_version(&path),
         location,
-        verified: is_runtime_dir(&path),
-    }
-}
-
-pub(crate) fn detect_package(runtime_dir: &Path) -> RuntimePackage {
-    if runtime_is_standard(runtime_dir) {
-        RuntimePackage::Standard
-    } else if runtime_is_launchable_client(runtime_dir) {
-        RuntimePackage::Client
-    } else {
-        RuntimePackage::Minimal
+        verified: runtime_is_valid(&path),
     }
 }
 
 pub(crate) fn is_runtime_dir(path: &Path) -> bool {
-    path.join("VERSION").is_file()
-        || path.join("Release").is_dir()
-        || path.join("Resources").is_dir()
-        || path.join("libcef.so").is_file()
-        || path.join("libcef.dll").is_file()
-        || path.join("Chromium Embedded Framework.framework").is_dir()
+    runtime_is_valid(path)
 }

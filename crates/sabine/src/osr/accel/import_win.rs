@@ -1,29 +1,22 @@
-use wgpu::hal::api::Vulkan;
+use wgpu::hal::api::Dx12;
+use windows::Win32::Graphics::Direct3D12::ID3D12Resource;
 
 use crate::osr::protocol::OsrAccelFrame;
 use crate::render::GpuRenderer;
 
-const CEF_COLOR_TYPE_RGBA_8888: u32 = 0;
 const CEF_COLOR_TYPE_BGRA_8888: u32 = 1;
 
-/// Import a duplicated D3D11 shared `HANDLE` into a wgpu Vulkan texture.
-pub(crate) fn try_import_d3d11(
+/// Open the Sabine-owned D3D11 shared texture on wgpu's D3D12 device.
+pub(crate) fn try_import_d3d12(
     renderer: &mut GpuRenderer,
     frame: &OsrAccelFrame,
 ) -> Result<wgpu::Texture, String> {
     if frame.native_handle == 0 || frame.width == 0 || frame.height == 0 {
         return Err("invalid d3d11 shared handle frame".into());
     }
-    // CEF reports channel order; the shared DXGI texture is BGRA8888 either way.
-    if frame.format != CEF_COLOR_TYPE_BGRA_8888 && frame.format != CEF_COLOR_TYPE_RGBA_8888 {
-        close_imported_handle(frame.native_handle);
+    if frame.format != CEF_COLOR_TYPE_BGRA_8888 {
         return Err(format!("unsupported d3d11 color format {}", frame.format));
     }
-    if !renderer.supports_feature(wgpu::Features::VULKAN_EXTERNAL_MEMORY_WIN32) {
-        close_imported_handle(frame.native_handle);
-        return Err("adapter lacks VULKAN_EXTERNAL_MEMORY_WIN32".into());
-    }
-
     let desc = wgpu::TextureDescriptor {
         label: Some("sabine-osr-d3d11"),
         size: wgpu::Extent3d {
@@ -40,37 +33,35 @@ pub(crate) fn try_import_d3d11(
     };
 
     let handle = windows::Win32::Foundation::HANDLE(frame.native_handle as *mut std::ffi::c_void);
-    let hal_desc = wgpu::hal::TextureDescriptor {
-        label: desc.label,
-        size: desc.size,
-        mip_level_count: desc.mip_level_count,
-        sample_count: desc.sample_count,
-        dimension: desc.dimension,
-        format: desc.format,
-        usage: wgpu::TextureUses::RESOURCE | wgpu::TextureUses::COPY_SRC,
-        memory_flags: wgpu::hal::MemoryFlags::empty(),
-        view_formats: vec![],
-    };
-
     let hal_texture = {
-        let Some(hal_device) = (unsafe { renderer.device().as_hal::<Vulkan>() }) else {
-            close_imported_handle(frame.native_handle);
-            return Err("wgpu device is not Vulkan".into());
+        let Some(hal_device) = (unsafe { renderer.device().as_hal::<Dx12>() }) else {
+            return Err("wgpu device is not D3D12".into());
         };
-        match unsafe { hal_device.texture_from_d3d11_shared_handle(handle, &hal_desc) } {
-            Ok(texture) => texture,
-            Err(error) => {
-                close_imported_handle(frame.native_handle);
-                return Err(format!("texture_from_d3d11_shared_handle: {error:?}"));
-            }
+        let mut resource = None::<ID3D12Resource>;
+        unsafe {
+            hal_device
+                .raw_device()
+                .OpenSharedHandle(handle, &mut resource)
+        }
+        .map_err(|error| format!("ID3D12Device::OpenSharedHandle: {error}"))?;
+        let resource = resource.ok_or_else(|| "D3D12 shared resource was null".to_string())?;
+        unsafe {
+            wgpu::hal::dx12::Device::texture_from_raw(
+                resource,
+                desc.format,
+                desc.dimension,
+                desc.size,
+                desc.mip_level_count,
+                desc.sample_count,
+            )
         }
     };
 
     Ok(unsafe {
-        renderer.device().create_texture_from_hal::<Vulkan>(
+        renderer.device().create_texture_from_hal::<Dx12>(
             hal_texture,
             &desc,
-            wgpu::TextureUses::RESOURCE,
+            wgpu::TextureUses::COPY_SRC,
         )
     })
 }

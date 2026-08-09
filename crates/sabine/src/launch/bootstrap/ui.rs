@@ -244,18 +244,26 @@ impl ProgressApp {
         let bar_y = (height as i32 * 2) / 3;
         let bar_h = (10.0 * scale).round().max(6.0) as i32;
         let bar_w = width as i32 - pad * 2;
-        fill_rect(&mut buffer, width, height, pad, bar_y, bar_w, bar_h, TRACK);
+        fill_rect(
+            &mut buffer,
+            (width, height),
+            (pad, bar_y, bar_w, bar_h),
+            TRACK,
+        );
         let filled = (fraction.unwrap_or(0.0).clamp(0.0, 1.0) * bar_w as f32).round() as i32;
         if filled > 0 {
-            fill_rect(&mut buffer, width, height, pad, bar_y, filled, bar_h, FILL);
+            fill_rect(
+                &mut buffer,
+                (width, height),
+                (pad, bar_y, filled, bar_h),
+                FILL,
+            );
         }
 
         draw_text(
             &mut buffer,
-            width,
-            height,
-            pad,
-            pad + (8.0 * scale) as i32,
+            (width, height),
+            (pad, pad + (8.0 * scale) as i32),
             status,
             TEXT,
             scale,
@@ -263,10 +271,8 @@ impl ProgressApp {
         if let Some(value) = fraction {
             draw_text(
                 &mut buffer,
-                width,
-                height,
-                pad,
-                bar_y - (22.0 * scale) as i32,
+                (width, height),
+                (pad, bar_y - (22.0 * scale) as i32),
                 &format!("{}%", (value * 100.0).round() as u8),
                 MUTED,
                 scale,
@@ -277,16 +283,9 @@ impl ProgressApp {
     }
 }
 
-fn fill_rect(
-    buffer: &mut [u32],
-    width: u32,
-    height: u32,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    color: u32,
-) {
+fn fill_rect(buffer: &mut [u32], surface: (u32, u32), rect: (i32, i32, i32, i32), color: u32) {
+    let (width, height) = surface;
+    let (x, y, w, h) = rect;
     let x0 = x.max(0) as u32;
     let y0 = y.max(0) as u32;
     let x1 = ((x + w).max(0) as u32).min(width);
@@ -303,14 +302,14 @@ fn fill_rect(
 
 fn draw_text(
     buffer: &mut [u32],
-    width: u32,
-    height: u32,
-    x: i32,
-    y: i32,
+    surface: (u32, u32),
+    position: (i32, i32),
     text: &str,
     color: u32,
     scale: f32,
 ) {
+    let (width, height) = surface;
+    let (x, y) = position;
     let pixel = (scale.round() as i32).max(1);
     let mut cursor = x;
     for ch in text.chars().take(48) {
@@ -320,12 +319,8 @@ fn draw_text(
                     if glyph[row as usize] & (1 << (4 - col)) != 0 {
                         fill_rect(
                             buffer,
-                            width,
-                            height,
-                            cursor + col * pixel,
-                            y + row * pixel,
-                            pixel,
-                            pixel,
+                            (width, height),
+                            (cursor + col * pixel, y + row * pixel, pixel, pixel),
                             color,
                         );
                     }

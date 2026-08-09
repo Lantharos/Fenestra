@@ -119,10 +119,11 @@ impl OsrNativeHost {
         self.send_lifecycle(LifecycleState::Active, reason);
         // Avoid redraw-on-focus after interactive move: Wayland often marks the
         // surface outdated and a bare redraw flashes transparent glass.
-        if self.config.visible && self.main_frame.is_none() {
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
+        if self.config.visible
+            && self.main_frame.is_none()
+            && let Some(window) = &self.window
+        {
+            window.request_redraw();
         }
     }
 

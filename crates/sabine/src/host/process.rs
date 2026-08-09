@@ -18,13 +18,12 @@ use crate::bridge::{BridgeEventEmitter, platform_event_payload};
 use crate::desktop::{DesktopServiceState, start_desktop_event_forwarder};
 use crate::host::process_tree::ManagedChild;
 use crate::osr::launch::OpenWindowContext;
-use crate::{SabineResult, SabineWindow, SabineWindowConfig};
+use crate::{SabineResult, SabineWindow};
 
 pub struct SabineProcess {
     pub(crate) child: ManagedChild,
     pub(crate) primary_alive: bool,
     pub(crate) primary_status: Option<ExitStatus>,
-    pub(crate) sidecars: Vec<ManagedChild>,
     pub(crate) extra_windows: Vec<ManagedChild>,
     pub(crate) bridge_thread: Option<JoinHandle<()>>,
     pub(crate) extra_bridge_threads: Vec<JoinHandle<()>>,
@@ -51,15 +50,6 @@ impl SabineProcess {
     pub fn open_window(&mut self, window: SabineWindow) -> SabineResult<WindowId> {
         let (config, url) = window.into_open_window_parts()?;
         crate::osr::launch::attach_open_window(self, &config, &url)
-    }
-
-    /// Open another window from a config and already-resolved URL.
-    pub fn open_window_with_config(
-        &mut self,
-        config: SabineWindowConfig,
-        url: impl Into<String>,
-    ) -> SabineResult<WindowId> {
-        crate::osr::launch::attach_open_window(self, &config, &url.into())
     }
 
     /// Close one OSR window. Returns `false` if the id is unknown. Closing the
@@ -89,20 +79,17 @@ impl SabineProcess {
         }
     }
 
-    /// Block until every OSR window has exited, then tear down sidecars/bridge.
+    /// Block until every OSR window has exited, then tear down the bridge.
     pub fn wait(mut self) -> std::io::Result<ExitStatus> {
         loop {
-            if self.primary_alive {
-                match self.child.try_wait()? {
-                    Some(status) => {
-                        if let Some(emitter) = &self.bridge_emitter {
-                            emitter.detach(self.child.id());
-                        }
-                        self.primary_alive = false;
-                        self.primary_status = Some(status);
-                    }
-                    None => {}
+            if self.primary_alive
+                && let Some(status) = self.child.try_wait()?
+            {
+                if let Some(emitter) = &self.bridge_emitter {
+                    emitter.detach(self.child.id());
                 }
+                self.primary_alive = false;
+                self.primary_status = Some(status);
             }
 
             let emitter = self.bridge_emitter.clone();
@@ -129,7 +116,6 @@ impl SabineProcess {
             thread::sleep(Duration::from_millis(50));
         }
 
-        self.cleanup_sidecars();
         self.stop_desktop_event_forwarder();
         self.join_bridge_threads();
         self.primary_status.ok_or_else(|| {
@@ -256,13 +242,6 @@ impl SabineProcess {
         self.extra_windows.clear();
     }
 
-    fn cleanup_sidecars(&mut self) {
-        for sidecar in &mut self.sidecars {
-            let _ = sidecar.terminate();
-        }
-        self.sidecars.clear();
-    }
-
     fn stop_desktop_event_forwarder(&mut self) {
         if let Some(running) = &self.desktop_event_running {
             running.store(false, Ordering::Relaxed);
@@ -286,7 +265,6 @@ impl SabineProcess {
 impl Drop for SabineProcess {
     fn drop(&mut self) {
         self.cleanup_extra_windows();
-        self.cleanup_sidecars();
         self.stop_desktop_event_forwarder();
         if self.primary_alive {
             let _ = self.child.terminate();

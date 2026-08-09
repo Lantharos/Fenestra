@@ -36,14 +36,14 @@ pub(crate) fn run(config_path: PathBuf) -> Result<(), String> {
     }
     let event_loop = EventLoop::new().map_err(|error| error.to_string())?;
     let proxy = event_loop.create_proxy();
-    let (sender, receiver) = mpsc::channel();
+    let (sender, receiver) = mpsc::sync_channel(8);
     event_loop
         .run_app(OsrNativeHost::new(config, sender, receiver, proxy))
         .map_err(|error| error.to_string())
 }
 
 fn trace_host(config: &OsrHostConfig, stage: impl AsRef<str>) {
-    let enabled = std::env::var(crate::SABINE_TRACE_ENV).is_ok_and(|value| {
+    let enabled = std::env::var(sabine_bridge::SABINE_TRACE_ENV).is_ok_and(|value| {
         matches!(
             value.trim().to_ascii_lowercase().as_str(),
             "1" | "true" | "yes" | "on" | "trace"
