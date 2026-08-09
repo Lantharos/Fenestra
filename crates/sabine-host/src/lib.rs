@@ -17,98 +17,74 @@ use sabine_bridge::INSTALL_SCRIPT;
 const HOST_SOURCES: &[(&str, &str)] = &[
     ("CMakeLists.txt", include_str!("../shared/CMakeLists.txt")),
     ("main.cc", include_str!("../shared/main.cc")),
-    ("app.cc", include_str!("../shared/app.cc")),
-    ("app.h", include_str!("../shared/app.h")),
-    ("guest_input.cc", include_str!("../shared/guest_input.cc")),
-    ("guest_input.h", include_str!("../shared/guest_input.h")),
+    ("app/app.cc", include_str!("../shared/app/app.cc")),
+    ("app/app.h", include_str!("../shared/app/app.h")),
+    ("common/json.cc", include_str!("../shared/common/json.cc")),
+    ("common/json.h", include_str!("../shared/common/json.h")),
+    ("guest/input.cc", include_str!("../shared/guest/input.cc")),
+    ("guest/input.h", include_str!("../shared/guest/input.h")),
     (
-        "guest_manager.cc",
-        include_str!("../shared/guest_manager.cc"),
+        "guest/manager.cc",
+        include_str!("../shared/guest/manager.cc"),
     ),
-    ("guest_manager.h", include_str!("../shared/guest_manager.h")),
-    ("json_util.cc", include_str!("../shared/json_util.cc")),
-    ("json_util.h", include_str!("../shared/json_util.h")),
-    ("osr_handler.cc", include_str!("../shared/osr_handler.cc")),
-    ("osr_handler.h", include_str!("../shared/osr_handler.h")),
+    ("guest/manager.h", include_str!("../shared/guest/manager.h")),
+    ("osr/handler.cc", include_str!("../shared/osr/handler.cc")),
+    ("osr/handler.h", include_str!("../shared/osr/handler.h")),
+    ("osr/bridge.cc", include_str!("../shared/osr/bridge.cc")),
     (
-        "osr_handler_accel_ipc.cc",
-        include_str!("../shared/osr_handler_accel_ipc.cc"),
-    ),
-    (
-        "osr_handler_accel_ipc.h",
-        include_str!("../shared/osr_handler_accel_ipc.h"),
+        "osr/callbacks.cc",
+        include_str!("../shared/osr/callbacks.cc"),
     ),
     (
-        "osr_handler_accelerated.cc",
-        include_str!("../shared/osr_handler_accelerated.cc"),
+        "osr/downloads.cc",
+        include_str!("../shared/osr/downloads.cc"),
+    ),
+    ("osr/drag.cc", include_str!("../shared/osr/drag.cc")),
+    (
+        "osr/guest/commands.cc",
+        include_str!("../shared/osr/guest/commands.cc"),
     ),
     (
-        "osr_handler_accelerated.h",
-        include_str!("../shared/osr_handler_accelerated.h"),
+        "osr/guest/lifecycle.cc",
+        include_str!("../shared/osr/guest/lifecycle.cc"),
+    ),
+    ("osr/ime.cc", include_str!("../shared/osr/ime.cc")),
+    ("osr/ime.h", include_str!("../shared/osr/ime.h")),
+    ("osr/input.cc", include_str!("../shared/osr/input.cc")),
+    ("osr/screen.cc", include_str!("../shared/osr/screen.cc")),
+    ("osr/screen.h", include_str!("../shared/osr/screen.h")),
+    (
+        "osr/transport.cc",
+        include_str!("../shared/osr/transport.cc"),
     ),
     (
-        "osr_accel_d3d11_win.cc",
-        include_str!("../shared/osr_accel_d3d11_win.cc"),
+        "osr/utilities.cc",
+        include_str!("../shared/osr/utilities.cc"),
+    ),
+    ("osr/utilities.h", include_str!("../shared/osr/utilities.h")),
+    (
+        "osr/accelerated/paint.cc",
+        include_str!("../shared/osr/accelerated/paint.cc"),
     ),
     (
-        "osr_accel_d3d11_win.h",
-        include_str!("../shared/osr_accel_d3d11_win.h"),
+        "osr/accelerated/paint.h",
+        include_str!("../shared/osr/accelerated/paint.h"),
     ),
     (
-        "osr_handler_bridge.cc",
-        include_str!("../shared/osr_handler_bridge.cc"),
+        "osr/accelerated/protocol.cc",
+        include_str!("../shared/osr/accelerated/protocol.cc"),
     ),
     (
-        "osr_handler_cef.cc",
-        include_str!("../shared/osr_handler_cef.cc"),
+        "osr/accelerated/protocol.h",
+        include_str!("../shared/osr/accelerated/protocol.h"),
     ),
     (
-        "osr_handler_downloads.cc",
-        include_str!("../shared/osr_handler_downloads.cc"),
+        "osr/accelerated/windows/d3d11_copy.cc",
+        include_str!("../shared/osr/accelerated/windows/d3d11_copy.cc"),
     ),
     (
-        "osr_handler_drag.cc",
-        include_str!("../shared/osr_handler_drag.cc"),
-    ),
-    (
-        "osr_handler_guest.cc",
-        include_str!("../shared/osr_handler_guest.cc"),
-    ),
-    (
-        "osr_handler_guest_ops.cc",
-        include_str!("../shared/osr_handler_guest_ops.cc"),
-    ),
-    (
-        "osr_handler_ime.cc",
-        include_str!("../shared/osr_handler_ime.cc"),
-    ),
-    (
-        "osr_handler_ime.h",
-        include_str!("../shared/osr_handler_ime.h"),
-    ),
-    (
-        "osr_handler_input.cc",
-        include_str!("../shared/osr_handler_input.cc"),
-    ),
-    (
-        "osr_handler_ipc.cc",
-        include_str!("../shared/osr_handler_ipc.cc"),
-    ),
-    (
-        "osr_handler_screen.cc",
-        include_str!("../shared/osr_handler_screen.cc"),
-    ),
-    (
-        "osr_handler_screen.h",
-        include_str!("../shared/osr_handler_screen.h"),
-    ),
-    (
-        "osr_handler_util.cc",
-        include_str!("../shared/osr_handler_util.cc"),
-    ),
-    (
-        "osr_handler_util.h",
-        include_str!("../shared/osr_handler_util.h"),
+        "osr/accelerated/windows/d3d11_copy.h",
+        include_str!("../shared/osr/accelerated/windows/d3d11_copy.h"),
     ),
 ];
 
@@ -166,6 +142,9 @@ On Windows, a partial extract often means Git's GNU tar mishandled the path — 
         ));
     }
 
+    if source_dir.exists() {
+        std::fs::remove_dir_all(&source_dir).map_err(|error| error.to_string())?;
+    }
     std::fs::create_dir_all(&source_dir).map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&build_dir).map_err(|error| error.to_string())?;
     write_host_source(&source_dir)?;
@@ -286,7 +265,11 @@ fn cmake_generator_available(generator: &str) -> bool {
 
 fn write_host_source(source_dir: &Path) -> Result<(), String> {
     for (name, body) in HOST_SOURCES {
-        std::fs::write(source_dir.join(name), body).map_err(|error| error.to_string())?;
+        let path = source_dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(path, body).map_err(|error| error.to_string())?;
     }
     std::fs::write(source_dir.join("sabine_bridge_js.h"), bridge_js_header())
         .map_err(|error| error.to_string())?;
@@ -310,7 +293,13 @@ fn bridge_js_header() -> String {
 
 fn host_source_fingerprint() -> String {
     let mut hash = 0xcbf29ce484222325u64;
-    for (_, body) in HOST_SOURCES {
+    for (name, body) in HOST_SOURCES {
+        for byte in name.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(0x100000001b3);
         for byte in body.as_bytes() {
             hash ^= u64::from(*byte);
             hash = hash.wrapping_mul(0x100000001b3);

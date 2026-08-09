@@ -26,42 +26,42 @@ ADD_LOGICAL_TARGET("libcef_lib" "${CEF_LIB_DEBUG}" "${CEF_LIB_RELEASE}")
 
 set(SABINE_HOST_SOURCES
   main.cc
-  app.cc
-  app.h
-  guest_input.cc
-  guest_input.h
-  guest_manager.cc
-  guest_manager.h
-  json_util.cc
-  json_util.h
-  osr_handler.cc
-  osr_handler.h
-  osr_handler_accel_ipc.cc
-  osr_handler_accel_ipc.h
-  osr_handler_accelerated.cc
-  osr_handler_accelerated.h
-  osr_accel_d3d11_win.cc
-  osr_accel_d3d11_win.h
-  osr_handler_bridge.cc
-  osr_handler_cef.cc
-  osr_handler_downloads.cc
-  osr_handler_drag.cc
-  osr_handler_guest.cc
-  osr_handler_guest_ops.cc
-  osr_handler_ime.cc
-  osr_handler_ime.h
-  osr_handler_input.cc
-  osr_handler_ipc.cc
-  osr_handler_screen.cc
-  osr_handler_screen.h
-  osr_handler_util.cc
-  osr_handler_util.h
+  app/app.cc
+  app/app.h
+  common/json.cc
+  common/json.h
+  guest/input.cc
+  guest/input.h
+  guest/manager.cc
+  guest/manager.h
+  osr/handler.cc
+  osr/handler.h
+  osr/bridge.cc
+  osr/callbacks.cc
+  osr/downloads.cc
+  osr/drag.cc
+  osr/guest/commands.cc
+  osr/guest/lifecycle.cc
+  osr/ime.cc
+  osr/ime.h
+  osr/input.cc
+  osr/screen.cc
+  osr/screen.h
+  osr/transport.cc
+  osr/utilities.cc
+  osr/utilities.h
+  osr/accelerated/paint.cc
+  osr/accelerated/paint.h
+  osr/accelerated/protocol.cc
+  osr/accelerated/protocol.h
+  osr/accelerated/windows/d3d11_copy.cc
+  osr/accelerated/windows/d3d11_copy.h
 )
 
 if(NOT OS_WINDOWS)
   list(REMOVE_ITEM SABINE_HOST_SOURCES
-    osr_accel_d3d11_win.cc
-    osr_accel_d3d11_win.h
+    osr/accelerated/windows/d3d11_copy.cc
+    osr/accelerated/windows/d3d11_copy.h
   )
 endif()
 
@@ -74,7 +74,10 @@ else()
 endif()
 
 SET_EXECUTABLE_TARGET_PROPERTIES(sabine-host)
-target_include_directories(sabine-host PRIVATE "${CEF_ROOT}")
+target_include_directories(sabine-host PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${CEF_ROOT}"
+)
 add_dependencies(sabine-host libcef_dll_wrapper)
 target_link_libraries(sabine-host libcef_lib libcef_dll_wrapper ${CEF_STANDARD_LIBS})
 if(OS_WINDOWS)

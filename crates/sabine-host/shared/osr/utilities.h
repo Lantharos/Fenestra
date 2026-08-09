@@ -1,5 +1,5 @@
-#ifndef SABINE_CEF_HOST_OSR_HANDLER_UTIL_H_
-#define SABINE_CEF_HOST_OSR_HANDLER_UTIL_H_
+#ifndef SABINE_CEF_HOST_OSR_UTILITIES_H_
+#define SABINE_CEF_HOST_OSR_UTILITIES_H_
 
 #include <cstdint>
 #include <mutex>

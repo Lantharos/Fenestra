@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "guest_manager.h"
+#include "guest/manager.h"
 #include "include/cef_client.h"
 #include "include/cef_command_line.h"
 #include "include/cef_context_menu_handler.h"

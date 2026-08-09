@@ -1,8 +1,8 @@
-#include "osr_handler_screen.h"
+#include "osr/screen.h"
 
 #include <cstdlib>
 
-#include "osr_handler.h"
+#include "osr/handler.h"
 #include "include/wrapper/cef_helpers.h"
 
 namespace sabine_osr {

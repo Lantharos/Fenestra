@@ -1,4 +1,4 @@
-#include "osr_handler.h"
+#include "osr/handler.h"
 
 #include <algorithm>
 #include <cctype>
@@ -31,8 +31,8 @@
 #include <unistd.h>
 #endif
 
-#include "guest_input.h"
-#include "guest_manager.h"
+#include "guest/input.h"
+#include "guest/manager.h"
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_parser.h"
@@ -40,9 +40,9 @@
 #include "include/cef_task.h"
 #include "include/internal/cef_types.h"
 #include "include/wrapper/cef_helpers.h"
-#include "json_util.h"
+#include "common/json.h"
 #include "sabine_bridge_js.h"
-#include "osr_handler_util.h"
+#include "osr/utilities.h"
 
 using namespace sabine_osr;
 

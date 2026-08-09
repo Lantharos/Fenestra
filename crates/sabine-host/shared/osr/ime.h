@@ -1,5 +1,5 @@
-#ifndef SABINE_CEF_HOST_OSR_HANDLER_IME_H_
-#define SABINE_CEF_HOST_OSR_HANDLER_IME_H_
+#ifndef SABINE_CEF_HOST_OSR_IME_H_
+#define SABINE_CEF_HOST_OSR_IME_H_
 
 #include <string>
 #include <vector>

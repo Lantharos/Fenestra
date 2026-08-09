@@ -1,9 +1,9 @@
-#include "osr_handler_accel_ipc.h"
+#include "osr/accelerated/protocol.h"
 
 #include <cstring>
 #include <limits>
 
-#include "osr_handler_util.h"
+#include "osr/utilities.h"
 
 namespace sabine_osr {
 

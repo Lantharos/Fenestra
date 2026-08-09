@@ -1,5 +1,5 @@
-#ifndef SABINE_CEF_HOST_OSR_HANDLER_ACCELERATED_H_
-#define SABINE_CEF_HOST_OSR_HANDLER_ACCELERATED_H_
+#ifndef SABINE_CEF_HOST_OSR_ACCELERATED_PAINT_H_
+#define SABINE_CEF_HOST_OSR_ACCELERATED_PAINT_H_
 
 #include "include/cef_command_line.h"
 #include "include/internal/cef_types.h"

@@ -1,4 +1,4 @@
-#include "app.h"
+#include "app/app.h"
 
 #include <sstream>
 #include <string>
@@ -8,7 +8,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
 #include "include/wrapper/cef_helpers.h"
-#include "osr_handler.h"
+#include "osr/handler.h"
 
 namespace {
 std::vector<std::string> BridgeCommands(CefRefPtr<CefCommandLine> command_line) {

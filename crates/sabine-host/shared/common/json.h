@@ -1,5 +1,5 @@
-#ifndef SABINE_CEF_HOST_JSON_UTIL_H_
-#define SABINE_CEF_HOST_JSON_UTIL_H_
+#ifndef SABINE_CEF_HOST_COMMON_JSON_H_
+#define SABINE_CEF_HOST_COMMON_JSON_H_
 
 #include <set>
 #include <string>

@@ -1,4 +1,4 @@
-#include "guest_manager.h"
+#include "guest/manager.h"
 
 #include <algorithm>
 #include <cctype>
@@ -10,7 +10,7 @@
 #include <system_error>
 
 #include "include/cef_parser.h"
-#include "json_util.h"
+#include "common/json.h"
 
 const char kSabinePopupGuestId[] = "__sabine_popup";
 const char kGuestBridgePrefix[] = "sabine.guest.";

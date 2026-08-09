@@ -1,9 +1,9 @@
-#include "osr_handler_ime.h"
+#include "osr/ime.h"
 
 #include <cstdlib>
 
 #include "include/internal/cef_types.h"
-#include "osr_handler_util.h"
+#include "osr/utilities.h"
 
 namespace sabine_osr {
 

@@ -1,15 +1,15 @@
-#include "osr_handler_accelerated.h"
+#include "osr/accelerated/paint.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
-#include "osr_handler.h"
-#include "osr_handler_accel_ipc.h"
-#include "osr_handler_util.h"
+#include "osr/handler.h"
+#include "osr/accelerated/protocol.h"
+#include "osr/utilities.h"
 
 #if defined(OS_WIN)
-#include "osr_accel_d3d11_win.h"
+#include "osr/accelerated/windows/d3d11_copy.h"
 #include <windows.h>
 #endif
 

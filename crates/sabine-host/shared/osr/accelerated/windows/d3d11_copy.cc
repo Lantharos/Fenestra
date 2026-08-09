@@ -1,4 +1,4 @@
-#include "osr_accel_d3d11_win.h"
+#include "osr/accelerated/windows/d3d11_copy.h"
 
 #include <d3d11.h>
 #include <d3d11_1.h>

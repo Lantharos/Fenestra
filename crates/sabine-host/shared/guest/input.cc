@@ -1,11 +1,11 @@
-#include "guest_input.h"
+#include "guest/input.h"
 
 #include <cctype>
 #include <cmath>
 #include <sstream>
 #include <vector>
 
-#include "json_util.h"
+#include "common/json.h"
 
 namespace {
 
