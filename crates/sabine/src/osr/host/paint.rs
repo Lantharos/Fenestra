@@ -325,7 +325,7 @@ impl OsrNativeHost {
         }
     }
 
-    pub(super) fn render(&mut self) {
+    pub(super) fn render(&mut self) -> bool {
         let scale = self
             .window
             .as_ref()
@@ -334,16 +334,17 @@ impl OsrNativeHost {
         let height = self.surface_size.height as f32 / scale.max(1.0);
         let list = self.display_list(width.max(1.0), height.max(1.0));
         let Some(renderer) = self.renderer.as_mut() else {
-            return;
+            return false;
         };
         if let Err(error) = renderer.render(&list) {
             eprintln!("Sabine OSR render failed: {error}");
-            return;
+            return false;
         }
         if self.effect_regions_dirty {
             self.effect_regions_dirty = false;
             self.update_effect_regions();
         }
+        true
     }
 
     pub(super) fn display_list(&self, width: f32, height: f32) -> DisplayList {

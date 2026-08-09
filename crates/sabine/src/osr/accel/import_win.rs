@@ -61,7 +61,7 @@ pub(crate) fn try_import_d3d12(
         renderer.device().create_texture_from_hal::<Dx12>(
             hal_texture,
             &desc,
-            wgpu::TextureUses::COPY_SRC,
+            wgpu::TextureUses::empty(),
         )
     })
 }

@@ -120,10 +120,20 @@ fn preferred_backends() -> wgpu::Backends {
 impl GpuRenderer {
     pub async fn new(window: Arc<dyn Window>, transparent: bool) -> Result<Self, RendererError> {
         let size = window.surface_size();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let instance_descriptor = wgpu::InstanceDescriptor {
             backends: preferred_backends(),
             ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
+        };
+        #[cfg(target_os = "windows")]
+        let instance_descriptor = if transparent {
+            let mut descriptor = instance_descriptor;
+            descriptor.backend_options.dx12.presentation_system =
+                wgpu::Dx12SwapchainKind::DxgiFromVisual;
+            descriptor
+        } else {
+            instance_descriptor
+        };
+        let instance = wgpu::Instance::new(instance_descriptor);
         let surface = instance
             .create_surface(window.clone())
             .map_err(|error| RendererError::Surface(error.to_string()))?;

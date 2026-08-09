@@ -112,7 +112,9 @@ impl ApplicationHandler for OsrNativeHost {
             }
             WindowEvent::Ime(ime) => self.forward_ime(ime),
             WindowEvent::Moved(_) => self.send_screen_origin(),
-            WindowEvent::RedrawRequested if self.config.visible && self.presented => self.render(),
+            WindowEvent::RedrawRequested if self.config.visible && self.presented => {
+                self.render();
+            }
             WindowEvent::RedrawRequested => {}
             WindowEvent::PointerMoved {
                 position, primary, ..

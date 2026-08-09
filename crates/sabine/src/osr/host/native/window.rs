@@ -15,7 +15,7 @@ use winit::{
 use crate::osr::protocol::MAIN_TEXTURE_ID;
 use crate::render::GpuRenderer;
 
-use super::{OsrNativeHost, can_defer_window_visibility};
+use super::OsrNativeHost;
 
 impl OsrNativeHost {
     pub(in crate::osr::host) fn ensure_window(&mut self, event_loop: &dyn ActiveEventLoop) {
@@ -29,7 +29,7 @@ impl OsrNativeHost {
             return;
         }
         let activating = self.pending_activation_token.is_some();
-        let defer_visibility = self.config.visible && can_defer_window_visibility() && !activating;
+        let defer_visibility = self.config.visible && !activating;
         let mut attributes = WindowAttributes::default()
             .with_title(self.config.title.clone())
             .with_surface_size(LogicalSize::new(

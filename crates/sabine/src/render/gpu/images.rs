@@ -280,6 +280,14 @@ impl GpuRenderer {
                 depth_or_array_layers: 1,
             },
         );
+        encoder.transition_resources(
+            std::iter::empty(),
+            std::iter::once(wgpu::TextureTransition {
+                texture: &source,
+                selector: None,
+                state: wgpu::TextureUses::empty(),
+            }),
+        );
         self.queue.submit([encoder.finish()]);
         self.queue.on_submitted_work_done(completed);
 

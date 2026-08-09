@@ -164,8 +164,9 @@ impl OsrNativeHost {
             }
         }
         if needs_initial_present {
-            self.render();
-            self.present_after_first_frame();
+            if self.render() {
+                self.present_after_first_frame();
+            }
             return;
         }
         if self.config.visible
