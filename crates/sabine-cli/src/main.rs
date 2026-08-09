@@ -1,6 +1,7 @@
 mod bundle;
 mod dev;
 mod icon_assets;
+mod process_tree;
 mod runtime;
 mod source_assets;
 mod source_desktop;

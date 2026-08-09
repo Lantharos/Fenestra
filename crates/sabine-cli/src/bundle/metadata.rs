@@ -38,6 +38,52 @@ pub(super) fn web_toml(app: &BundleApp) -> Option<String> {
     ))
 }
 
+pub(super) fn runtime_manifest(app: &BundleApp, web_directory: &str) -> String {
+    let mut manifest = format!(
+        "[app]\nid = \"{}\"\nname = \"{}\"\nversion = \"{}\"\n",
+        quote(&app.id),
+        quote(&app.name),
+        quote(&app.version)
+    );
+    let Some(web) = &app.web else {
+        return manifest;
+    };
+
+    manifest.push_str("\n[web]\n");
+    if web.has_local_assets {
+        let source = if web.dist.exists() {
+            web.dist.as_path()
+        } else {
+            web.entry.parent().unwrap_or(&web.root)
+        };
+        let relative_entry = web
+            .entry
+            .strip_prefix(source)
+            .ok()
+            .filter(|entry| !entry.as_os_str().is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| web.entry.file_name().map(Into::into))
+            .unwrap_or_else(|| "index.html".into());
+        let entry = std::path::Path::new(web_directory).join(relative_entry);
+        manifest.push_str(&format!(
+            "entry = \"{}\"\n",
+            quote(&entry.display().to_string())
+        ));
+    } else if let Some(url) = &web.url {
+        manifest.push_str(&format!("url = \"{}\"\n", quote(url)));
+    }
+    if !web.allowed_origins.is_empty() {
+        let origins = web
+            .allowed_origins
+            .iter()
+            .map(|origin| format!("\"{}\"", quote(origin)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        manifest.push_str(&format!("allowed_origins = [{origins}]\n"));
+    }
+    manifest
+}
+
 pub(super) fn desktop_entry(app: &BundleApp, executable: &str, icon: Option<&str>) -> String {
     let icon = icon
         .map(|icon| format!("Icon={}\n", desktop_value(icon)))
@@ -130,6 +176,7 @@ BuildArch: x86_64
 /usr/bin/{executable}
 /usr/share/applications/{id}.desktop
 /usr/share/sabine/{id}
+/usr/share/sabine/manifests/{executable}.toml
 "#,
         name = rpm_name(&app.id),
         version = app.version,
@@ -139,7 +186,7 @@ BuildArch: x86_64
     )
 }
 
-pub(super) fn wix_source(app: &BundleApp, executable_source: &str) -> String {
+pub(super) fn wix_source(app: &BundleApp, staged_app_dir: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
@@ -147,16 +194,16 @@ pub(super) fn wix_source(app: &BundleApp, executable_source: &str) -> String {
     <MediaTemplate EmbedCab="yes"/>
     <StandardDirectory Id="ProgramFilesFolder">
       <Directory Id="INSTALLFOLDER" Name="{}">
-        <File Source="{}"/>
       </Directory>
     </StandardDirectory>
+    <Files Include="{}\**" Directory="INSTALLFOLDER"/>
   </Package>
 </Wix>
 "#,
         xml(&app.name),
         xml(&app.version),
         xml(&app.name),
-        xml(executable_source)
+        xml(staged_app_dir)
     )
 }
 

@@ -3,7 +3,6 @@ use sabine_bridge::BridgeHandlers;
 mod app_chrome;
 mod builder;
 pub(crate) mod config;
-mod dev;
 mod launch;
 mod manifest;
 pub(crate) mod style;
@@ -30,7 +29,7 @@ impl SabineWindow {
     /// ```ignore
     /// fn main() {
     ///     SabineWindow::main(|window| {
-    ///         Ok(window.app().title("My App").entry("ui/index.html"))
+    ///         Ok(window.app().title("My App"))
     ///     });
     /// }
     /// ```
@@ -50,7 +49,7 @@ impl SabineWindow {
         if crate::dispatch_host_mode_from_args(&args) {
             std::process::exit(0);
         }
-        let window = match build(Self::new()) {
+        let window = match Self::new().with_framework_config().and_then(build) {
             Ok(window) => window,
             Err(error) => {
                 eprintln!("failed to configure Sabine window: {error}");

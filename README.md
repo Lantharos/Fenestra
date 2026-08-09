@@ -14,8 +14,8 @@ sabine = { git = "https://github.com/Lantharos/Sabine" }
 ```
 
 ```sh
-cargo install --git https://github.com/Lantharos/Sabine --package sabine-cli
-cargo install --git https://github.com/Lantharos/Sabine --package sabine-service
+cargo install --git https://github.com/Lantharos/Sabine sabine-cli
+cargo install --git https://github.com/Lantharos/Sabine sabine-service
 ```
 
 For the TypeScript helpers used by the web UI:
@@ -59,10 +59,8 @@ struct VersionResponse {
 }
 
 fn main() {
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Sabine.toml");
     SabineWindow::main(|window| {
         Ok(window
-            .with_manifest(manifest)?
             .app()
             .size(960, 640)
             .bridge_typed("app.version", |_request: VersionRequest| {
@@ -133,8 +131,9 @@ await surface.setBounds({ x: 16, y: 64, width: 1100, height: 700 });
 
 ## Configuration
 
-`Sabine.toml` describes the app and its web assets. The CLI uses it for install and packaging;
-Rust can load the same file with `with_manifest`:
+`Sabine.toml` describes the app and its web assets. `SabineWindow::main` loads it automatically;
+the CLI supplies its source location during development and writes a relocated production manifest
+when packaging:
 
 ```toml
 [app]
@@ -147,9 +146,8 @@ icon = "assets/icon.png"
 root = "ui"
 dist = "ui/dist"
 entry = "ui/dist/index.html"
-dev_url = "http://localhost:5173"
+dev_port = 5173
 build = "bun run build"
-allowed_origins = ["http://localhost:5173"]
 ```
 
 ```sh
@@ -175,7 +173,7 @@ console window to the login process.
 
 1. The first app launches with Sabine bootstrap code and a native progress window.
 2. Bootstrap obtains the service CLI and daemon (GitHub Releases if available, otherwise
-   `cargo install --git https://github.com/Lantharos/Sabine`), then starts it.
+   `cargo install --git https://github.com/Lantharos/Sabine sabine-service`), then starts it.
 3. The service installs the latest compatible Chromium runtime.
 4. The app registers with the service and starts.
 

@@ -1,10 +1,16 @@
-use std::{fs, path::Path};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use serde::Deserialize;
 
 use super::SabineWindow;
-use super::dev::vite_dev_url;
 use crate::error::{SabineError, SabineResult};
+
+const MANIFEST_ENV: &str = "SABINE_MANIFEST_PATH";
+const APP_ID_ENV: &str = "SABINE_APP_ID";
+const WEB_ENTRY_ENV: &str = "SABINE_WEB_ENTRY";
 
 #[derive(Debug, Default, Deserialize)]
 struct SabineFile {
@@ -25,14 +31,12 @@ struct AppSection {
 struct WebSection {
     entry: Option<String>,
     url: Option<String>,
-    dev_url: Option<String>,
-    dev_port: Option<u16>,
     #[serde(default)]
     allowed_origins: Vec<String>,
 }
 
 impl SabineWindow {
-    /// Applies `[app]` / `[web]` fields from a `Sabine.toml` next to the crate.
+    /// Applies `[app]` and production `[web]` fields from a `Sabine.toml`.
     ///
     /// Bridge handlers, chrome, and size stay in Rust; identity and content
     /// paths can live in the manifest shared with the CLI/bundler.
@@ -69,28 +73,62 @@ impl SabineWindow {
             self = self.url(url);
         }
 
-        let mut allowed_origins = file.web.allowed_origins;
-        let mut dev_url = file
-            .web
-            .dev_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned);
-        if dev_url.is_none()
-            && let Some(port) = file.web.dev_port
-        {
-            dev_url = Some(vite_dev_url(port));
-        }
-        if let Some(url) = &dev_url {
-            if allowed_origins.is_empty() {
-                allowed_origins.push(url.clone());
-            }
-            self = self.dev_url(url.clone());
-        }
-        for origin in allowed_origins {
+        for origin in file.web.allowed_origins {
             self = self.allowed_origin(origin);
         }
         Ok(self)
     }
+
+    pub(super) fn with_framework_config(mut self) -> SabineResult<Self> {
+        if let Some(path) = framework_manifest_path() {
+            self = self.with_manifest(path)?;
+        }
+        if let Some(app_id) = nonempty_env(APP_ID_ENV) {
+            self = self.app_id(app_id);
+        }
+        if let Some(entry) = nonempty_env(WEB_ENTRY_ENV) {
+            self.config.entry = Some(entry);
+            self.config.url = None;
+            self.config.dev_url = None;
+        }
+        Ok(self)
+    }
+}
+
+fn framework_manifest_path() -> Option<PathBuf> {
+    if let Some(path) = nonempty_env(MANIFEST_ENV) {
+        return Some(PathBuf::from(path));
+    }
+
+    if let Ok(executable) = env::current_exe()
+        && let Some(directory) = executable.parent()
+    {
+        let stem = executable.file_stem().and_then(|stem| stem.to_str());
+        let mut candidates = vec![
+            directory.join("resources/Sabine.toml"),
+            directory.join("../Resources/Sabine.toml"),
+        ];
+        if let Some(stem) = stem {
+            candidates.push(
+                directory
+                    .join("../share/sabine/manifests")
+                    .join(format!("{stem}.toml")),
+            );
+        }
+        if let Some(path) = candidates.into_iter().find(|path| path.is_file()) {
+            return Some(path);
+        }
+    }
+
+    env::current_dir()
+        .ok()
+        .map(|directory| directory.join("Sabine.toml"))
+        .filter(|path| path.is_file())
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }

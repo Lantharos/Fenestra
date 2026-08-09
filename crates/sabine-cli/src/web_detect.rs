@@ -8,6 +8,7 @@ use serde::Deserialize;
 #[derive(Debug, Clone)]
 pub struct DevProject {
     pub cargo_manifest: PathBuf,
+    pub sabine_manifest: Option<PathBuf>,
     pub frontend: Option<DevFrontend>,
 }
 
@@ -65,6 +66,7 @@ pub fn resolve_dev_project(source: &Path) -> Result<DevProject, String> {
     let frontend = resolve_frontend(&source_dir, web)?;
     Ok(DevProject {
         cargo_manifest,
+        sabine_manifest: sabine_path.is_file().then_some(sabine_path),
         frontend,
     })
 }

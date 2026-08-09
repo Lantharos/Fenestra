@@ -38,9 +38,10 @@ windowless rendering and always creates `SabineOsrHandler`; there is no windowed
 
 ### App identity and windows
 
-Every launch requires a non-empty `app_id` (via `.app_id(...)` or `with_manifest`). That id selects
-the CEF profile directory and the private IPC directory under `$XDG_RUNTIME_DIR/sabine/<app_id>/`
-(mode `0700`, sockets `0600`).
+Every launch requires a non-empty `app_id`. `SabineWindow::main` loads identity and production web
+configuration from the framework-managed `Sabine.toml` before applying the app's Rust builder, so
+explicit Rust settings remain authoritative. That id selects the CEF profile directory and the
+private IPC directory under `$XDG_RUNTIME_DIR/sabine/<app_id>/` (mode `0700`, sockets `0600`).
 
 - **Different `app_id`**: separate CEF processes and profiles; no handoff between apps.
 - **Same `app_id`**: windows share one CEF browser process (process-singleton handoff). Each window
@@ -237,8 +238,11 @@ platform registration belongs in `sabine-platform` or `sabine-service`; CEF code
 
 ## Bundles and installs
 
-The CLI reads `Sabine.toml`, builds web assets, builds the selected Rust package, stages the runtime
-layout, writes platform metadata, and invokes a local package tool when available.
+The CLI reads `Sabine.toml`, builds web assets and the selected Rust package, writes a normalized
+production manifest into the platform resource layout, stages the remaining runtime files and
+metadata, and invokes a local package tool when available. Apps do not locate or copy manifests.
+`sabine dev` passes the source manifest and development URL directly to the runtime; `dev_url` and
+`dev_port` are therefore never baked into production launch behavior.
 
 Supported targets are portable, Linux directory, deb, rpm, AppImage, Windows directory, exe, msi,
 macOS app, and dmg. Cross-host staging is allowed; signing and notarization remain deployment policy.

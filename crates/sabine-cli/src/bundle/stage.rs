@@ -7,8 +7,8 @@ use super::{
     BundleFormat,
     config::BundleApp,
     metadata::{
-        app_run, bundle_toml, desktop_entry, flatpak_manifest, info_plist, sanitize_path, web_toml,
-        windows_manifest,
+        app_run, bundle_toml, desktop_entry, flatpak_manifest, info_plist, runtime_manifest,
+        sanitize_path, web_toml, windows_manifest,
     },
 };
 use crate::{bundle::build_target_for_format, icon_assets};
@@ -156,6 +156,7 @@ fn stage_appimage(
     )
     .map_err(|error| error.to_string())?;
     stage_resources(app, format, &app_dir.join("usr/share/sabine").join(&app.id))?;
+    stage_unix_manifest(app, &app_dir, executable)?;
     Ok(app_dir)
 }
 
@@ -186,7 +187,18 @@ fn stage_unix_root(
         .map_err(|error| error.to_string())?;
     }
     stage_resources(app, format, &resources)?;
+    stage_unix_manifest(app, &app_dir, executable)?;
     Ok(app_dir)
+}
+
+fn stage_unix_manifest(app: &BundleApp, app_dir: &Path, executable: &str) -> Result<(), String> {
+    let manifests = app_dir.join("usr/share/sabine/manifests");
+    fs::create_dir_all(&manifests).map_err(|error| error.to_string())?;
+    fs::write(
+        manifests.join(format!("{executable}.toml")),
+        runtime_manifest(app, &format!("../{}/web", app.id)),
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn linux_icon_path(app: &BundleApp, format: BundleFormat) -> Option<String> {
@@ -237,6 +249,8 @@ fn stage_resources(app: &BundleApp, format: BundleFormat, resources: &Path) -> R
     if let Some(web) = web_toml(app) {
         fs::write(resources.join("web.toml"), web).map_err(|error| error.to_string())?;
     }
+    fs::write(resources.join("Sabine.toml"), runtime_manifest(app, "web"))
+        .map_err(|error| error.to_string())?;
     if let Some(icon) = &app.icon
         && icon.is_file()
     {

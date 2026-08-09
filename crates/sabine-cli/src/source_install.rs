@@ -229,7 +229,7 @@ fn read_registry_record(path: &Path) -> Result<SourceApp, String> {
     })
 }
 
-fn launcher_script(app: &SourceApp, app_dir: &Path, _assets: &StagedAssets) -> String {
+fn launcher_script(app: &SourceApp, app_dir: &Path, assets: &StagedAssets) -> String {
     #[cfg(target_os = "windows")]
     {
         let command = app.command.clone().unwrap_or_else(|| {
@@ -238,11 +238,26 @@ fn launcher_script(app: &SourceApp, app_dir: &Path, _assets: &StagedAssets) -> S
                 app.source.join("Cargo.toml").display()
             )
         });
+        let mut environment = String::new();
+        let manifest = app.source.join("Sabine.toml");
+        if manifest.is_file() {
+            environment.push_str(&format!(
+                "set \"SABINE_MANIFEST_PATH={}\"\r\n",
+                manifest.display()
+            ));
+        }
+        if let Some(web_entry) = &assets.web_entry {
+            environment.push_str(&format!(
+                "set \"SABINE_WEB_ENTRY={}\"\r\n",
+                web_entry.display()
+            ));
+        }
         return format!(
-            "@echo off\r\nset SABINE_APP_ID={}\r\nset SABINE_APP_DIR={}\r\nset SABINE_SOURCE_DIR={}\r\ncd /d \"{}\"\r\n{} %*\r\n",
+            "@echo off\r\nset \"SABINE_APP_ID={}\"\r\nset \"SABINE_APP_DIR={}\"\r\nset \"SABINE_SOURCE_DIR={}\"\r\n{}cd /d \"{}\"\r\n{} %*\r\n",
             app.id,
             app_dir.display(),
             app.source.display(),
+            environment,
             app.source.display(),
             command
         );
@@ -261,13 +276,20 @@ fn launcher_script(app: &SourceApp, app_dir: &Path, _assets: &StagedAssets) -> S
                 shell_quote(&app.source.display().to_string())
             ),
         ];
-        if let Some(web_dir) = &_assets.web_dir {
+        let manifest = app.source.join("Sabine.toml");
+        if manifest.is_file() {
+            exports.push(format!(
+                "export SABINE_MANIFEST_PATH={}",
+                shell_quote(&manifest.display().to_string())
+            ));
+        }
+        if let Some(web_dir) = &assets.web_dir {
             exports.push(format!(
                 "export SABINE_WEB_DIR={}",
                 shell_quote(&web_dir.display().to_string())
             ));
         }
-        if let Some(web_entry) = &_assets.web_entry {
+        if let Some(web_entry) = &assets.web_entry {
             exports.push(format!(
                 "export SABINE_WEB_ENTRY={}",
                 shell_quote(&web_entry.display().to_string())

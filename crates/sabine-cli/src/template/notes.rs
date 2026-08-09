@@ -24,15 +24,11 @@ fn notes_sabine_toml(name: &str) -> String {
 }
 
 fn notes_main_rs() -> &'static str {
-    r#"use std::path::PathBuf;
-
-use sabine::prelude::*;
+    r#"use sabine::prelude::*;
 
 fn main() {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Sabine.toml");
     SabineWindow::main(|window| {
         Ok(window
-            .with_manifest(manifest)?
             .size(900, 640)
             .frameless()
             .glass()

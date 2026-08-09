@@ -186,18 +186,8 @@ fn package_msi(
 ) -> Result<(), String> {
     let wxs = staged.root.join("installer.wxs");
     let artifact = artifact_path(app, staged, BundleFormat::Msi, "msi");
-    fs::write(
-        &wxs,
-        wix_source(
-            app,
-            &staged
-                .app_dir
-                .join(&staged.executable)
-                .display()
-                .to_string(),
-        ),
-    )
-    .map_err(|error| error.to_string())?;
+    fs::write(&wxs, wix_source(app, &staged.app_dir.display().to_string()))
+        .map_err(|error| error.to_string())?;
     if command_exists("wix") {
         ensure_parent(&artifact)?;
         run(Command::new("wix")

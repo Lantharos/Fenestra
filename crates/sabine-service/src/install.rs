@@ -144,14 +144,13 @@ Install Rust from https://rustup.rs, or set SABINE_SERVICE_PATH / SABINE_SERVICE
     let status = Command::new("cargo")
         .args(["install", "--git", SERVICE_GIT_URL, "--force", "--root"])
         .arg(&cargo_root)
-        .arg("--package")
         .arg("sabine-service")
         .status()
         .map_err(|error| ServiceError::Update(format!("failed to run cargo: {error}")))?;
     if !status.success() {
         let _ = fs::remove_dir_all(&cargo_root);
         return Err(ServiceError::Update(format!(
-            "cargo install --git {SERVICE_GIT_URL} --package sabine-service failed with {status}"
+            "cargo install --git {SERVICE_GIT_URL} sabine-service failed with {status}"
         )));
     }
 

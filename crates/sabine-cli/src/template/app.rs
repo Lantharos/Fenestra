@@ -33,7 +33,6 @@ dist = "ui/dist"
 entry = "ui/dist/index.html"
 dev_port = 5173
 build = "bun run build"
-allowed_origins = ["http://localhost:5173"]
 "#
     )
 }
@@ -50,7 +49,7 @@ fn app_package_json(name: &str) -> String {
     "preview": "vite preview"
   }},
   "dependencies": {{
-    "@lantharos/sabine": "github:Lantharos/Sabine#path:packages/sabine"
+    "@lantharos/sabine": "github:Lantharos/Sabine"
   }},
   "devDependencies": {{
     "typescript": "^5.9.2",
@@ -95,9 +94,7 @@ fn app_tsconfig() -> &'static str {
 }
 
 fn app_main_rs() -> &'static str {
-    r#"use std::path::PathBuf;
-
-use sabine::prelude::*;
+    r#"use sabine::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -109,10 +106,8 @@ struct VersionResponse {
 }
 
 fn main() {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Sabine.toml");
     SabineWindow::main(|window| {
         Ok(window
-            .with_manifest(manifest)?
             .app()
             .size(960, 640)
             .bridge_typed("app.version", |_request: VersionRequest| {
