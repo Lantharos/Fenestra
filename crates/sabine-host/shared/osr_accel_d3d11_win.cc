@@ -7,17 +7,14 @@
 #include <dxgi1_2.h>
 
 #include <cstdio>
-#include <cstring>
 #include <map>
 #include <utility>
 
 #include "include/internal/cef_types.h"
-#include "osr_handler_accelerated.h"
 
 namespace sabine_osr {
 namespace {
 
-constexpr uint32_t kCefColorTypeRgba8888 = 0;
 constexpr uint32_t kCefColorTypeBgra8888 = 1;
 
 struct D3d11Context {
@@ -341,69 +338,6 @@ void ReleaseAcceleratedD3d11Frame(uint64_t slot_token) {
       return;
     }
   }
-}
-
-bool ReadAcceleratedD3d11FrameToBgra(HANDLE cef_shared_handle,
-                                     int width,
-                                     int height,
-                                     uint32_t cef_format,
-                                     std::vector<uint8_t>* out_bgra) {
-  if (!cef_shared_handle || width <= 0 || height <= 0 || !out_bgra ||
-      (cef_format != kCefColorTypeRgba8888 &&
-       cef_format != kCefColorTypeBgra8888)) {
-    return false;
-  }
-  if (!EnsureDevice()) {
-    return false;
-  }
-
-  ID3D11Texture2D* source = OpenCefSharedTexture(cef_shared_handle);
-  if (!source) {
-    return false;
-  }
-
-  D3D11_TEXTURE2D_DESC source_desc{};
-  source->GetDesc(&source_desc);
-
-  D3D11_TEXTURE2D_DESC staging_desc = source_desc;
-  staging_desc.BindFlags = 0;
-  staging_desc.MiscFlags = 0;
-  staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-  staging_desc.Usage = D3D11_USAGE_STAGING;
-
-  ID3D11Texture2D* staging = nullptr;
-  HRESULT hr =
-      g_d3d11.device->CreateTexture2D(&staging_desc, nullptr, &staging);
-  if (FAILED(hr) || !staging) {
-    source->Release();
-    return false;
-  }
-
-  g_d3d11.context->CopyResource(staging, source);
-  if (!WaitForGpu()) {
-    source->Release();
-    staging->Release();
-    return false;
-  }
-  source->Release();
-
-  D3D11_MAPPED_SUBRESOURCE mapped{};
-  hr = g_d3d11.context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped);
-  if (FAILED(hr)) {
-    staging->Release();
-    return false;
-  }
-
-  const bool src_is_rgba = cef_format == kCefColorTypeRgba8888;
-  const bool ok = UnpackAcceleratedPlaneToBgra(
-      mapped.pData,
-      static_cast<size_t>(mapped.RowPitch) *
-          static_cast<size_t>(source_desc.Height),
-      static_cast<uint32_t>(mapped.RowPitch), width, height, src_is_rgba,
-      out_bgra);
-  g_d3d11.context->Unmap(staging, 0);
-  staging->Release();
-  return ok;
 }
 
 }  // namespace sabine_osr

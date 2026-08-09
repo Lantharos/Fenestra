@@ -47,8 +47,12 @@ impl OsrNativeHost {
             self.pending_resize_paint = None;
             return;
         }
+        let now = Instant::now();
+        if now < pending.retry_at {
+            return;
+        }
         self.send_resize();
-        pending.retry_at = Instant::now() + RESIZE_REPAINT_RETRY;
+        pending.retry_at = now + RESIZE_REPAINT_RETRY;
         self.pending_resize_paint = Some(pending);
     }
 
@@ -66,16 +70,7 @@ impl OsrNativeHost {
         size: (u32, u32),
         target: (u32, u32),
     ) -> bool {
-        if size == target {
-            return true;
-        }
-        if self.pending_resize_paint.is_none() {
-            return false;
-        }
-        let current_distance = self
-            .main_frame_size()
-            .map_or(u64::MAX, |current| size_distance(current, target));
-        size_distance(size, target) < current_distance
+        size == target
     }
 
     pub(super) fn main_frame_size(&self) -> Option<(u32, u32)> {
@@ -86,6 +81,18 @@ impl OsrNativeHost {
 
     pub(super) fn main_frame_matches(&self, size: (u32, u32)) -> bool {
         self.main_frame_size().is_some_and(|frame| frame == size)
+    }
+
+    pub(super) fn frame_size_for_view(&self, size: (u32, u32)) -> (u32, u32) {
+        let scale = self
+            .window
+            .as_ref()
+            .map_or(self.scale_factor, |window| window.scale_factor())
+            .max(1.0);
+        (
+            (f64::from(size.0) / scale).round().max(1.0) as u32,
+            (f64::from(size.1) / scale).round().max(1.0) as u32,
+        )
     }
 
     pub(super) fn accepts_paint(&self) -> bool {
@@ -102,10 +109,16 @@ impl OsrNativeHost {
         if self.renderer.is_none() {
             return false;
         }
-        let (width, height, _) = self.content_size_for_cef();
         match frame.surface {
             OsrSurface::Main => {
-                let Some(damage) = self.main_buffer.compose(width, height, &frame) else {
+                let target = self.content_surface_size();
+                let frame_size = self.frame_size_for_view((frame.width, frame.height));
+                if !self.should_accept_main_frame_size(frame_size, target) {
+                    self.retry_resize_paint();
+                    return false;
+                }
+                let Some(damage) = self.main_buffer.compose(frame.width, frame.height, &frame)
+                else {
                     return false;
                 };
                 let Some(renderer) = self.renderer.as_mut() else {
@@ -114,8 +127,8 @@ impl OsrNativeHost {
                 if upload_composed_damage(
                     renderer,
                     MAIN_TEXTURE_ID,
-                    width,
-                    height,
+                    frame.width,
+                    frame.height,
                     self.main_buffer.bytes(),
                     damage,
                     std::slice::from_ref(&frame),
@@ -126,8 +139,8 @@ impl OsrNativeHost {
                 }
                 self.main_frame = Some(OsrFrame {
                     surface: OsrSurface::Main,
-                    width,
-                    height,
+                    width: frame_size.0,
+                    height: frame_size.1,
                     x: 0,
                     y: 0,
                     bytes: Vec::new().into(),
@@ -199,7 +212,8 @@ impl OsrNativeHost {
         }
         match batch.surface {
             OsrSurface::Main => {
-                if !self.should_accept_main_frame_size(batch_size, content_size) {
+                let view_size = self.frame_size_for_view(batch_size);
+                if !self.should_accept_main_frame_size(view_size, content_size) {
                     self.retry_resize_paint();
                     return false;
                 }
@@ -227,13 +241,13 @@ impl OsrNativeHost {
                 }
                 self.main_frame = Some(OsrFrame {
                     surface: OsrSurface::Main,
-                    width: batch.width,
-                    height: batch.height,
+                    width: view_size.0,
+                    height: view_size.1,
                     x: 0,
                     y: 0,
                     bytes: Vec::new().into(),
                 });
-                if batch_size == content_size {
+                if view_size == content_size {
                     self.clear_pending_resize_paint();
                 }
             }
@@ -336,6 +350,7 @@ impl OsrNativeHost {
         let Some(renderer) = self.renderer.as_mut() else {
             return false;
         };
+        renderer.resize(self.surface_size.width, self.surface_size.height, scale);
         if let Err(error) = renderer.render(&list) {
             eprintln!("Sabine OSR render failed: {error}");
             return false;
@@ -470,6 +485,9 @@ impl OsrNativeHost {
         let now = Instant::now();
         if now >= pending.deadline {
             self.pending_resize_paint = None;
+            if self.presented {
+                self.render();
+            }
             return false;
         }
         if now >= pending.retry_at {
@@ -494,8 +512,4 @@ fn overlay_local_frame(frame: &OsrFrame) -> OsrFrame {
         y: 0,
         bytes: frame.bytes.clone(),
     }
-}
-
-fn size_distance(size: (u32, u32), target: (u32, u32)) -> u64 {
-    u64::from(size.0.abs_diff(target.0)) + u64::from(size.1.abs_diff(target.1))
 }

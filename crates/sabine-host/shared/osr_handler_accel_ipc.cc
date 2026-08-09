@@ -29,7 +29,7 @@ std::string BuildAccelPayload(const std::string& guest_id,
     return {};
   }
   const std::string prefix = GuestPrefix(guest_id);
-  const size_t meta_len = prefix.size() + 4 + 8 + 8;
+  const size_t meta_len = prefix.size() + 4 + 4 + 4 + 4 + 4 + 8 + 8;
   if (meta_len > std::numeric_limits<uint32_t>::max()) {
     return {};
   }
@@ -38,6 +38,14 @@ std::string BuildAccelPayload(const std::string& guest_id,
   std::memcpy(payload.data() + at, prefix.data(), prefix.size());
   at += prefix.size();
   PutU32(&payload, at, meta.format);
+  at += 4;
+  PutI32(&payload, at, meta.visible_x);
+  at += 4;
+  PutI32(&payload, at, meta.visible_y);
+  at += 4;
+  PutU32(&payload, at, meta.visible_width);
+  at += 4;
+  PutU32(&payload, at, meta.visible_height);
   at += 4;
   PutU64(&payload, at, meta.native_handle);
   at += 8;

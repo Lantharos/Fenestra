@@ -120,12 +120,12 @@ void SabineOsrHandler::HandleControlLine(const std::string& line) {
     const int height = std::max(1, std::atoi(parts[2].c_str()));
     const float scale =
         std::max(0.25f, static_cast<float>(std::atof(parts[3].c_str())));
-    // Same-size configures after interactive move must not Invalidate — that
-    // flashes the OSR surface until the next paint lands.
     if (width == width_ && height == height_ &&
         std::fabs(scale - scale_) < 0.0001f) {
+      host->Invalidate(PET_VIEW);
       return;
     }
+    host->NotifyMoveOrResizeStarted();
     width_ = width;
     height_ = height;
     scale_ = scale;

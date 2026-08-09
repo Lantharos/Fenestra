@@ -167,6 +167,10 @@ class SabineOsrHandler : public CefClient,
                         DragOperation operation) override;
 
   void HandleControlLine(const std::string& line);
+  void QueueResizeControlLine(std::string line);
+  void HandlePendingResize();
+  bool QualifyResizeFrame(int pixel_width, int pixel_height);
+  void CompleteResizeFrame(int pixel_width, int pixel_height);
   void CloseFromNativeDisconnect();
   void FinishNativeFileDrag(int x, int y, const std::string& operation);
   void ApplyHostControl(const std::string& command, const std::string& value);
@@ -267,8 +271,14 @@ class SabineOsrHandler : public CefClient,
   std::string authentication_token_;
   intptr_t socket_fd_ = -1;
   std::mutex socket_mutex_;
+  std::mutex resize_mutex_;
+  std::string pending_resize_line_;
+  bool resize_task_pending_ = false;
+  bool resize_in_flight_ = false;
   int width_ = 1;
   int height_ = 1;
+  int last_main_paint_width_ = 0;
+  int last_main_paint_height_ = 0;
   float scale_ = 1.0f;
   CefRect popup_rect_;
   CefRect guest_popup_rect_;

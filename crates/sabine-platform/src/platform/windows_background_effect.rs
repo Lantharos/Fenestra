@@ -47,7 +47,7 @@ pub(super) fn apply(window: &Arc<dyn Window>, effect: WindowBackgroundEffect) ->
         WindowBackgroundEffect::Blur => set_accent(hwnd, ACCENT_BLUR, 0, dark),
         WindowBackgroundEffect::Mica => set_backdrop(hwnd, DWMSBT_MAINWINDOW),
         WindowBackgroundEffect::MicaAlt => set_backdrop(hwnd, DWMSBT_TABBEDWINDOW),
-        _ => set_accent(hwnd, ACCENT_ACRYLIC, 96, dark),
+        _ => set_accent(hwnd, ACCENT_ACRYLIC, 125, dark),
     };
     if std::env::var_os("SABINE_TRACE").is_some() {
         eprintln!(

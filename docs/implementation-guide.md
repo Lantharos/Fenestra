@@ -58,8 +58,9 @@ transport branches.
   wgpu's D3D12 device for composition. The host waits for its GPU copy before publishing the frame;
   the compositor sends a release acknowledgement only after its own copy completes. The producer
   never reuses a slot before that acknowledgement. Physical texture dimensions remain separate
-  from logical window dimensions at non-integer display scales. A copy/import failure is surfaced
-  and the host can bridge that frame through BGRA without relaunching the browser.
+  from the visible source rectangle and logical window dimensions at non-integer display scales.
+  Mailbox saturation drops an intermediate GPU frame and requests the newest paint; it never falls
+  back to a synchronous CPU readback.
 - **Linux** uses CEF software `OnPaint` on Wayland. The previous DMA-BUF/X11/Vulkan branch was not a
   valid ownership implementation and has been removed.
 - **macOS** currently uses software `OnPaint`. An IOSurface path must copy or retain CEF's pooled
@@ -70,19 +71,22 @@ visual without an HWND redirection bitmap, allowing premultiplied OSR pixels to 
 backdrop. Sabine applies Acrylic, blur, Mica, and Mica Alt directly through Win32 composition APIs.
 On macOS, Sabine installs its own semantic `NSVisualEffectView` beneath the Metal content view.
 
-CEF still delivers BGRA dirty rectangles on the software path (and as a CPU bridge after GPU
-raster). Inline and shared-memory batches retain one immutable byte backing instead of copying every
-rectangle into a separate allocation. The native host patches one backing store per surface and
-uploads only the changed ranges to an independent GPU texture (sparse per-rect uploads when damage
-is disjoint):
+CEF delivers BGRA dirty rectangles on the software path. Inline and shared-memory batches retain one
+immutable byte backing instead of copying every rectangle into a separate allocation. The native
+host patches one backing store per surface and uploads only the changed ranges to an independent GPU
+texture (sparse per-rect uploads when damage is disjoint):
 
 - main page
 - popup overlay
 - one texture per guest (including guest `<select>` popups)
 
 The display list damages the union of the old and new bounds when a primitive changes. GPU vertex
-buffers grow geometrically and are reused across redraws. Resize waits for a correctly sized CEF
-paint rather than stretching a stale frame indefinitely.
+buffers grow geometrically and are reused across redraws. Native surface resize is presented
+synchronously with the last frame at its original logical size while CEF catches up. Resize control
+messages coalesce to the newest size on CEF's UI thread. Main paints must exactly match that logical
+size, and accelerated paints with transitional coded/content/source metadata are discarded. This
+keeps the swapchain responsive without stretching a stale frame or presenting a partially relaid-out
+Chromium texture.
 
 Transport is platform-specific without changing the protocol. On Unix, sockets live under
 `$XDG_RUNTIME_DIR/sabine/<app_id>/` (mode `0700`) with socket mode `0600`, and each window

@@ -14,6 +14,10 @@ namespace sabine_osr {
 
 struct AccelPaintMeta {
   uint32_t format = 0;
+  int32_t visible_x = 0;
+  int32_t visible_y = 0;
+  uint32_t visible_width = 0;
+  uint32_t visible_height = 0;
   /// Duplicated NT HANDLE value in the compositor process.
   uint64_t native_handle = 0;
   /// Identifies the producer slot released after the D3D12 copy completes.

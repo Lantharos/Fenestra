@@ -38,6 +38,16 @@ impl OsrNativeHost {
                 let _ = socket.flush();
             }
         };
+        if frame.surface == OsrSurface::Main {
+            let frame_size = self.accel_frame_size(frame);
+            let target = self.content_surface_size();
+            if !self.should_accept_main_frame_size(frame_size, target) {
+                crate::osr::accel::close_imported_handle(frame.native_handle);
+                release_slot();
+                self.retry_resize_paint();
+                return false;
+            }
+        }
         let Some(renderer) = self.renderer.as_mut() else {
             crate::osr::accel::close_imported_handle(frame.native_handle);
             release_slot();
@@ -77,15 +87,11 @@ impl OsrNativeHost {
 
     #[cfg(windows)]
     fn note_accel_surface(&mut self, frame: &OsrAccelFrame) {
-        let scale = self
-            .window
-            .as_ref()
-            .map_or(1.0, |window| window.scale_factor())
-            .max(1.0);
+        let (width, height) = self.accel_frame_size(frame);
         let stub = OsrFrame {
             surface: frame.surface.clone(),
-            width: (f64::from(frame.width) / scale).round().max(1.0) as u32,
-            height: (f64::from(frame.height) / scale).round().max(1.0) as u32,
+            width,
+            height,
             x: frame.x,
             y: frame.y,
             bytes: Vec::new().into(),
@@ -109,5 +115,10 @@ impl OsrNativeHost {
                 entry.frame = stub;
             }
         }
+    }
+
+    #[cfg(windows)]
+    fn accel_frame_size(&self, frame: &OsrAccelFrame) -> (u32, u32) {
+        self.frame_size_for_view((frame.visible_width, frame.visible_height))
     }
 }

@@ -30,7 +30,8 @@ impl OsrNativeHost {
                         let was_resize_pending = self.pending_resize_paint.is_some();
                         let updated = self.update_frame_texture(frame);
                         needs_redraw |= updated;
-                        resize_frame_ready |= was_resize_pending && updated;
+                        resize_frame_ready |=
+                            was_resize_pending && self.pending_resize_paint.is_none();
                         needs_initial_present |= !was_presented && self.main_frame.is_some();
                     }
                 }
@@ -40,7 +41,8 @@ impl OsrNativeHost {
                         let was_resize_pending = self.pending_resize_paint.is_some();
                         let updated = self.update_paint_batch(batch);
                         needs_redraw |= updated;
-                        resize_frame_ready |= was_resize_pending && updated;
+                        resize_frame_ready |=
+                            was_resize_pending && self.pending_resize_paint.is_none();
                         needs_initial_present |= !was_presented && self.main_frame.is_some();
                     }
                 }
@@ -50,7 +52,8 @@ impl OsrNativeHost {
                         let was_resize_pending = self.pending_resize_paint.is_some();
                         let updated = self.update_accel_frame(frame);
                         needs_redraw |= updated;
-                        resize_frame_ready |= was_resize_pending && updated;
+                        resize_frame_ready |=
+                            was_resize_pending && self.pending_resize_paint.is_none();
                         needs_initial_present |= !was_presented && self.main_frame.is_some();
                     }
                 }

@@ -16,7 +16,13 @@ pub(crate) fn copy_imported_texture(
     completed: impl FnOnce() + Send + 'static,
 ) -> Result<(), String> {
     renderer
-        .copy_external_bgra_texture(texture_id, texture, frame.width, frame.height, completed)
+        .copy_external_bgra_texture(
+            texture_id,
+            texture,
+            (frame.visible_x, frame.visible_y),
+            (frame.visible_width, frame.visible_height),
+            completed,
+        )
         .map_err(|error| error.to_string())
 }
 

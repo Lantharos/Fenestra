@@ -163,10 +163,87 @@ void SabineOsrHandler::StartCommandReader() {
       while ((newline = pending.find('\n')) != std::string::npos) {
         std::string line = pending.substr(0, newline);
         pending.erase(0, newline + 1);
-        CefPostTask(TID_UI, new OsrCommandTask(self, line));
+        if (line.rfind("resize\t", 0) == 0) {
+          self->QueueResizeControlLine(std::move(line));
+        } else {
+          CefPostTask(TID_UI, new OsrCommandTask(self, std::move(line)));
+        }
       }
     }
   }).detach();
+}
+
+void SabineOsrHandler::QueueResizeControlLine(std::string line) {
+  bool schedule = false;
+  {
+    std::lock_guard<std::mutex> lock(resize_mutex_);
+    pending_resize_line_ = std::move(line);
+    if (!resize_task_pending_) {
+      resize_task_pending_ = true;
+      schedule = true;
+    }
+  }
+  if (schedule && !CefPostTask(TID_UI, new OsrResizeTask(this))) {
+    std::lock_guard<std::mutex> lock(resize_mutex_);
+    resize_task_pending_ = false;
+  }
+}
+
+void SabineOsrHandler::HandlePendingResize() {
+  CEF_REQUIRE_UI_THREAD();
+  std::string line;
+  {
+    std::lock_guard<std::mutex> lock(resize_mutex_);
+    line = std::move(pending_resize_line_);
+    pending_resize_line_.clear();
+    resize_task_pending_ = false;
+    resize_in_flight_ = !line.empty();
+  }
+  if (!line.empty()) {
+    HandleControlLine(line);
+  }
+}
+
+bool SabineOsrHandler::QualifyResizeFrame(int pixel_width, int pixel_height) {
+  CEF_REQUIRE_UI_THREAD();
+  const int expected_width =
+      std::max(1, static_cast<int>(std::lround(width_ * scale_)));
+  const int expected_height =
+      std::max(1, static_cast<int>(std::lround(height_ * scale_)));
+  std::lock_guard<std::mutex> lock(resize_mutex_);
+  if (!resize_in_flight_) {
+    return true;
+  }
+  return std::abs(pixel_width - expected_width) <= 1 &&
+         std::abs(pixel_height - expected_height) <= 1;
+}
+
+void SabineOsrHandler::CompleteResizeFrame(int pixel_width, int pixel_height) {
+  CEF_REQUIRE_UI_THREAD();
+  const int expected_width =
+      std::max(1, static_cast<int>(std::lround(width_ * scale_)));
+  const int expected_height =
+      std::max(1, static_cast<int>(std::lround(height_ * scale_)));
+  if (std::abs(pixel_width - expected_width) > 1 ||
+      std::abs(pixel_height - expected_height) > 1) {
+    return;
+  }
+  bool schedule = false;
+  {
+    std::lock_guard<std::mutex> lock(resize_mutex_);
+    if (!resize_in_flight_) {
+      return;
+    }
+    resize_in_flight_ = false;
+    if (!pending_resize_line_.empty() && !resize_task_pending_) {
+      resize_task_pending_ = true;
+      schedule = true;
+    }
+  }
+  if (schedule && !CefPostTask(TID_UI, new OsrResizeTask(this))) {
+    std::lock_guard<std::mutex> lock(resize_mutex_);
+    resize_task_pending_ = false;
+  }
 }
 
 bool SabineOsrHandler::SendMessage(uint32_t kind,

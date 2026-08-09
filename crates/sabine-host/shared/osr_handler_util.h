@@ -107,6 +107,17 @@ class OsrCommandTask : public CefTask {
   IMPLEMENT_REFCOUNTING(OsrCommandTask);
 };
 
+class OsrResizeTask : public CefTask {
+ public:
+  explicit OsrResizeTask(CefRefPtr<SabineOsrHandler> handler);
+  ~OsrResizeTask() override;
+  void Execute() override;
+
+ private:
+  CefRefPtr<SabineOsrHandler> handler_;
+  IMPLEMENT_REFCOUNTING(OsrResizeTask);
+};
+
 class CloseOnDisconnectTask : public CefTask {
  public:
   explicit CloseOnDisconnectTask(CefRefPtr<SabineOsrHandler> handler);

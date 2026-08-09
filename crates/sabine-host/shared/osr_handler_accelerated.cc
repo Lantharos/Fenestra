@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
-#include <vector>
 
 #include "osr_handler.h"
 #include "osr_handler_accel_ipc.h"
@@ -32,47 +30,6 @@ void ApplySharedTexture(CefWindowInfo* window_info, bool enabled) {
     return;
   }
   window_info->shared_texture_enabled = enabled ? 1 : 0;
-}
-
-bool UnpackAcceleratedPlaneToBgra(const void* src,
-                                  size_t src_size,
-                                  uint32_t stride,
-                                  int width,
-                                  int height,
-                                  bool src_is_rgba,
-                                  std::vector<uint8_t>* out_bgra) {
-  if (!src || !out_bgra || width <= 0 || height <= 0 || stride == 0) {
-    return false;
-  }
-  const size_t row_bytes = static_cast<size_t>(width) * 4;
-  if (stride < row_bytes) {
-    return false;
-  }
-  const size_t needed =
-      static_cast<size_t>(stride) * static_cast<size_t>(height);
-  if (src_size < needed) {
-    return false;
-  }
-  out_bgra->assign(static_cast<size_t>(width) * static_cast<size_t>(height) * 4,
-                   0);
-  const auto* rows = static_cast<const uint8_t*>(src);
-  for (int y = 0; y < height; ++y) {
-    const uint8_t* src_row = rows + static_cast<size_t>(y) * stride;
-    uint8_t* dst_row = out_bgra->data() + static_cast<size_t>(y) * row_bytes;
-    if (!src_is_rgba) {
-      std::memcpy(dst_row, src_row, row_bytes);
-      continue;
-    }
-    for (int x = 0; x < width; ++x) {
-      const uint8_t* px = src_row + static_cast<size_t>(x) * 4;
-      uint8_t* out = dst_row + static_cast<size_t>(x) * 4;
-      out[0] = px[2];
-      out[1] = px[1];
-      out[2] = px[0];
-      out[3] = px[3];
-    }
-  }
-  return true;
 }
 
 #if defined(OS_WIN)
@@ -147,9 +104,12 @@ void SabineOsrHandler::OnAcceleratedPaint(
   if (!traced_first_callback && std::getenv("SABINE_TRACE")) {
     traced_first_callback = true;
     std::fprintf(stderr,
-                 "Sabine CEF: first accelerated paint format=%d coded=%dx%d\n",
+                 "Sabine CEF: first accelerated paint format=%d coded=%dx%d "
+                 "visible=%d,%d %dx%d\n",
                  static_cast<int>(info.format), info.extra.coded_size.width,
-                 info.extra.coded_size.height);
+                 info.extra.coded_size.height, info.extra.visible_rect.x,
+                 info.extra.visible_rect.y, info.extra.visible_rect.width,
+                 info.extra.visible_rect.height);
     std::fflush(stderr);
   }
 
@@ -169,7 +129,32 @@ void SabineOsrHandler::OnAcceleratedPaint(
   if (frame_w <= 0 || frame_h <= 0) {
     return;
   }
-
+  const bool full_content =
+      info.extra.content_rect.x == 0 && info.extra.content_rect.y == 0 &&
+      info.extra.content_rect.width == frame_w &&
+      info.extra.content_rect.height == frame_h;
+  const bool source_matches =
+      !info.extra.has_source_size ||
+      (info.extra.source_size.width == frame_w &&
+       info.extra.source_size.height == frame_h);
+  if (!full_content || !source_matches) {
+    return;
+  }
+  CefRect reported_visible = info.extra.visible_rect;
+  const int64_t reported_right =
+      static_cast<int64_t>(reported_visible.x) + reported_visible.width;
+  const int64_t reported_bottom =
+      static_cast<int64_t>(reported_visible.y) + reported_visible.height;
+  if (reported_visible.x < 0 || reported_visible.y < 0 ||
+      reported_visible.width <= 0 || reported_visible.height <= 0 ||
+      reported_right > frame_w || reported_bottom > frame_h) {
+    reported_visible = CefRect(0, 0, frame_w, frame_h);
+  }
+  if (type == PET_VIEW &&
+      !QualifyResizeFrame(reported_visible.width, reported_visible.height)) {
+    browser->GetHost()->Invalidate(PET_VIEW);
+    return;
+  }
   auto send_copied_accel = [&](const std::string& slot_key,
                                uint32_t accel_kind,
                                const std::string& guest_id,
@@ -178,20 +163,28 @@ void SabineOsrHandler::OnAcceleratedPaint(
     if (!CopyAcceleratedD3d11Frame(
             slot_key, info.shared_texture_handle, frame_w, frame_h,
             static_cast<uint32_t>(info.format), &copied)) {
-      std::vector<uint8_t> bgra;
-      if (!ReadAcceleratedD3d11FrameToBgra(
-              info.shared_texture_handle, frame_w, frame_h,
-              static_cast<uint32_t>(info.format), &bgra)) {
-        EmitBridgeEvent("\"osr.accel_copy_failed\"", "{}");
-        return false;
-      }
-      const uint32_t frame_kind = guest_id.empty()
-                                      ? (type == PET_POPUP ? kPopupFrame
-                                                           : kMainFrame)
-                                      : kGuestFrame;
-      SendPaintBatch(frame_kind, guest_id, x, y, bgra.data(), frame_w, frame_h,
-                     dirtyRects);
-      return true;
+      EmitBridgeEvent("\"osr.accel_copy_dropped\"", "{}");
+      return false;
+    }
+    const int coded_width = static_cast<int>(copied.width);
+    const int coded_height = static_cast<int>(copied.height);
+    CefRect visible = info.extra.visible_rect;
+    const int64_t visible_right =
+        static_cast<int64_t>(visible.x) + visible.width;
+    const int64_t visible_bottom =
+        static_cast<int64_t>(visible.y) + visible.height;
+    if (visible.x < 0 || visible.y < 0 || visible.width <= 0 ||
+        visible.height <= 0 || visible_right > coded_width ||
+        visible_bottom > coded_height) {
+      visible = CefRect(0, 0, coded_width, coded_height);
+    }
+    if (std::getenv("SABINE_TRACE") &&
+        (frame_w != coded_width || frame_h != coded_height)) {
+      std::fprintf(stderr,
+                   "Sabine CEF: accelerated metadata mismatch reported=%dx%d "
+                   "resource=%dx%d\n",
+                   frame_w, frame_h, coded_width, coded_height);
+      std::fflush(stderr);
     }
 
     const uint64_t remote_handle =
@@ -204,14 +197,17 @@ void SabineOsrHandler::OnAcceleratedPaint(
 
     AccelPaintMeta meta;
     meta.format = static_cast<uint32_t>(info.format);
+    meta.visible_x = visible.x;
+    meta.visible_y = visible.y;
+    meta.visible_width = static_cast<uint32_t>(visible.width);
+    meta.visible_height = static_cast<uint32_t>(visible.height);
     meta.native_handle = remote_handle;
     meta.slot_token = copied.slot_token;
 
     const std::string payload = BuildAccelPayload(guest_id, meta);
     const bool sent = !payload.empty() &&
-                      SendMessage(accel_kind, static_cast<uint32_t>(frame_w),
-                                  static_cast<uint32_t>(frame_h), x, y,
-                                  payload.data(),
+                      SendMessage(accel_kind, copied.width, copied.height, x,
+                                  y, payload.data(),
                                   static_cast<uint32_t>(payload.size()));
     if (!sent) {
       CloseHandleInParent(remote_handle);
@@ -245,5 +241,8 @@ void SabineOsrHandler::OnAcceleratedPaint(
   const int32_t y = type == PET_POPUP ? popup_rect_.y : 0;
   send_copied_accel(type == PET_POPUP ? "popup" : "main", kind, std::string(),
                     x, y);
+  if (type == PET_VIEW) {
+    CompleteResizeFrame(reported_visible.width, reported_visible.height);
+  }
 #endif
 }

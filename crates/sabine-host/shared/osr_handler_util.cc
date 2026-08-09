@@ -496,6 +496,15 @@ void OsrCommandTask::Execute() {
   handler_->HandleControlLine(line_);
 }
 
+OsrResizeTask::OsrResizeTask(CefRefPtr<SabineOsrHandler> handler)
+    : handler_(std::move(handler)) {}
+
+OsrResizeTask::~OsrResizeTask() = default;
+
+void OsrResizeTask::Execute() {
+  handler_->HandlePendingResize();
+}
+
 CloseOnDisconnectTask::CloseOnDisconnectTask(
     CefRefPtr<SabineOsrHandler> handler)
     : handler_(std::move(handler)) {}

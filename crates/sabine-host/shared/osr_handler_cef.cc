@@ -407,8 +407,22 @@ void SabineOsrHandler::OnPaint(CefRefPtr<CefBrowser> browser,
   const uint32_t kind = type == PET_POPUP ? kPopupFrame : kMainFrame;
   const int32_t x = type == PET_POPUP ? popup_rect_.x : 0;
   const int32_t y = type == PET_POPUP ? popup_rect_.y : 0;
-  const bool sent =
-      SendPaintBatch(kind, std::string(), x, y, buffer, width, height, dirtyRects);
+  if (type == PET_VIEW && !QualifyResizeFrame(width, height)) {
+    browser->GetHost()->Invalidate(PET_VIEW);
+    return;
+  }
+  RectList paint_rects = dirtyRects;
+  if (type == PET_VIEW &&
+      (width != last_main_paint_width_ || height != last_main_paint_height_)) {
+    paint_rects = {CefRect(0, 0, width, height)};
+    last_main_paint_width_ = width;
+    last_main_paint_height_ = height;
+  }
+  const bool sent = SendPaintBatch(kind, std::string(), x, y, buffer, width,
+                                   height, paint_rects);
+  if (type == PET_VIEW) {
+    CompleteResizeFrame(width, height);
+  }
   if (sent && type == PET_VIEW && pending_guest_cover_ && guests_.Covered()) {
     pending_guest_cover_ = false;
     for (GuestView* guest : guests_.InZOrder()) {

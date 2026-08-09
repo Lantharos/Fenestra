@@ -242,11 +242,12 @@ impl GpuRenderer {
         &mut self,
         id: impl Into<String>,
         source: wgpu::Texture,
-        width: u32,
-        height: u32,
+        source_origin: (u32, u32),
+        size: (u32, u32),
         completed: impl FnOnce() + Send + 'static,
     ) -> Result<(), RendererError> {
         let id = id.into();
+        let (width, height) = size;
         if width == 0 || height == 0 {
             return Err(RendererError::Texture(
                 "external image has empty size".to_string(),
@@ -272,7 +273,16 @@ impl GpuRenderer {
                 label: Some("sabine-osr-d3d11-copy"),
             });
         encoder.copy_texture_to_texture(
-            source.as_image_copy(),
+            wgpu::TexelCopyTextureInfo {
+                texture: &source,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: source_origin.0,
+                    y: source_origin.1,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
             texture.as_image_copy(),
             wgpu::Extent3d {
                 width,

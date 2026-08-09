@@ -57,15 +57,8 @@ impl ApplicationHandler for OsrNativeHost {
                 }
                 self.surface_size = size;
                 self.scale_factor = scale;
-                if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.resize(size.width, size.height, scale as f32);
-                }
-                // Defer glass region commit until after a successful present —
-                // committing without a buffer flashes transparent windows.
                 self.effect_regions_dirty = true;
                 self.queue_resize_paint();
-                // Fill the new swapchain immediately — configure leaves empty
-                // buffers until the next redraw, which flashes transparent glass.
                 if self.presented {
                     self.render();
                 } else {
@@ -76,9 +69,6 @@ impl ApplicationHandler for OsrNativeHost {
                 let size = window.surface_size();
                 self.surface_size = size;
                 self.scale_factor = scale_factor;
-                if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.resize(size.width, size.height, scale_factor as f32);
-                }
                 self.effect_regions_dirty = true;
                 self.queue_resize_paint();
                 if self.presented {

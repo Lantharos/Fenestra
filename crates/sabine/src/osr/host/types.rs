@@ -12,7 +12,7 @@ pub(super) const CONTROL_SIZE: f32 = 24.0;
 pub(super) const CONTROL_GAP: f32 = 8.0;
 pub(super) const RESIZE_EDGE: f32 = 7.0;
 pub(super) const CLOSE_GRACE: Duration = Duration::from_millis(300);
-pub(super) const RESIZE_REPAINT_RETRY: Duration = Duration::from_millis(8);
+pub(super) const RESIZE_REPAINT_RETRY: Duration = Duration::from_millis(100);
 pub(super) const RESIZE_REPAINT_GRACE: Duration = Duration::from_millis(900);
 pub(super) const FALLBACK_ACTIVE_FRAME_RATE: u32 = 60;
 /// Wayland briefly drops focus/occlusion around interactive move. Suspending

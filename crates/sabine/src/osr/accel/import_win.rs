@@ -11,7 +11,7 @@ pub(crate) fn try_import_d3d12(
     renderer: &mut GpuRenderer,
     frame: &OsrAccelFrame,
 ) -> Result<wgpu::Texture, String> {
-    if frame.native_handle == 0 || frame.width == 0 || frame.height == 0 {
+    if frame.native_handle == 0 || frame.coded_width == 0 || frame.coded_height == 0 {
         return Err("invalid d3d11 shared handle frame".into());
     }
     if frame.format != CEF_COLOR_TYPE_BGRA_8888 {
@@ -20,8 +20,8 @@ pub(crate) fn try_import_d3d12(
     let desc = wgpu::TextureDescriptor {
         label: Some("sabine-osr-d3d11"),
         size: wgpu::Extent3d {
-            width: frame.width,
-            height: frame.height,
+            width: frame.coded_width,
+            height: frame.coded_height,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,

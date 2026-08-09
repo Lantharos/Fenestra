@@ -102,8 +102,12 @@ pub(crate) struct OsrPaintBatch {
 #[derive(Debug)]
 pub(crate) struct OsrAccelFrame {
     pub surface: OsrSurface,
-    pub width: u32,
-    pub height: u32,
+    pub coded_width: u32,
+    pub coded_height: u32,
+    pub visible_x: u32,
+    pub visible_y: u32,
+    pub visible_width: u32,
+    pub visible_height: u32,
     pub x: i32,
     pub y: i32,
     pub format: u32,
