@@ -18,6 +18,11 @@ impl OsrNativeHost {
                     self.handoff_deadline = None;
                     self.send_resize();
                     self.send_current_lifecycle();
+                    self.send_control(if self.focused {
+                        "focus\t1\n"
+                    } else {
+                        "focus\t0\n"
+                    });
                 }
                 super::types::OsrHostEvent::Message(OsrMessage::Frame(frame)) => {
                     if self.accepts_paint() {

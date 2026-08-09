@@ -125,13 +125,11 @@ impl GpuRenderer {
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         };
         #[cfg(target_os = "windows")]
-        let instance_descriptor = if transparent {
+        let instance_descriptor = {
             let mut descriptor = instance_descriptor;
             descriptor.backend_options.dx12.presentation_system =
                 wgpu::Dx12SwapchainKind::DxgiFromVisual;
             descriptor
-        } else {
-            instance_descriptor
         };
         let instance = wgpu::Instance::new(instance_descriptor);
         let surface = instance
@@ -172,8 +170,12 @@ impl GpuRenderer {
             wgpu::CompositeAlphaMode::Opaque | wgpu::CompositeAlphaMode::Auto
         );
         if std::env::var_os("SABINE_TRACE").is_some() {
+            #[cfg(target_os = "windows")]
+            let presentation = "DirectComposition";
+            #[cfg(not(target_os = "windows"))]
+            let presentation = "native";
             eprintln!(
-                "Sabine GPU: backend={:?} surface alpha={alpha_mode:?} transparent={transparent}",
+                "Sabine GPU: backend={:?} presentation={presentation} surface alpha={alpha_mode:?} transparent={transparent}",
                 adapter.get_info().backend
             );
         }

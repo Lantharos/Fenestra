@@ -1,6 +1,8 @@
 #include "osr_handler_accelerated.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -139,6 +141,16 @@ void SabineOsrHandler::OnAcceleratedPaint(
 #else
   if (!browser) {
     return;
+  }
+
+  static bool traced_first_callback = false;
+  if (!traced_first_callback && std::getenv("SABINE_TRACE")) {
+    traced_first_callback = true;
+    std::fprintf(stderr,
+                 "Sabine CEF: first accelerated paint format=%d coded=%dx%d\n",
+                 static_cast<int>(info.format), info.extra.coded_size.width,
+                 info.extra.coded_size.height);
+    std::fflush(stderr);
   }
 
   const bool src_is_rgba = info.format == CEF_COLOR_TYPE_RGBA_8888;
