@@ -53,19 +53,22 @@ Sabine uses one paint policy per platform. Apps cannot select a renderer or opt 
 transport branches.
 
 - **Windows** uses accelerated `OnAcceleratedPaint`. CEF owns and pools the callback texture, so the
-  CEF host first opens it on D3D11 and copies it into one of four Sabine-owned NT shared textures
-  before returning. The compositor opens that texture on wgpu's D3D12 device, copies it into its
-  texture cache, and sends a release acknowledgement only after D3D12 reports the copy complete.
-  The producer never reuses a slot before that acknowledgement. A copy/import failure is surfaced
+  CEF host first opens it on D3D11 and copies it into one of four Sabine-owned D3D12 shared textures
+  before returning. Each destination is opened on the producer's D3D11 device for the copy and on
+  wgpu's D3D12 device for composition. The host waits for its GPU copy before publishing the frame;
+  the compositor sends a release acknowledgement only after its own copy completes. The producer
+  never reuses a slot before that acknowledgement. Physical texture dimensions remain separate
+  from logical window dimensions at non-integer display scales. A copy/import failure is surfaced
   and the host can bridge that frame through BGRA without relaunching the browser.
 - **Linux** uses CEF software `OnPaint` on Wayland. The previous DMA-BUF/X11/Vulkan branch was not a
   valid ownership implementation and has been removed.
 - **macOS** currently uses software `OnPaint`. An IOSurface path must copy or retain CEF's pooled
   resource before the callback returns; passing an IOSurface ID asynchronously is not sufficient.
 
-Windows uses wgpu D3D12 rather than forcing Vulkan. Acrylic/Mica is applied once to the final HWND
-through the version-aware DWM composition path, which supports both Windows 10 Acrylic and Windows
-11 system backdrops.
+Windows uses wgpu D3D12 rather than forcing Vulkan. Transparent windows use a DirectComposition
+visual without an HWND redirection bitmap, allowing premultiplied OSR pixels to reveal the native
+backdrop. Sabine applies Acrylic, blur, Mica, and Mica Alt directly through Win32 composition APIs.
+On macOS, Sabine installs its own semantic `NSVisualEffectView` beneath the Metal content view.
 
 CEF still delivers BGRA dirty rectangles on the software path (and as a CPU bridge after GPU
 raster). Inline and shared-memory batches retain one immutable byte backing instead of copying every
@@ -121,7 +124,10 @@ adopted or reused.
 
 `sabine-service` owns the machine/user-level catalog. Its registry writes use a temporary file,
 `sync_all`, and atomic rename. Re-registering an app preserves its original registration timestamp.
-The maintenance loop updates CEF to the newest compatible archive and keeps two runtime versions.
+The dedicated `sabine-service-daemon` owns its PID file and maintenance loop. Linux starts it with a
+user systemd unit, macOS with a LaunchAgent, and Windows with a hidden per-user scheduled task; the
+Windows binary uses the GUI subsystem and never creates a console host. The maintenance loop updates
+CEF to the newest compatible archive and keeps two runtime versions.
 
 ## Public API
 

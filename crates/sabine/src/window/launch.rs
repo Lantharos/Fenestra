@@ -150,7 +150,7 @@ impl SabineWindow {
         };
         let (entry_path, suffix) = split_entry_suffix(entry);
         let path = canonical_entry(entry_path)?;
-        Ok(format!("file://{}{}", path.display(), suffix))
+        Ok(format!("{}{}", crate::launch::file_url(&path)?, suffix))
     }
 
     fn ensure_default_bridge_handlers(&mut self) {

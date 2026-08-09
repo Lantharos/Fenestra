@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
 use winit::platform::wayland::WindowAttributesWayland;
+#[cfg(target_os = "windows")]
+use winit::platform::windows::WindowAttributesWindows;
 use winit::{
     cursor::CursorIcon,
     dpi::LogicalSize,
@@ -69,6 +71,12 @@ impl OsrNativeHost {
             if has_wayland_attributes {
                 attributes = attributes.with_platform_attributes(Box::new(wayland_attributes));
             }
+        }
+        #[cfg(target_os = "windows")]
+        if self.config.transparent {
+            attributes = attributes.with_platform_attributes(Box::new(
+                WindowAttributesWindows::default().with_no_redirection_bitmap(true),
+            ));
         }
         if let Some(position) =
             crate::centered_window_position(event_loop, self.config.width, self.config.height)

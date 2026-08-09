@@ -2,11 +2,12 @@ use sabine_runtime::RuntimeConfig;
 
 use crate::{
     AppManifest, SabineService, ServiceError, ServiceResult, ensure_service_executable,
-    service_data_dir,
+    service_daemon_path, service_data_dir,
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -157,10 +158,6 @@ pub fn prepare_machine_with_progress(
     let policy = load_policy();
     let _ = save_policy(&policy);
 
-    // Install the runtime in this process first. Starting the daemon beforehand
-    // races: `sabine-service run` immediately calls maintain(), which takes the
-    // same install lock and makes the setup UI report "Waiting for another
-    // Sabine runtime install" for the install it just kicked off.
     on_progress(PrepareProgress {
         stage: PrepareStage::Runtime,
         message: "Preparing runtime".to_string(),
@@ -247,22 +244,92 @@ pub fn is_daemon_running() -> bool {
 }
 
 pub fn start_daemon() -> ServiceResult<()> {
-    let executable = ensure_service_executable(|_| {})?;
+    let service = ensure_service_executable(|_| {})?;
+    let executable = service_daemon_path(&service);
     let _ = fs::create_dir_all(service_data_dir());
-    let child = Command::new(&executable)
-        .arg("run")
+    let mut command = Command::new(&executable);
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| {
-            ServiceError::Update(format!(
-                "failed to start Sabine service ({}): {error}",
-                executable.display()
-            ))
-        })?;
-    fs::write(service_data_dir().join(PID_FILE), child.id().to_string())?;
-    Ok(())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    command.spawn().map_err(|error| {
+        ServiceError::Update(format!(
+            "failed to start Sabine service ({}): {error}",
+            executable.display()
+        ))
+    })?;
+    for _ in 0..40 {
+        if is_daemon_running() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Err(ServiceError::Update(
+        "Sabine service did not become ready".to_string(),
+    ))
+}
+
+pub fn run_daemon() -> ServiceResult<()> {
+    let Some(_pid) = claim_daemon_pid()? else {
+        return Ok(());
+    };
+    let service = SabineService::default();
+    loop {
+        if let Err(error) = service.maintain() {
+            eprintln!("Sabine maintenance failed: {error}");
+        }
+        std::thread::sleep(crate::default_maintenance_interval());
+    }
+}
+
+struct DaemonPid {
+    path: PathBuf,
+    pid: u32,
+}
+
+impl Drop for DaemonPid {
+    fn drop(&mut self) {
+        let owns_file = fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            == Some(self.pid);
+        if owns_file {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn claim_daemon_pid() -> ServiceResult<Option<DaemonPid>> {
+    fs::create_dir_all(service_data_dir())?;
+    let path = service_data_dir().join(PID_FILE);
+    let pid = std::process::id();
+    loop {
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                write!(file, "{pid}")?;
+                return Ok(Some(DaemonPid { path, pid }));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let existing = fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|value| value.trim().parse::<i32>().ok());
+                if existing.is_some_and(process_alive) {
+                    return Ok(None);
+                }
+                match fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
 }
 
 pub fn resolve_service_executable() -> ServiceResult<PathBuf> {
@@ -285,14 +352,22 @@ fn process_alive(pid: i32) -> bool {
     }
     #[cfg(windows)]
     {
-        Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .output()
-            .ok()
-            .is_some_and(|output| {
-                let text = String::from_utf8_lossy(&output.stdout);
-                text.contains(&pid.to_string())
-            })
+        use windows::Win32::{
+            Foundation::{CloseHandle, STILL_ACTIVE},
+            System::Threading::{
+                GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            },
+        };
+        let Ok(process) =
+            (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid as u32) })
+        else {
+            return false;
+        };
+        let mut exit_code = 0;
+        let active = unsafe { GetExitCodeProcess(process, &mut exit_code) }.is_ok()
+            && exit_code == STILL_ACTIVE.0 as u32;
+        let _ = unsafe { CloseHandle(process) };
+        active
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -307,20 +382,41 @@ pub fn install_login_autostart() -> ServiceResult<()> {
 }
 
 pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
+    let daemon = service_daemon_path(executable);
+    if !daemon.is_file() {
+        return Err(ServiceError::Update(format!(
+            "Sabine service daemon not found at {}",
+            daemon.display()
+        )));
+    }
     #[cfg(target_os = "windows")]
     {
-        let command = format!("\"{}\" run", executable.display());
-        run_checked(Command::new("reg").args([
-            "add",
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-            "/v",
-            "Sabine Service",
-            "/t",
-            "REG_SZ",
-            "/d",
-            &command,
-            "/f",
+        let daemon_literal = daemon.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "$identity=[Security.Principal.WindowsIdentity]::GetCurrent();\
+             $action=New-ScheduledTaskAction -Execute '{daemon_literal}';\
+             $trigger=New-ScheduledTaskTrigger -AtLogOn -User $identity.Name;\
+             $principal=New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited;\
+             $settings=New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew;\
+             Register-ScheduledTask -TaskName 'Sabine Service' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null"
+        );
+        run_checked(Command::new("powershell.exe").args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &script,
         ]))?;
+        let _ = Command::new("reg")
+            .args([
+                "delete",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v",
+                "Sabine Service",
+                "/f",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
         let uninstall = format!("\"{}\" uninstall", executable.display());
         let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Sabine";
         for (name, value) in [
@@ -344,8 +440,8 @@ pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
         fs::write(
             directory.join("sabine.service"),
             format!(
-                "[Unit]\nDescription=Sabine runtime and app service\n\n[Service]\nExecStart={} run\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n",
-                executable.display()
+                "[Unit]\nDescription=Sabine runtime and app service\n\n[Service]\nExecStart={}\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n",
+                daemon.display()
             ),
         )?;
         run_checked(Command::new("systemctl").args([
@@ -365,15 +461,15 @@ pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
         fs::write(
             &path,
             format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>Label</key><string>net.lantharos.sabine</string><key>ProgramArguments</key><array><string>{}</string><string>run</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>\n",
-                executable.display()
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist version=\"1.0\"><dict><key>Label</key><string>net.lantharos.sabine</string><key>ProgramArguments</key><array><string>{}</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>\n",
+                daemon.display()
             ),
         )?;
         run_checked(Command::new("launchctl").args(["load", "-w", &path.display().to_string()]))?;
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
-        let _ = executable;
+        let _ = daemon;
         return Err(ServiceError::Update(
             "login autostart is unsupported on this platform".to_string(),
         ));
@@ -384,6 +480,11 @@ pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
 pub fn uninstall_login_autostart() -> ServiceResult<()> {
     #[cfg(target_os = "windows")]
     {
+        let _ = Command::new("schtasks")
+            .args(["/Delete", "/TN", "Sabine Service", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
         let _ = Command::new("reg")
             .args([
                 "delete",

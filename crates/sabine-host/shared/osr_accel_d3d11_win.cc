@@ -2,6 +2,7 @@
 
 #include <d3d11.h>
 #include <d3d11_1.h>
+#include <d3d12.h>
 #include <dxgi.h>
 #include <dxgi1_2.h>
 
@@ -24,10 +25,12 @@ struct D3d11Context {
   ID3D11Device1* device1 = nullptr;
   ID3D11DeviceContext* context = nullptr;
   ID3D11Query* sync_query = nullptr;
+  ID3D12Device* device12 = nullptr;
 };
 
 struct OwnedSharedSlot {
   ID3D11Texture2D* texture = nullptr;
+  ID3D12Resource* resource12 = nullptr;
   HANDLE shared_handle = nullptr;
   int width = 0;
   int height = 0;
@@ -39,6 +42,10 @@ struct OwnedSharedSlot {
     if (texture) {
       texture->Release();
       texture = nullptr;
+    }
+    if (resource12) {
+      resource12->Release();
+      resource12 = nullptr;
     }
     if (shared_handle) {
       CloseHandle(shared_handle);
@@ -59,7 +66,8 @@ uint64_t g_next_token = 1;
 constexpr uint32_t kSlotsPerSurface = 4;
 
 bool EnsureDevice() {
-  if (g_d3d11.device && g_d3d11.device1 && g_d3d11.context) {
+  if (g_d3d11.device && g_d3d11.device1 && g_d3d11.context &&
+      g_d3d11.device12) {
     return true;
   }
   D3D_FEATURE_LEVEL feature_levels[] = {
@@ -91,12 +99,35 @@ bool EnsureDevice() {
     return false;
   }
 
+  IDXGIDevice* dxgi_device = nullptr;
+  IDXGIAdapter* adapter = nullptr;
+  ID3D12Device* device12 = nullptr;
+  hr = device->QueryInterface(__uuidof(IDXGIDevice),
+                              reinterpret_cast<void**>(&dxgi_device));
+  if (SUCCEEDED(hr) && dxgi_device) {
+    hr = dxgi_device->GetAdapter(&adapter);
+    dxgi_device->Release();
+  }
+  if (SUCCEEDED(hr) && adapter) {
+    hr = D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0,
+                           __uuidof(ID3D12Device),
+                           reinterpret_cast<void**>(&device12));
+    adapter->Release();
+  }
+  if (FAILED(hr) || !device12) {
+    device1->Release();
+    device->Release();
+    context->Release();
+    return false;
+  }
+
   ID3D11Query* sync_query = nullptr;
   D3D11_QUERY_DESC query_desc{};
   query_desc.Query = D3D11_QUERY_EVENT;
   query_desc.MiscFlags = 0;
   hr = device->CreateQuery(&query_desc, &sync_query);
   if (FAILED(hr) || !sync_query) {
+    device12->Release();
     device1->Release();
     device->Release();
     context->Release();
@@ -107,6 +138,7 @@ bool EnsureDevice() {
   g_d3d11.device1 = device1;
   g_d3d11.context = context;
   g_d3d11.sync_query = sync_query;
+  g_d3d11.device12 = device12;
   return true;
 }
 
@@ -143,47 +175,62 @@ bool EnsureOwnedSharedSlot(OwnedSharedSlot* slot,
   }
   slot->Reset();
 
-  D3D11_TEXTURE2D_DESC desc{};
-  desc.Width = static_cast<UINT>(width);
+  D3D12_HEAP_PROPERTIES heap{};
+  heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+  heap.CreationNodeMask = 1;
+  heap.VisibleNodeMask = 1;
+  D3D12_RESOURCE_DESC desc{};
+  desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+  desc.Width = static_cast<UINT64>(width);
   desc.Height = static_cast<UINT>(height);
+  desc.DepthOrArraySize = 1;
   desc.MipLevels = 1;
-  desc.ArraySize = 1;
-  desc.Format = format;
+  desc.Format = format == DXGI_FORMAT_B8G8R8A8_UNORM
+                    ? DXGI_FORMAT_B8G8R8A8_TYPELESS
+                    : format;
   desc.SampleDesc.Count = 1;
-  desc.SampleDesc.Quality = 0;
-  desc.Usage = D3D11_USAGE_DEFAULT;
-  desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-  desc.CPUAccessFlags = 0;
-  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+  desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+  desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET |
+               D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
 
-  ID3D11Texture2D* texture = nullptr;
-  HRESULT hr = g_d3d11.device1->CreateTexture2D(&desc, nullptr, &texture);
-  if (FAILED(hr) || !texture) {
+  ID3D12Resource* resource12 = nullptr;
+  HRESULT hr = g_d3d11.device12->CreateCommittedResource(
+      &heap, D3D12_HEAP_FLAG_SHARED, &desc, D3D12_RESOURCE_STATE_COMMON,
+      nullptr, __uuidof(ID3D12Resource),
+      reinterpret_cast<void**>(&resource12));
+  if (FAILED(hr) || !resource12) {
     std::fprintf(stderr,
-                 "Sabine CEF: failed to create owned D3D11 shared texture (hr=0x%08lx)\n",
+                 "Sabine CEF: failed to create owned D3D12 shared texture (hr=0x%08lx)\n",
                  static_cast<unsigned long>(hr));
     return false;
   }
 
   HANDLE shared_handle = nullptr;
-  IDXGIResource1* dxgi_resource1 = nullptr;
-  hr = texture->QueryInterface(__uuidof(IDXGIResource1),
-                               reinterpret_cast<void**>(&dxgi_resource1));
-  if (SUCCEEDED(hr) && dxgi_resource1) {
-    hr = dxgi_resource1->CreateSharedHandle(
-        nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
-        &shared_handle);
-    dxgi_resource1->Release();
-  }
+  hr = g_d3d11.device12->CreateSharedHandle(
+      resource12, nullptr, GENERIC_ALL, nullptr, &shared_handle);
   if (FAILED(hr) || !shared_handle) {
     std::fprintf(stderr,
                  "Sabine CEF: failed to export owned D3D11 shared handle (hr=0x%08lx)\n",
                  static_cast<unsigned long>(hr));
-    texture->Release();
+    resource12->Release();
+    return false;
+  }
+
+  ID3D11Texture2D* texture = nullptr;
+  hr = g_d3d11.device1->OpenSharedResource1(
+      shared_handle, __uuidof(ID3D11Texture2D),
+      reinterpret_cast<void**>(&texture));
+  if (FAILED(hr) || !texture) {
+    std::fprintf(stderr,
+                 "Sabine CEF: failed to open owned D3D12 texture in D3D11 (hr=0x%08lx)\n",
+                 static_cast<unsigned long>(hr));
+    CloseHandle(shared_handle);
+    resource12->Release();
     return false;
   }
 
   slot->texture = texture;
+  slot->resource12 = resource12;
   slot->shared_handle = shared_handle;
   slot->width = width;
   slot->height = height;

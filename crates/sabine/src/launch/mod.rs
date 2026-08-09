@@ -7,7 +7,7 @@ use crate::error::{SabineError, SabineResult};
 use crate::osr;
 use crate::window::config::SabineWindowConfig;
 use sabine_bridge::ContentSecurity;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use winit::{dpi::PhysicalPosition, event_loop::ActiveEventLoop};
 
 pub(crate) fn run_sabine_host_from_args(args: &[String]) -> bool {
@@ -61,6 +61,17 @@ pub(crate) fn canonical_entry(entry: &str) -> SabineResult<PathBuf> {
     path.canonicalize()
         .map_err(|error| SabineError::CreationFailed {
             message: format!("failed to resolve CEF entry: {error}"),
+        })
+}
+
+pub(crate) fn file_url(path: &Path) -> SabineResult<String> {
+    url::Url::from_file_path(path)
+        .map(String::from)
+        .map_err(|()| SabineError::CreationFailed {
+            message: format!(
+                "failed to convert CEF entry to a file URL: {}",
+                path.display()
+            ),
         })
 }
 

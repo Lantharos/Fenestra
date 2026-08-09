@@ -13,10 +13,18 @@ pub fn cached_service_path() -> PathBuf {
     service_data_dir().join("bin").join(service_binary_name())
 }
 
+pub fn service_daemon_path(service: &Path) -> PathBuf {
+    service.with_file_name(service_daemon_binary_name())
+}
+
+fn complete_service_at(path: PathBuf) -> Option<PathBuf> {
+    (path.is_file() && service_daemon_path(&path).is_file()).then_some(path)
+}
+
 pub fn find_service_executable() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("SABINE_SERVICE_PATH") {
         let path = PathBuf::from(path);
-        if path.is_file() {
+        if let Some(path) = complete_service_at(path) {
             return Some(path);
         }
     }
@@ -25,17 +33,18 @@ pub fn find_service_executable() -> Option<PathBuf> {
         && let Some(directory) = current.parent()
     {
         let candidate = directory.join(service_binary_name());
-        if candidate.is_file() {
+        if let Some(candidate) = complete_service_at(candidate) {
             return Some(candidate);
         }
     }
 
-    if let Ok(path) = which(service_binary_name()) {
+    if let Ok(path) = which(service_binary_name())
+        && let Some(path) = complete_service_at(path)
+    {
         return Some(path);
     }
 
-    let cached = cached_service_path();
-    cached.is_file().then_some(cached)
+    complete_service_at(cached_service_path())
 }
 
 pub fn ensure_service_executable(
@@ -91,9 +100,17 @@ fn try_download_release_service(
     on_progress: &mut impl FnMut(PrepareProgress),
 ) -> ServiceResult<()> {
     let temporary = destination.with_extension("download");
-    let url = service_download_url();
+    let daemon_destination = service_daemon_path(destination);
+    let daemon_temporary = daemon_destination.with_extension("download");
+    let url = service_download_url(false);
     download_file(&url, &temporary, on_progress)?;
+    let daemon_url = service_download_url(true);
+    if let Err(error) = download_file(&daemon_url, &daemon_temporary, on_progress) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
     finalize_service_binary(&temporary, destination)?;
+    finalize_service_binary(&daemon_temporary, &daemon_destination)?;
     Ok(())
 }
 
@@ -139,11 +156,13 @@ Install Rust from https://rustup.rs, or set SABINE_SERVICE_PATH / SABINE_SERVICE
     }
 
     let installed = cargo_root.join("bin").join(service_binary_name());
-    if !installed.is_file() {
+    let installed_daemon = cargo_root.join("bin").join(service_daemon_binary_name());
+    if !installed.is_file() || !installed_daemon.is_file() {
         let _ = fs::remove_dir_all(&cargo_root);
         return Err(ServiceError::Update(format!(
-            "cargo install succeeded but {} was not created",
-            installed.display()
+            "cargo install succeeded but {} and {} were not both created",
+            installed.display(),
+            installed_daemon.display()
         )));
     }
     fs::copy(&installed, destination).map_err(|error| {
@@ -152,12 +171,21 @@ Install Rust from https://rustup.rs, or set SABINE_SERVICE_PATH / SABINE_SERVICE
             destination.display()
         ))
     })?;
+    let daemon_destination = service_daemon_path(destination);
+    fs::copy(&installed_daemon, &daemon_destination).map_err(|error| {
+        ServiceError::Update(format!(
+            "failed to copy service daemon to {}: {error}",
+            daemon_destination.display()
+        ))
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(destination)?.permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(destination, permissions)?;
+        for path in [destination, daemon_destination.as_path()] {
+            let mut permissions = fs::metadata(path)?.permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions)?;
+        }
     }
     let _ = fs::remove_dir_all(&cargo_root);
     Ok(())
@@ -175,19 +203,24 @@ fn finalize_service_binary(temporary: &Path, destination: &Path) -> ServiceResul
     Ok(())
 }
 
-fn service_download_url() -> String {
-    if let Ok(url) = std::env::var("SABINE_SERVICE_URL")
+fn service_download_url(daemon: bool) -> String {
+    let override_name = if daemon {
+        "SABINE_SERVICE_DAEMON_URL"
+    } else {
+        "SABINE_SERVICE_URL"
+    };
+    if let Ok(url) = std::env::var(override_name)
         && !url.trim().is_empty()
     {
         return url;
     }
     format!(
         "https://github.com/{SERVICE_REPO}/releases/latest/download/{}",
-        service_asset_name()
+        service_asset_name(daemon)
     )
 }
 
-fn service_asset_name() -> String {
+fn service_asset_name(daemon: bool) -> String {
     let os = if cfg!(target_os = "windows") {
         "windows"
     } else if cfg!(target_os = "macos") {
@@ -202,10 +235,15 @@ fn service_asset_name() -> String {
     } else {
         "unknown"
     };
-    if cfg!(target_os = "windows") {
-        format!("sabine-service-{os}-{arch}.exe")
+    let executable = if daemon {
+        "sabine-service-daemon"
     } else {
-        format!("sabine-service-{os}-{arch}")
+        "sabine-service"
+    };
+    if cfg!(target_os = "windows") {
+        format!("{executable}-{os}-{arch}.exe")
+    } else {
+        format!("{executable}-{os}-{arch}")
     }
 }
 
@@ -214,6 +252,14 @@ fn service_binary_name() -> &'static str {
         "sabine-service.exe"
     } else {
         "sabine-service"
+    }
+}
+
+fn service_daemon_binary_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "sabine-service-daemon.exe"
+    } else {
+        "sabine-service-daemon"
     }
 }
 
@@ -286,8 +332,17 @@ mod tests {
 
     #[test]
     fn asset_names_are_platform_shaped() {
-        let name = service_asset_name();
+        let name = service_asset_name(false);
         assert!(name.starts_with("sabine-service-"));
         assert!(name.contains("linux") || name.contains("macos") || name.contains("windows"));
+    }
+
+    #[test]
+    fn daemon_lives_beside_the_service_cli() {
+        let path = service_daemon_path(Path::new("/tmp/sabine-service"));
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some(service_daemon_binary_name())
+        );
     }
 }

@@ -14,8 +14,8 @@ sabine = { git = "https://github.com/Lantharos/Sabine" }
 ```
 
 ```sh
-cargo install --git https://github.com/Lantharos/Sabine sabine-cli
-cargo install --git https://github.com/Lantharos/Sabine sabine-service
+cargo install --git https://github.com/Lantharos/Sabine --package sabine-cli
+cargo install --git https://github.com/Lantharos/Sabine --package sabine-service
 ```
 
 For the TypeScript helpers used by the web UI:
@@ -166,10 +166,12 @@ Sabine keeps the Chromium runtime under the platform application-data directory.
 ~/.local/share/sabine/runtimes/cef/
 ```
 
-`sabine-service` owns machine setup for every Sabine app:
+`sabine-service` owns machine setup for every Sabine app. A separate
+`sabine-service-daemon` executable performs background maintenance so Windows never attaches a
+console window to the login process.
 
 1. The first app launches with Sabine bootstrap code and a native progress window.
-2. Bootstrap obtains the service binary (GitHub Releases if available, otherwise
+2. Bootstrap obtains the service CLI and daemon (GitHub Releases if available, otherwise
    `cargo install --git https://github.com/Lantharos/Sabine`), then starts it.
 3. The service installs the latest compatible Chromium runtime.
 4. The app registers with the service and starts.
@@ -185,7 +187,8 @@ Service acquisition order:
    `https://github.com/Lantharos/Sabine/releases/latest/download/sabine-service-{os}-{arch}`
 4. Fallback: build from git with cargo (requires a Rust toolchain)
 
-Override the release URL with `SABINE_SERVICE_URL`.
+The daemon asset follows the same naming scheme with a `sabine-service-daemon` prefix. Override
+release URLs with `SABINE_SERVICE_URL` and `SABINE_SERVICE_DAEMON_URL`.
 
 ```sh
 sabine runtime doctor

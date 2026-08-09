@@ -18,5 +18,13 @@ winit.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
 
-[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
-window-vibrancy.workspace = true
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_System_LibraryLoader",
+] }

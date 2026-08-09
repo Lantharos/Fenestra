@@ -51,6 +51,8 @@ ksni = { version = "0.3.6", features = ["blocking"] }
 libc = "0.2.189"
 pollster = "1.0.1"
 clap = { version = "4.6.6", features = ["derive"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSGraphics", "NSResponder", "NSView", "NSVisualEffectView"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSObject"] }
 raw-window-handle = "0.6.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -59,10 +61,11 @@ sha2 = "0.11.0"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt", "sync", "time", "macros"] }
 toml = "1.1.4"
+url = "2.5.8"
 wayland-client = "0.31.15"
 wgpu = "30.0.0"
 winit = { git = "https://github.com/rust-windowing/winit", rev = "42366231b0d92480a933339bd5eaa7fba8106f42" }
-window-vibrancy = "0.8.0"
+windows = "0.62.2"
 x11rb = "0.14.0"
 
 [patch.crates-io]

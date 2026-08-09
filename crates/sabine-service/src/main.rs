@@ -26,10 +26,6 @@ enum Command {
     PreferOnDemand,
     /// Enable login autostart again.
     PreferLogin,
-    Run {
-        #[arg(long, default_value_t = 21_600)]
-        interval_seconds: u64,
-    },
     EnsureRuntime,
     /// Ensure the daemon is running, refresh the runtime, and report status.
     Ensure,
@@ -84,16 +80,6 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             install_login_autostart_with(&std::env::current_exe()?)?;
             println!("Sabine will start at login");
         }
-        Command::Run { interval_seconds } => loop {
-            match service.maintain() {
-                Ok(report) => eprintln!(
-                    "Sabine {} ready; {} app(s) registered",
-                    report.runtime.version, report.registered_apps
-                ),
-                Err(error) => eprintln!("Sabine maintenance failed: {error}"),
-            }
-            std::thread::sleep(std::time::Duration::from_secs(interval_seconds.max(60)));
-        },
         Command::EnsureRuntime => {
             let runtime = service.ensure_runtime_with_progress(|progress| {
                 let percent = progress

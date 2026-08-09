@@ -77,10 +77,15 @@ impl OsrNativeHost {
 
     #[cfg(windows)]
     fn note_accel_surface(&mut self, frame: &OsrAccelFrame) {
+        let scale = self
+            .window
+            .as_ref()
+            .map_or(1.0, |window| window.scale_factor())
+            .max(1.0);
         let stub = OsrFrame {
             surface: frame.surface.clone(),
-            width: frame.width,
-            height: frame.height,
+            width: (f64::from(frame.width) / scale).round().max(1.0) as u32,
+            height: (f64::from(frame.height) / scale).round().max(1.0) as u32,
             x: frame.x,
             y: frame.y,
             bytes: Vec::new().into(),
