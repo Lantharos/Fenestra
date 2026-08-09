@@ -26,7 +26,6 @@ pub(super) struct WebBundle {
     pub build_command: Option<String>,
     pub has_local_assets: bool,
     pub url: Option<String>,
-    pub dev_url: Option<String>,
     pub allowed_origins: Vec<String>,
 }
 
@@ -193,7 +192,6 @@ fn resolve_web(
         build_command,
         has_local_assets,
         url,
-        dev_url,
         allowed_origins,
     }))
 }

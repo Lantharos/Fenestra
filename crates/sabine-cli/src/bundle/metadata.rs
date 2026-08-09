@@ -1,42 +1,4 @@
-use super::{BundleFormat, config::BundleApp};
-
-pub(super) fn bundle_toml(app: &BundleApp, format: BundleFormat, executable: &str) -> String {
-    let web_dist = app
-        .web
-        .as_ref()
-        .filter(|web| web.has_local_assets)
-        .map(|web| web.dist.display().to_string())
-        .unwrap_or_default();
-    format!(
-        "format = \"{}\"\napp_id = \"{}\"\nname = \"{}\"\nversion = \"{}\"\nbinary = \"{}\"\nweb_dist = \"{}\"\n",
-        format.as_str(),
-        quote(&app.id),
-        quote(&app.name),
-        quote(&app.version),
-        quote(executable),
-        quote(&web_dist)
-    )
-}
-
-pub(super) fn web_toml(app: &BundleApp) -> Option<String> {
-    let web = app.web.as_ref()?;
-    let allowed_origins = web
-        .allowed_origins
-        .iter()
-        .map(|origin| format!("\"{}\"", quote(origin)))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Some(format!(
-        "root = \"{}\"\ndist = \"{}\"\nentry = \"{}\"\nbuild = \"{}\"\nurl = \"{}\"\ndev_url = \"{}\"\nallowed_origins = [{}]\n",
-        quote(&web.root.display().to_string()),
-        quote(&web.dist.display().to_string()),
-        quote(&web.entry.display().to_string()),
-        quote(web.build_command.as_deref().unwrap_or_default()),
-        quote(web.url.as_deref().unwrap_or_default()),
-        quote(web.dev_url.as_deref().unwrap_or_default()),
-        allowed_origins
-    ))
-}
+use super::config::BundleApp;
 
 pub(super) fn runtime_manifest(app: &BundleApp, web_directory: &str) -> String {
     let mut manifest = format!(

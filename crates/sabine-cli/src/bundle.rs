@@ -139,7 +139,7 @@ pub fn bundle(options: BundleOptions) -> Result<ExitCode, String> {
         ));
     }
 
-    let staged = stage_bundle(&app, format, &binary, &options.out, options.release)?;
+    let staged = stage_bundle(&app, format, &binary, &options.out)?;
     let packaged = package_bundle(&app, format, &staged)?;
     if options.json {
         println!("{}", bundle_json(&app, format, &staged, &packaged));

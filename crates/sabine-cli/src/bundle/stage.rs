@@ -7,8 +7,8 @@ use super::{
     BundleFormat,
     config::BundleApp,
     metadata::{
-        app_run, bundle_toml, desktop_entry, flatpak_manifest, info_plist, runtime_manifest,
-        sanitize_path, web_toml, windows_manifest,
+        app_run, desktop_entry, flatpak_manifest, info_plist, runtime_manifest, sanitize_path,
+        windows_manifest,
     },
 };
 use crate::{bundle::build_target_for_format, icon_assets};
@@ -25,7 +25,6 @@ pub(super) fn stage_bundle(
     format: BundleFormat,
     binary: &Path,
     out: &Path,
-    release: bool,
 ) -> Result<StagedBundle, String> {
     let executable = executable_name(app, format);
     let root = out.join(format.as_str()).join(sanitize_path(&app.id));
@@ -34,27 +33,15 @@ pub(super) fn stage_bundle(
     }
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let app_dir = match format {
-        BundleFormat::Macos | BundleFormat::Dmg => {
-            stage_macos(app, format, binary, &root, &executable)?
-        }
+        BundleFormat::Macos | BundleFormat::Dmg => stage_macos(app, binary, &root, &executable)?,
         BundleFormat::Windows | BundleFormat::Msi | BundleFormat::Exe => {
-            stage_windows(app, format, binary, &root, &executable)?
+            stage_windows(app, binary, &root, &executable)?
         }
-        BundleFormat::AppImage => stage_appimage(app, format, binary, &root, &executable)?,
+        BundleFormat::AppImage => stage_appimage(app, binary, &root, &executable)?,
         BundleFormat::Linux | BundleFormat::Deb | BundleFormat::Rpm | BundleFormat::Portable => {
             stage_unix_root(app, format, binary, &root, &executable)?
         }
     };
-    fs::write(
-        root.join("sabine-bundle.toml"),
-        bundle_toml(app, format, &executable),
-    )
-    .map_err(|error| error.to_string())?;
-    fs::write(
-        root.join("build-info.toml"),
-        build_info(app, format, release),
-    )
-    .map_err(|error| error.to_string())?;
     Ok(StagedBundle {
         root,
         app_dir,
@@ -98,7 +85,6 @@ pub(super) fn binary_path(app: &BundleApp, format: BundleFormat, release: bool) 
 
 fn stage_macos(
     app: &BundleApp,
-    format: BundleFormat,
     binary: &Path,
     root: &Path,
     executable: &str,
@@ -112,13 +98,12 @@ fn stage_macos(
     copy_binary(binary, &macos.join(executable))?;
     fs::write(contents.join("Info.plist"), info_plist(app, executable))
         .map_err(|error| error.to_string())?;
-    stage_resources(app, format, &resources)?;
+    stage_resources(app, &resources)?;
     Ok(app_dir)
 }
 
 fn stage_windows(
     app: &BundleApp,
-    format: BundleFormat,
     binary: &Path,
     root: &Path,
     executable: &str,
@@ -132,13 +117,12 @@ fn stage_windows(
         windows_manifest(app),
     )
     .map_err(|error| error.to_string())?;
-    stage_resources(app, format, &resources)?;
+    stage_resources(app, &resources)?;
     Ok(app_dir)
 }
 
 fn stage_appimage(
     app: &BundleApp,
-    format: BundleFormat,
     binary: &Path,
     root: &Path,
     executable: &str,
@@ -155,7 +139,7 @@ fn stage_appimage(
         desktop_entry(app, executable, icon.as_deref()),
     )
     .map_err(|error| error.to_string())?;
-    stage_resources(app, format, &app_dir.join("usr/share/sabine").join(&app.id))?;
+    stage_resources(app, &app_dir.join("usr/share/sabine").join(&app.id))?;
     stage_unix_manifest(app, &app_dir, executable)?;
     Ok(app_dir)
 }
@@ -186,7 +170,7 @@ fn stage_unix_root(
         )
         .map_err(|error| error.to_string())?;
     }
-    stage_resources(app, format, &resources)?;
+    stage_resources(app, &resources)?;
     stage_unix_manifest(app, &app_dir, executable)?;
     Ok(app_dir)
 }
@@ -239,16 +223,8 @@ fn stage_appimage_icon(app: &BundleApp, app_dir: &Path) -> Result<Option<String>
     Ok(Some(app.id.clone()))
 }
 
-fn stage_resources(app: &BundleApp, format: BundleFormat, resources: &Path) -> Result<(), String> {
+fn stage_resources(app: &BundleApp, resources: &Path) -> Result<(), String> {
     fs::create_dir_all(resources).map_err(|error| error.to_string())?;
-    fs::write(
-        resources.join("bundle.toml"),
-        bundle_toml(app, format, &executable_name(app, format)),
-    )
-    .map_err(|error| error.to_string())?;
-    if let Some(web) = web_toml(app) {
-        fs::write(resources.join("web.toml"), web).map_err(|error| error.to_string())?;
-    }
     fs::write(resources.join("Sabine.toml"), runtime_manifest(app, "web"))
         .map_err(|error| error.to_string())?;
     if let Some(icon) = &app.icon
@@ -272,16 +248,6 @@ fn stage_resources(app: &BundleApp, format: BundleFormat, resources: &Path) -> R
         }
     }
     Ok(())
-}
-
-fn build_info(app: &BundleApp, format: BundleFormat, release: bool) -> String {
-    format!(
-        "format = \"{}\"\nrelease = {}\nsource = \"{}\"\ncargo_package = \"{}\"\n",
-        format.as_str(),
-        release,
-        app.source_dir.display(),
-        app.cargo_package
-    )
 }
 
 fn executable_name(app: &BundleApp, format: BundleFormat) -> String {
