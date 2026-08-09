@@ -112,7 +112,7 @@ impl ApplicationHandler for OsrNativeHost {
                 let scale = window.scale_factor() as f32;
                 self.cursor_x = position.x as f32 / scale.max(1.0);
                 self.cursor_y = position.y as f32 / scale.max(1.0);
-                self.update_titlebar_hover();
+                let titlebar_changed = self.update_titlebar_hover();
                 if self.config.resizable
                     && let Some(direction) = resize_direction_at(
                         self.cursor_x,
@@ -134,7 +134,9 @@ impl ApplicationHandler for OsrNativeHost {
                 } else {
                     self.set_native_cursor(CursorIcon::Default);
                 }
-                window.request_redraw();
+                if titlebar_changed {
+                    window.request_redraw();
+                }
             }
             WindowEvent::PointerLeft {
                 position, primary, ..
@@ -144,10 +146,12 @@ impl ApplicationHandler for OsrNativeHost {
                     self.cursor_x = position.x as f32 / scale.max(1.0);
                     self.cursor_y = position.y as f32 / scale.max(1.0);
                 }
-                self.hovered_control = None;
+                let titlebar_changed = self.hovered_control.take().is_some();
                 self.forward_mouse_move(true);
                 self.set_native_cursor(CursorIcon::Default);
-                window.request_redraw();
+                if titlebar_changed {
+                    window.request_redraw();
+                }
             }
             WindowEvent::PointerButton {
                 state,

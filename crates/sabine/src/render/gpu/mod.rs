@@ -1,8 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
 
-use glyphon::{
-    Buffer, Cache, FontSystem, Resolution, SwashCache, TextAtlas, TextRenderer, Viewport,
-};
 use thiserror::Error;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
@@ -11,14 +8,14 @@ use crate::render::rect_pipeline::{
     Globals, RectVertex, create_image_pipeline, create_rounded_rect_pipeline, push_rect_command,
     push_rounded_rect_command, to_wgpu_color,
 };
-use crate::render::{DisplayCommand, DisplayList, TextCommand};
+use crate::render::{DisplayCommand, DisplayList};
 
 mod image_rects;
 mod images;
 mod text;
 mod vertex_buffer;
 
-use text::text_areas;
+use text::TextRendererState;
 use vertex_buffer::DynamicVertexBuffer;
 
 #[derive(Debug, Error)]
@@ -51,12 +48,7 @@ pub struct GpuRenderer {
     globals_bind_group: wgpu::BindGroup,
     rect_vertex_buffer: DynamicVertexBuffer,
     image_vertex_buffer: DynamicVertexBuffer,
-    font_system: FontSystem,
-    swash_cache: SwashCache,
-    viewport: Viewport,
-    atlas: TextAtlas,
-    text_renderer: TextRenderer,
-    text_buffers: Vec<TextBufferEntry>,
+    text: Option<TextRendererState>,
     texture_cache: HashMap<String, CachedTexture>,
     scale_factor: f32,
     surface_alpha_is_opaque: bool,
@@ -69,11 +61,6 @@ pub(super) struct CachedTexture {
     pub(super) bind_group: wgpu::BindGroup,
     pub(super) width: u32,
     pub(super) height: u32,
-}
-
-pub(super) struct TextBufferEntry {
-    pub(super) buffer: Buffer,
-    pub(super) command: TextCommand,
 }
 
 fn select_surface_alpha_mode(
@@ -258,13 +245,6 @@ impl GpuRenderer {
                 ],
             });
 
-        let font_system = FontSystem::new();
-        let cache = Cache::new(&device);
-        let viewport = Viewport::new(&device, &cache);
-        let mut atlas = TextAtlas::new(&device, &queue, &cache, format);
-        let text_renderer =
-            TextRenderer::new(&mut atlas, &device, wgpu::MultisampleState::default(), None);
-
         Ok(Self {
             instance,
             device,
@@ -279,12 +259,7 @@ impl GpuRenderer {
             globals_bind_group,
             rect_vertex_buffer: DynamicVertexBuffer::default(),
             image_vertex_buffer: DynamicVertexBuffer::default(),
-            font_system,
-            swash_cache: SwashCache::new(),
-            viewport,
-            atlas,
-            text_renderer,
-            text_buffers: Vec::new(),
+            text: None,
             texture_cache: HashMap::new(),
             scale_factor: window.scale_factor() as f32,
             surface_alpha_is_opaque,
@@ -328,30 +303,24 @@ impl GpuRenderer {
                 _padding: [0.0, 0.0],
             }]),
         );
-        self.viewport.update(
-            &self.queue,
-            Resolution {
-                width: self.surface_config.width,
-                height: self.surface_config.height,
-            },
-        );
-
         let rect_vertices = self.rect_vertices(display_list);
         let (image_draws, image_vertices) = self.image_draws(display_list);
-        self.rebuild_text_buffers(display_list);
-        let text_areas = text_areas(&self.text_buffers, self.scale_factor);
-        if !text_areas.is_empty() {
-            self.text_renderer
-                .prepare(
-                    &self.device,
-                    &self.queue,
-                    &mut self.font_system,
-                    &mut self.atlas,
-                    &self.viewport,
-                    text_areas,
-                    &mut self.swash_cache,
-                )
-                .map_err(|error| RendererError::Text(error.to_string()))?;
+        let has_text = display_list
+            .commands
+            .iter()
+            .any(|command| matches!(command, DisplayCommand::Text(_)));
+        if has_text {
+            let text = self.text.get_or_insert_with(|| {
+                TextRendererState::new(&self.device, &self.queue, self.surface_config.format)
+            });
+            text.prepare(
+                &self.device,
+                &self.queue,
+                display_list,
+                self.scale_factor,
+                self.surface_config.width,
+                self.surface_config.height,
+            )?;
         }
 
         let Some(frame) = self.acquire_surface_texture()? else {
@@ -415,16 +384,16 @@ impl GpuRenderer {
                 }
             }
 
-            if !self.text_buffers.is_empty() {
-                self.text_renderer
-                    .render(&self.atlas, &self.viewport, &mut pass)
-                    .map_err(|error| RendererError::Text(error.to_string()))?;
+            if has_text && let Some(text) = &self.text {
+                text.render(&mut pass)?;
             }
         }
 
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
-        self.atlas.trim();
+        if let Some(text) = &mut self.text {
+            text.trim();
+        }
         Ok(())
     }
 

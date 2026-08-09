@@ -253,20 +253,19 @@ impl GpuRenderer {
                 "external image has empty size".to_string(),
             ));
         }
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(&id),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let recreate = self
+            .texture_cache
+            .get(&id)
+            .is_none_or(|entry| entry.width != width || entry.height != height);
+        if recreate {
+            self.create_dynamic_bgra_image(id.clone(), width, height);
+        }
+        let Some(destination) = self.texture_cache.get(&id) else {
+            return Err(RendererError::Texture(
+                "external image was not cached".to_string(),
+            ));
+        };
+        let texture = destination.texture.clone();
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -300,31 +299,6 @@ impl GpuRenderer {
         );
         self.queue.submit([encoder.finish()]);
         self.queue.on_submitted_work_done(completed);
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&id),
-            layout: &self.image_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Sampler(&self.image_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-            ],
-        });
-        self.texture_cache.insert(
-            id,
-            CachedTexture {
-                texture,
-                bind_group,
-                width,
-                height,
-            },
-        );
         Ok(())
     }
 

@@ -69,10 +69,14 @@ impl OsrNativeHost {
         }
     }
 
-    pub(super) fn update_titlebar_hover(&mut self) {
+    pub(super) fn update_titlebar_hover(&mut self) -> bool {
         let width = self.logical_width();
         let next = self.control_at(width, self.cursor_x, self.cursor_y);
+        if self.hovered_control == next {
+            return false;
+        }
         self.hovered_control = next;
+        true
     }
 
     pub(super) fn set_cursor(&mut self, cursor: CursorIcon) {

@@ -1,18 +1,64 @@
 use crate::render::{DisplayCommand, DisplayList};
 use crate::window::style::Color;
-use glyphon::{Attrs, Buffer, Family, Metrics, Shaping, TextArea, TextBounds, Wrap};
+use glyphon::{
+    Attrs, Buffer, Cache, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache, TextArea,
+    TextAtlas, TextBounds, TextRenderer, Viewport, Wrap,
+};
 
-use super::{GpuRenderer, TextBufferEntry};
+use super::RendererError;
+use crate::render::TextCommand;
 
-impl GpuRenderer {
-    pub(super) fn rebuild_text_buffers(&mut self, display_list: &DisplayList) {
-        self.text_buffers.clear();
+pub(super) struct TextRendererState {
+    font_system: FontSystem,
+    swash_cache: SwashCache,
+    viewport: Viewport,
+    atlas: TextAtlas,
+    renderer: TextRenderer,
+    buffers: Vec<TextBufferEntry>,
+}
+
+struct TextBufferEntry {
+    buffer: Buffer,
+    command: TextCommand,
+}
+
+impl TextRendererState {
+    pub(super) fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+    ) -> Self {
+        let cache = Cache::new(device);
+        let viewport = Viewport::new(device, &cache);
+        let mut atlas = TextAtlas::new(device, queue, &cache, format);
+        let renderer =
+            TextRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
+        Self {
+            font_system: FontSystem::new(),
+            swash_cache: SwashCache::new(),
+            viewport,
+            atlas,
+            renderer,
+            buffers: Vec::new(),
+        }
+    }
+
+    pub(super) fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        display_list: &DisplayList,
+        scale: f32,
+        width: u32,
+        height: u32,
+    ) -> Result<(), RendererError> {
+        self.viewport.update(queue, Resolution { width, height });
+        self.buffers.clear();
         for command in &display_list.commands {
             let DisplayCommand::Text(command) = command else {
                 continue;
             };
 
-            let scale = self.scale_factor;
             let mut buffer = Buffer::new(
                 &mut self.font_system,
                 Metrics::new(command.size * scale, command.line_height * scale),
@@ -26,15 +72,39 @@ impl GpuRenderer {
                 Some(glyphon::cosmic_text::Align::Center),
             );
             buffer.shape_until_scroll(&mut self.font_system, false);
-            self.text_buffers.push(TextBufferEntry {
+            self.buffers.push(TextBufferEntry {
                 buffer,
                 command: command.clone(),
             });
         }
+        self.renderer
+            .prepare(
+                device,
+                queue,
+                &mut self.font_system,
+                &mut self.atlas,
+                &self.viewport,
+                text_areas(&self.buffers, scale),
+                &mut self.swash_cache,
+            )
+            .map_err(|error| RendererError::Text(error.to_string()))
+    }
+
+    pub(super) fn render<'pass>(
+        &'pass self,
+        pass: &mut wgpu::RenderPass<'pass>,
+    ) -> Result<(), RendererError> {
+        self.renderer
+            .render(&self.atlas, &self.viewport, pass)
+            .map_err(|error| RendererError::Text(error.to_string()))
+    }
+
+    pub(super) fn trim(&mut self) {
+        self.atlas.trim();
     }
 }
 
-pub(super) fn text_areas(text_buffers: &[TextBufferEntry], scale: f32) -> Vec<TextArea<'_>> {
+fn text_areas(text_buffers: &[TextBufferEntry], scale: f32) -> Vec<TextArea<'_>> {
     text_buffers
         .iter()
         .map(|entry| TextArea {
