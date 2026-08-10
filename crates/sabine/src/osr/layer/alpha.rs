@@ -34,6 +34,13 @@ impl LayerAlphaModifier {
                 0,
                 factor,
             );
+            wl_proxy_marshal_flags(
+                self.surface,
+                WL_SURFACE_COMMIT,
+                ptr::null(),
+                wl_proxy_get_version(self.surface),
+                0,
+            );
             wl_display_flush(self.display);
         }
         true
@@ -247,6 +254,7 @@ const ALPHA_MANAGER_DESTROY: u32 = 0;
 const ALPHA_MANAGER_GET_SURFACE: u32 = 1;
 const ALPHA_SURFACE_DESTROY: u32 = 0;
 const ALPHA_SURFACE_SET_MULTIPLIER: u32 = 1;
+const WL_SURFACE_COMMIT: u32 = 6;
 const DESTROY_FLAG: u32 = 1;
 
 static INTERFACE_TYPES: InterfaceTypes = InterfaceTypes {

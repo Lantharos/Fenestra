@@ -62,7 +62,9 @@ private IPC directory under `$XDG_RUNTIME_DIR/sabine/<app_id>/` (mode `0700`, so
 OSR authentication uses a first-line token plus same-UID `SO_PEERCRED` checks on Unix. The token
 is written to a `0600` file beside the socket and referenced by `--sabine-osr-token-file=` on the
 CEF command line (path is not secret; this survives process-singleton handoff). `SABINE_OSR_TOKEN`
-remains an optional fallback. Child OSR/CEF processes set `PR_SET_PDEATHSIG` on Linux so they do
+remains an optional fallback. Stale-socket cleanup uses a same-UID health-probe line that listeners
+recognize separately from authenticated CEF connections. Child OSR/CEF processes set
+`PR_SET_PDEATHSIG` on Linux so they do
 not outlive a crashed parent.
 
 ## Paint and composition

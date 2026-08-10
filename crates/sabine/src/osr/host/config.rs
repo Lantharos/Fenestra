@@ -26,6 +26,8 @@ pub(crate) struct OsrHostConfig {
     pub shell_surface_alpha: f32,
     pub active: bool,
     pub hide_on_blur: bool,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub skip_taskbar: bool,
     pub always_on_top: bool,
     pub transparent: bool,
     pub shell_surface: Option<ShellSurfaceOptions>,
@@ -111,6 +113,11 @@ impl OsrHostConfig {
                 .unwrap_or(true),
             hide_on_blur: value
                 .get("hide_on_blur")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            skip_taskbar: value
+                .get("skip_taskbar")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
             always_on_top: value

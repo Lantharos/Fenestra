@@ -73,10 +73,11 @@ impl OsrNativeHost {
             }
         }
         #[cfg(target_os = "windows")]
-        if self.config.transparent {
-            attributes = attributes.with_platform_attributes(Box::new(
-                WindowAttributesWindows::default().with_no_redirection_bitmap(true),
-            ));
+        if self.config.transparent || self.config.skip_taskbar {
+            let windows_attributes = WindowAttributesWindows::default()
+                .with_no_redirection_bitmap(self.config.transparent)
+                .with_skip_taskbar(self.config.skip_taskbar);
+            attributes = attributes.with_platform_attributes(Box::new(windows_attributes));
         }
         if let Some(position) =
             crate::centered_window_position(event_loop, self.config.width, self.config.height)

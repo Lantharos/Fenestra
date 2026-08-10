@@ -87,7 +87,16 @@ pub(crate) fn authenticate_peer(_stream: &IpcStream) -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) fn authenticate(stream: &mut IpcStream, expected: &str) -> io::Result<()> {
+const HEALTH_PROBE: &[u8] = b"sabine-osr-probe-v1";
+const HEALTH_PROBE_LINE: &[u8] = b"sabine-osr-probe-v1\n";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Authentication {
+    Accepted,
+    Probe,
+}
+
+pub(crate) fn authenticate(stream: &mut IpcStream, expected: &str) -> io::Result<Authentication> {
     authenticate_peer(stream)?;
     use std::io::Read;
 
@@ -107,7 +116,9 @@ pub(crate) fn authenticate(stream: &mut IpcStream, expected: &str) -> io::Result
         received.push(byte[0]);
     }
     if received == expected.as_bytes() {
-        Ok(())
+        Ok(Authentication::Accepted)
+    } else if received == HEALTH_PROBE {
+        Ok(Authentication::Probe)
     } else {
         Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -252,14 +263,15 @@ pub(crate) fn sweep_stale_sockets(dir: &Path) {
 
 #[cfg(unix)]
 fn socket_is_live(path: &Path) -> bool {
+    use std::io::Write;
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
 
-    let Ok(stream) = UnixStream::connect(path) else {
+    let Ok(mut stream) = UnixStream::connect(path) else {
         return false;
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
-    true
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(50)));
+    stream.write_all(HEALTH_PROBE_LINE).is_ok()
 }
 
 #[cfg(unix)]
@@ -334,7 +346,24 @@ mod tests {
             use std::io::Write;
             let _ = client.write_all(b"expected-token\n");
         });
-        authenticate(&mut server, "expected-token").expect("auth");
+        assert_eq!(
+            authenticate(&mut server, "expected-token").expect("auth"),
+            Authentication::Accepted
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn authenticate_recognizes_health_probe_from_same_uid() {
+        let (mut client, mut server) = std::os::unix::net::UnixStream::pair().expect("pair");
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = client.write_all(HEALTH_PROBE_LINE);
+        });
+        assert_eq!(
+            authenticate(&mut server, "expected-token").expect("probe"),
+            Authentication::Probe
+        );
     }
 
     #[cfg(unix)]

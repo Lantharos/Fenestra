@@ -127,6 +127,7 @@ pub(crate) fn spawn_osr_host_child(
         "shell_surface_alpha": config.shell_surface_alpha,
         "active": config.active,
         "hide_on_blur": config.hide_on_blur,
+        "skip_taskbar": config.skip_taskbar,
         "always_on_top": config.always_on_top,
         "transparent": config.transparent,
         "shell_surface": crate::osr::protocol::shell_surface_to_json(config.shell_surface.as_ref()),

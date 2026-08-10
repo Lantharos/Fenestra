@@ -307,6 +307,7 @@ mod tests {
         let palette = SabineWindow::new().palette();
         assert!(palette.config.transparent);
         assert!(palette.config.hide_on_blur);
+        assert!(palette.config.skip_taskbar);
         assert_eq!(
             palette.config.lifecycle,
             SabineLifecyclePolicy::hidden_window()
@@ -314,6 +315,7 @@ mod tests {
 
         let tray = SabineWindow::new().tray_app();
         assert!(!tray.config.visible);
+        assert!(tray.config.skip_taskbar);
         assert_eq!(
             tray.config.lifecycle,
             SabineLifecyclePolicy::hidden_window()

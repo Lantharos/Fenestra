@@ -81,7 +81,8 @@ fn start_socket_reader(
                 return;
             };
             match crate::osr::transport::authenticate(&mut candidate, &authentication_token) {
-                Ok(()) => break candidate,
+                Ok(crate::osr::transport::Authentication::Accepted) => break candidate,
+                Ok(crate::osr::transport::Authentication::Probe) => continue,
                 Err(error) => {
                     eprintln!("Sabine layer OSR reject connect: {error}");
                 }

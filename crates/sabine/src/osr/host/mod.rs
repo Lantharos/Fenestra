@@ -15,6 +15,8 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use winit::event_loop::EventLoop;
+#[cfg(target_os = "macos")]
+use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 
 pub(crate) use config::OsrHostConfig;
 #[allow(unused_imports)]
@@ -34,7 +36,14 @@ pub(crate) fn run(config_path: PathBuf) -> Result<(), String> {
             "shell surfaces are Linux-only; use a hide-on-blur palette window here".to_string(),
         );
     }
-    let event_loop = EventLoop::new().map_err(|error| error.to_string())?;
+    let mut event_loop_builder = EventLoop::builder();
+    #[cfg(target_os = "macos")]
+    if config.skip_taskbar {
+        event_loop_builder.with_activation_policy(ActivationPolicy::Accessory);
+    }
+    let event_loop = event_loop_builder
+        .build()
+        .map_err(|error| error.to_string())?;
     let proxy = event_loop.create_proxy();
     let (sender, receiver) = mpsc::sync_channel(8);
     event_loop

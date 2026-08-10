@@ -6,6 +6,7 @@ use std::{
 
 use layershellev::{WindowState, reexport::wl_shm};
 use sabine_platform::ShellSurfaceKeyboardInteractivity;
+use smithay_client_toolkit::shm::{Shm, slot::SlotPool};
 use wayland_client::{QueueHandle, protocol::wl_buffer::WlBuffer};
 
 use crate::osr::frame_buffer::buffer_len;
@@ -14,6 +15,8 @@ use crate::osr::protocol::{OsrPaintBatch, OsrSurface};
 use super::buffer::{DamageRect, paint_buffer_file, paint_frames_buffer_file};
 use super::shell::keyboard_for_shell;
 use super::types::OsrLayerHost;
+
+const MAX_MAIN_BUFFERS: usize = 4;
 
 impl OsrLayerHost {
     pub(super) fn install_wayland_buffer(
@@ -30,9 +33,6 @@ impl OsrLayerHost {
         }
         self.buffer_size = (width, height);
         self.surface_mapped = false;
-        if let Ok(clone) = file.try_clone() {
-            self.buffer_file = Some(clone);
-        }
         let byte_len = buffer_len(width, height);
         if paint_buffer_file(
             file,
@@ -57,19 +57,24 @@ impl OsrLayerHost {
             qh,
             (),
         );
-        self.wayland_buffer = Some(buffer.clone());
+        self.reset_main_pool(shm, byte_len);
+        self.buffer_file = temporary_buffer_file().ok();
         buffer
     }
 
     pub(super) fn recreate_wayland_buffer(&mut self, width: u32, height: u32) {
-        let (Some(shm), Some(qh)) = (self.shm.clone(), self.queue_handle.clone()) else {
-            return;
-        };
-        let Ok(mut file) = temporary_buffer_file() else {
+        let Some(shm) = self.shm.clone() else {
             return;
         };
         self.clear_frames();
-        self.install_wayland_buffer(&mut file, &shm, &qh, width.max(1), height.max(1));
+        let width = width.max(1);
+        let height = height.max(1);
+        self.buffer_size = (width, height);
+        self.surface_mapped = false;
+        self.main_buffer.clear();
+        self.scratch.clear();
+        self.reset_main_pool(&shm, buffer_len(width, height));
+        self.buffer_file = temporary_buffer_file().ok();
     }
 
     pub(super) fn refresh_surface(
@@ -199,18 +204,20 @@ impl OsrLayerHost {
         damage: DamageRect,
     ) {
         self.ensure_layer_unit_size(unit);
-        let Some(buffer) = self.wayland_buffer.as_ref() else {
-            unit.refresh();
-            self.surface_mapped = true;
-            return;
-        };
-        let damage = if self.surface_mapped {
+        let damage = if self.surface_mapped && !self.pending_surface_refresh {
             damage
         } else {
             DamageRect::full(self.buffer_size.0, self.buffer_size.1)
         };
+        let Some(buffer_index) = self.prepare_main_buffer() else {
+            self.pending_surface_refresh = true;
+            return;
+        };
         let surface = unit.get_wlsurface();
-        surface.attach(Some(buffer), 0, 0);
+        if self.main_buffers[buffer_index].attach_to(surface).is_err() {
+            self.pending_surface_refresh = true;
+            return;
+        }
         surface.damage_buffer(
             damage.x as i32,
             damage.y as i32,
@@ -218,7 +225,62 @@ impl OsrLayerHost {
             damage.height as i32,
         );
         surface.commit();
+        self.pending_surface_refresh = false;
         self.surface_mapped = true;
+    }
+
+    pub(super) fn commit_pending_surface(
+        &mut self,
+        state: &mut WindowState<()>,
+        id: Option<layershellev::id::Id>,
+    ) {
+        if !self.pending_surface_refresh || !self.visible || !self.main_frame_ready() {
+            return;
+        }
+        let damage = DamageRect::full(self.buffer_size.0, self.buffer_size.1);
+        if let Some(id) = id
+            && let Some(unit) = state.get_unit_with_id(id)
+        {
+            self.commit_surface(unit, damage);
+            return;
+        }
+        self.commit_surface(state.main_window(), damage);
+    }
+
+    fn reset_main_pool(&mut self, shm: &wl_shm::WlShm, byte_len: usize) {
+        self.main_buffers.clear();
+        self.main_pool = SlotPool::new(byte_len.max(1), &Shm::from(shm.clone())).ok();
+        self.pending_surface_refresh = false;
+    }
+
+    fn prepare_main_buffer(&mut self) -> Option<usize> {
+        let pool = self.main_pool.as_mut()?;
+        let pixels = self.main_buffer.as_slice();
+        if pixels.len() != buffer_len(self.buffer_size.0, self.buffer_size.1) {
+            return None;
+        }
+
+        for (index, buffer) in self.main_buffers.iter().enumerate() {
+            if let Some(canvas) = buffer.canvas(pool) {
+                canvas.copy_from_slice(pixels);
+                return Some(index);
+            }
+        }
+
+        if self.main_buffers.len() >= MAX_MAIN_BUFFERS {
+            return None;
+        }
+        let (buffer, canvas) = pool
+            .create_buffer(
+                self.buffer_size.0 as i32,
+                self.buffer_size.1 as i32,
+                (self.buffer_size.0 * 4) as i32,
+                wl_shm::Format::Argb8888,
+            )
+            .ok()?;
+        canvas.copy_from_slice(pixels);
+        self.main_buffers.push(buffer);
+        Some(self.main_buffers.len() - 1)
     }
 
     fn ensure_layer_unit_size(&self, unit: &layershellev::WindowStateUnit<()>) {

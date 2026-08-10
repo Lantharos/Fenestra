@@ -133,6 +133,11 @@ impl SabineWindow {
         self
     }
 
+    pub fn skip_taskbar(mut self, enabled: bool) -> Self {
+        self.config.skip_taskbar = enabled;
+        self
+    }
+
     pub fn always_on_top(mut self, always_on_top: bool) -> Self {
         self.config.always_on_top = always_on_top;
         self

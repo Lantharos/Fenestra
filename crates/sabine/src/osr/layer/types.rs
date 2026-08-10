@@ -7,6 +7,7 @@ use std::{
 };
 
 use layershellev::{WindowState, calloop::channel::Sender, id, reexport::wl_shm::WlShm};
+use smithay_client_toolkit::shm::slot::{Buffer as ShmBuffer, SlotPool};
 use wayland_client::{QueueHandle, protocol::wl_buffer::WlBuffer};
 
 use crate::osr::host::OsrHostConfig;
@@ -23,7 +24,9 @@ pub(super) struct OsrLayerHost {
     pub(super) buffer_file: Option<File>,
     pub(super) shm: Option<WlShm>,
     pub(super) queue_handle: Option<QueueHandle<WindowState<()>>>,
-    pub(super) wayland_buffer: Option<WlBuffer>,
+    pub(super) main_pool: Option<SlotPool>,
+    pub(super) main_buffers: Vec<ShmBuffer>,
+    pub(super) pending_surface_refresh: bool,
     pub(super) buffer_size: (u32, u32),
     pub(super) surface_size: (u32, u32),
     pub(super) scale: f64,
@@ -108,7 +111,9 @@ impl OsrLayerHost {
             buffer_file: None,
             shm: None,
             queue_handle: None,
-            wayland_buffer: None,
+            main_pool: None,
+            main_buffers: Vec::new(),
+            pending_surface_refresh: false,
             buffer_size: surface_size,
             surface_size,
             scale: 1.0,

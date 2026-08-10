@@ -40,6 +40,10 @@ impl OsrLayerHost {
             }
             LayerShellEvent::RequestMessages(message) => self.handle_message(message, state, id),
             LayerShellEvent::UserEvent(event) => self.handle_host_event(event, state, id),
+            LayerShellEvent::NormalDispatch => {
+                self.commit_pending_surface(state, id);
+                ReturnData::None
+            }
             _ => ReturnData::None,
         }
     }

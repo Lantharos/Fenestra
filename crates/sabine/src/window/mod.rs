@@ -96,6 +96,7 @@ impl SabineWindow {
         self.frameless()
             .glass()
             .hide_on_blur(true)
+            .skip_taskbar(true)
             .lifecycle_policy(SabineLifecyclePolicy::hidden_window())
     }
 
@@ -103,6 +104,7 @@ impl SabineWindow {
     /// Pair with [`Self::tray_icon`] and [`Self::single_instance_id`].
     pub fn tray_app(self) -> Self {
         self.hidden()
+            .skip_taskbar(true)
             .lifecycle_policy(SabineLifecyclePolicy::hidden_window())
     }
 

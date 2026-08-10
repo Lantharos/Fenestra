@@ -47,6 +47,7 @@ softbuffer = "0.4.8"
 ashpd.workspace = true
 ksni.workspace = true
 layershellev.workspace = true
+smithay-client-toolkit.workspace = true
 wayland-client.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
