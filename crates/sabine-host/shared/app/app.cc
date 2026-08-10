@@ -162,13 +162,13 @@ void SabineApp::OnContextCreated(CefRefPtr<CefBrowser> browser,
                       unprivileged_browsers_.end())) {
     return;
   }
+  context->GetGlobal()->SetValue(
+      "__sabineNativePostMessage",
+      CefV8Value::CreateFunction("__sabineNativePostMessage",
+                                 new NativePostMessageHandler(frame)),
+      V8_PROPERTY_ATTRIBUTE_READONLY);
   const auto commands = BridgeCommands(CefCommandLine::GetGlobalCommandLine());
   if (!commands.empty()) {
-    context->GetGlobal()->SetValue(
-        "__sabineNativePostMessage",
-        CefV8Value::CreateFunction("__sabineNativePostMessage",
-                                   new NativePostMessageHandler(frame)),
-        V8_PROPERTY_ATTRIBUTE_READONLY);
     frame->ExecuteJavaScript(BridgeInstallScript(commands), frame->GetURL(), 0);
   }
 }
