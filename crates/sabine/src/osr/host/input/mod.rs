@@ -78,6 +78,7 @@ impl ApplicationHandler for OsrNativeHost {
                 }
             }
             WindowEvent::Focused(focused) => {
+                let focused = focused && self.config.visible;
                 self.focused = focused;
                 self.send_control(if focused { "focus\t1\n" } else { "focus\t0\n" });
                 if !focused && self.config.hide_on_blur && self.config.visible {
