@@ -130,6 +130,16 @@ impl OsrNativeHost {
         self.main_buffer.release();
     }
 
+    pub(in crate::osr::host) fn unmap_window(&mut self) {
+        #[cfg(target_os = "linux")]
+        self.drop_presented_window();
+
+        #[cfg(not(target_os = "linux"))]
+        if let Some(window) = &self.window {
+            window.set_visible(false);
+        }
+    }
+
     pub(in crate::osr::host) fn drop_presented_window(&mut self) {
         if let Some(window) = &self.window {
             let scale = window.scale_factor().max(1.0);

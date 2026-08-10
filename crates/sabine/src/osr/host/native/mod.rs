@@ -14,7 +14,7 @@ use winit::{
     cursor::CursorIcon,
     data_transfer::DataTransferId,
     event_loop::{ActiveEventLoop, DndAction, EventLoopProxy},
-    window::{ActivationToken, UserAttentionType, Window as WinitWindow},
+    window::{ActivationToken, Window as WinitWindow},
 };
 
 use crate::osr::frame_buffer::FrameBuffer;
@@ -350,7 +350,6 @@ pub(super) fn platform_chrome(chrome: SabineWindowChrome) -> PlatformWindowChrom
 pub(super) fn present_window(window: &Arc<dyn WinitWindow>) {
     window.set_visible(true);
     window.set_minimized(false);
-    window.request_user_attention(Some(UserAttentionType::Informational));
     window.focus_window();
     window.request_redraw();
 }

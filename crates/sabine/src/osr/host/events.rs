@@ -219,9 +219,7 @@ impl OsrNativeHost {
         self.focused = false;
         self.overlays.clear();
         self.send_control("focus\t0\n");
-        if let Some(window) = &self.window {
-            window.set_visible(false);
-        }
+        self.unmap_window();
         self.suspend(reason);
     }
 
