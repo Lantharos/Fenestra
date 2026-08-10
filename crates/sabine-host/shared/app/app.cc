@@ -7,10 +7,38 @@
 #include "sabine_bridge_js.h"
 #include "include/cef_browser.h"
 #include "include/cef_command_line.h"
+#include "include/cef_process_message.h"
 #include "include/wrapper/cef_helpers.h"
 #include "osr/handler.h"
 
 namespace {
+class NativePostMessageHandler : public CefV8Handler {
+ public:
+  explicit NativePostMessageHandler(CefRefPtr<CefFrame> frame) : frame_(frame) {}
+
+  bool Execute(const CefString& name,
+               CefRefPtr<CefV8Value> object,
+               const CefV8ValueList& arguments,
+               CefRefPtr<CefV8Value>& retval,
+               CefString& exception) override {
+    if (arguments.size() != 1 || !arguments[0]->IsString()) {
+      exception = "Sabine native messages require one string argument";
+      return true;
+    }
+    CefRefPtr<CefProcessMessage> message =
+        CefProcessMessage::Create("sabine.native");
+    message->GetArgumentList()->SetString(0, arguments[0]->GetStringValue());
+    frame_->SendProcessMessage(PID_BROWSER, message);
+    retval = CefV8Value::CreateUndefined();
+    return true;
+  }
+
+ private:
+  CefRefPtr<CefFrame> frame_;
+
+  IMPLEMENT_REFCOUNTING(NativePostMessageHandler);
+};
+
 std::vector<std::string> BridgeCommands(CefRefPtr<CefCommandLine> command_line) {
   std::vector<std::string> commands;
   std::stringstream stream(
@@ -136,6 +164,11 @@ void SabineApp::OnContextCreated(CefRefPtr<CefBrowser> browser,
   }
   const auto commands = BridgeCommands(CefCommandLine::GetGlobalCommandLine());
   if (!commands.empty()) {
+    context->GetGlobal()->SetValue(
+        "__sabineNativePostMessage",
+        CefV8Value::CreateFunction("__sabineNativePostMessage",
+                                   new NativePostMessageHandler(frame)),
+        V8_PROPERTY_ATTRIBUTE_READONLY);
     frame->ExecuteJavaScript(BridgeInstallScript(commands), frame->GetURL(), 0);
   }
 }

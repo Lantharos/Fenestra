@@ -296,16 +296,6 @@ void SabineOsrHandler::OnFaviconURLChange(
   EmitPrimaryEvent("guest.favicon", GuestFaviconJson(guest->id, favicons));
 }
 
-bool SabineOsrHandler::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
-                                    CefRefPtr<CefFrame> frame,
-                                    CefRefPtr<CefRequest> request,
-                                    bool user_gesture,
-                                    bool is_redirect) {
-  CEF_REQUIRE_UI_THREAD();
-  const std::string url = request->GetURL();
-  return HandleWindowCommand(browser, url) || HandleBridgeCommand(browser, frame, url);
-}
-
 bool SabineOsrHandler::GetScreenInfo(CefRefPtr<CefBrowser> browser,
                                    CefScreenInfo& screen_info) {
   screen_info.device_scale_factor = scale_;

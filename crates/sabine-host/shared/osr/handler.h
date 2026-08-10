@@ -43,8 +43,7 @@ class SabineOsrHandler : public CefClient,
                        public CefDragHandler,
                        public CefLifeSpanHandler,
                        public CefLoadHandler,
-                       public CefRenderHandler,
-                       public CefRequestHandler {
+                       public CefRenderHandler {
  public:
   SabineOsrHandler(std::string endpoint,
                  std::string authentication_token,
@@ -66,7 +65,10 @@ class SabineOsrHandler : public CefClient,
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
-  CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+  bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefFrame> frame,
+                                CefProcessId source_process,
+                                CefRefPtr<CefProcessMessage> message) override;
 
   void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
                            CefRefPtr<CefFrame> frame,
@@ -119,12 +121,6 @@ class SabineOsrHandler : public CefClient,
                             bool isLoading,
                             bool canGoBack,
                             bool canGoForward) override;
-  bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
-                      CefRefPtr<CefFrame> frame,
-                      CefRefPtr<CefRequest> request,
-                      bool user_gesture,
-                      bool is_redirect) override;
-
   bool OnBeforeDownload(CefRefPtr<CefBrowser> browser,
                         CefRefPtr<CefDownloadItem> download_item,
                         const CefString& suggested_name,

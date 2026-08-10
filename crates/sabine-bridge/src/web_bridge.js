@@ -6,17 +6,15 @@
 // to a JSON array of allowed bridge command names BEFORE this script runs;
 // the script copies that list into a `Set` used for `invoke()` validation.
 //
-// The host should also implement a navigation handler for the
-// `sabine://bridge/<id>?name=<name>&payload=<payload>` scheme used by
-// `invoke()`. The host parses the URL, dispatches to its registered bridge
+// The host installs `window.__sabineNativePostMessage`, which sends
+// `sabine://bridge/<id>?name=<name>&payload=<payload>` messages without
+// navigating the page. The host dispatches the registered bridge
 // handler, then calls `window.__sabineBridgeResolve(id, ok, payload)` from
 // the host side to resolve the promise returned by `invoke()`.
 //
 // The host injects bridge events by calling
 // `window.__sabineBridgeEmit(name, payload)` from the host side.
-// `window.sabine.window.*` calls navigate to `sabine://window/<action>`,
-// which the host interprets as a host control (show/hide/focus/close/etc.)
-// rather than a bridge command.
+// `window.sabine.window.*` uses the same transport for host controls.
 //
 // This file is included as a `&str` from Rust via `include_str!`, embedded
 // into the C++ CEF host as a generated header at build time, and posted
@@ -60,12 +58,19 @@
     return entries.length ? "?" + entries.join("&") : "";
   };
 
+  const postNative = function (message) {
+    if (typeof window.__sabineNativePostMessage !== "function") {
+      throw new Error("Sabine native transport is unavailable");
+    }
+    window.__sabineNativePostMessage(message);
+  };
+
   const windowCommand = function (action, params) {
     const url =
       "sabine://window/" +
       action +
       encodeQuery(Object.assign({ at: Date.now() + "-" + Math.random() }, params || {}));
-    window.location.href = url;
+    postNative(url);
   };
 
   window.sabine = window.sabine || {};
@@ -114,7 +119,7 @@
             reject(new Error("Sabine bridge command timed out: " + name));
           }
         }, 60000);
-        window.location.href = url;
+        postNative(url);
       });
     },
   };

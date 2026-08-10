@@ -45,6 +45,26 @@
 
 using namespace sabine_osr;
 
+bool SabineOsrHandler::OnProcessMessageReceived(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    CefProcessId source_process,
+    CefRefPtr<CefProcessMessage> message) {
+  CEF_REQUIRE_UI_THREAD();
+  if (source_process != PID_RENDERER || !message ||
+      message->GetName() != "sabine.native") {
+    return false;
+  }
+  CefRefPtr<CefListValue> arguments = message->GetArgumentList();
+  if (!arguments || arguments->GetSize() != 1 ||
+      arguments->GetType(0) != VTYPE_STRING) {
+    return true;
+  }
+  const std::string payload = arguments->GetString(0);
+  return HandleWindowCommand(browser, payload) ||
+         HandleBridgeCommand(browser, frame, payload);
+}
+
 bool SabineOsrHandler::HandleWindowCommand(CefRefPtr<CefBrowser> browser,
 	                                         const std::string& url) {
   const std::string prefix = "sabine://window/";
