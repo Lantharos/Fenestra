@@ -71,9 +71,10 @@ pub(crate) enum OsrMessage {
     StartDragRequested,
     MinimizeRequested,
     ToggleMaximizeRequested,
+    FullscreenRequested(bool),
     ShowRequested,
     HideRequested,
-    FocusRequested,
+    FocusRequested(Option<String>),
     FileDragRequested(FileDragRequest),
     /// Full `SABINE_BRIDGE_REQUEST\t...` line from the owning CEF handler.
     BridgeRequest(String),

@@ -72,11 +72,12 @@
   window.sabine.window = Object.assign(window.sabine.window || {}, {
     show() { windowCommand("show"); },
     hide() { windowCommand("hide"); },
-    focus() { windowCommand("focus"); },
+    focus(activationToken) { windowCommand("focus", { activationToken }); },
     close() { windowCommand("close"); },
     minimize() { windowCommand("minimize"); },
     maximize() { windowCommand("maximize"); },
     toggleMaximize() { windowCommand("toggle-maximize"); },
+    setFullscreen(enabled) { windowCommand(enabled ? "fullscreen" : "exit-fullscreen"); },
     restore() { windowCommand("restore"); },
     startDrag() { windowCommand("start-drag"); },
   });

@@ -64,15 +64,21 @@ bool SabineOsrHandler::HandleWindowCommand(CefRefPtr<CefBrowser> browser,
     SendMessage(6, 0, 0, 0, 0, nullptr, 0);
   } else if (command == "minimize") {
     SendMessage(7, 0, 0, 0, 0, nullptr, 0);
-	  } else if (command == "maximize" || command == "toggle-maximize") {
-	    SendMessage(8, 0, 0, 0, 0, nullptr, 0);
-	  } else if (command == "show") {
-	    SendMessage(9, 0, 0, 0, 0, nullptr, 0);
-	  } else if (command == "hide") {
-	    SendMessage(10, 0, 0, 0, 0, nullptr, 0);
-	  } else if (command == "focus") {
-	    SendMessage(11, 0, 0, 0, 0, nullptr, 0);
-	  }
+  } else if (command == "maximize" || command == "toggle-maximize") {
+    SendMessage(8, 0, 0, 0, 0, nullptr, 0);
+  } else if (command == "fullscreen") {
+    SendMessage(27, 0, 0, 0, 0, nullptr, 0);
+  } else if (command == "exit-fullscreen") {
+    SendMessage(28, 0, 0, 0, 0, nullptr, 0);
+  } else if (command == "show") {
+    SendMessage(9, 0, 0, 0, 0, nullptr, 0);
+  } else if (command == "hide") {
+    SendMessage(10, 0, 0, 0, 0, nullptr, 0);
+  } else if (command == "focus") {
+    const std::string activation_token = QueryValue(url, "activationToken");
+    SendMessage(11, 0, 0, 0, 0, activation_token.data(),
+                static_cast<uint32_t>(activation_token.size()));
+  }
   return true;
 }
 
@@ -204,4 +210,3 @@ void SabineOsrHandler::EmitBridgeEvent(const std::string& name_json,
         script, browser->GetMainFrame()->GetURL(), 0);
   }
 }
-

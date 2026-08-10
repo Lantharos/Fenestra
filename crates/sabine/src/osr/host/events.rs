@@ -15,6 +15,10 @@ impl OsrNativeHost {
             match event {
                 super::types::OsrHostEvent::Connected(stream) => {
                     self.socket = Some(std::sync::Arc::new(std::sync::Mutex::new(stream)));
+                    let mut output = std::io::stdout();
+                    use std::io::Write;
+                    let _ = writeln!(output, "SABINE_OSR_READY");
+                    let _ = output.flush();
                     self.handoff_deadline = None;
                     self.send_resize();
                     self.send_current_lifecycle();
@@ -112,6 +116,13 @@ impl OsrNativeHost {
                         window.set_maximized(!window.is_maximized());
                     }
                 }
+                super::types::OsrHostEvent::Message(OsrMessage::FullscreenRequested(enabled)) => {
+                    if let Some(window) = &self.window {
+                        window.set_fullscreen(
+                            enabled.then_some(winit::monitor::Fullscreen::Borderless(None)),
+                        );
+                    }
+                }
                 super::types::OsrHostEvent::Message(OsrMessage::ShowRequested) => {
                     self.ensure_window(event_loop);
                     self.show_window("show");
@@ -119,9 +130,8 @@ impl OsrNativeHost {
                 super::types::OsrHostEvent::Message(OsrMessage::HideRequested) => {
                     self.hide_window("hide")
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::FocusRequested) => {
-                    self.ensure_window(event_loop);
-                    self.focus_window("focus");
+                super::types::OsrHostEvent::Message(OsrMessage::FocusRequested(token)) => {
+                    self.activate_window(event_loop, token);
                 }
                 super::types::OsrHostEvent::Message(OsrMessage::BridgeRequest(line)) => {
                     if !line.is_empty() {

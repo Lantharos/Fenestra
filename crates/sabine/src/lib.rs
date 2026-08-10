@@ -37,8 +37,8 @@ pub use sabine_bridge::{
 pub use sabine_bridge::{SabineLaunchMetric, SabineLaunchMetricsSnapshot};
 pub use sabine_platform::{
     AutostartEntry, DeepLinkRegistration, GlobalShortcutRegistration, NativeMessagingHost,
-    PlatformEvent, SingleInstancePolicy, TrayIcon, TrayMenuItem, WindowBackgroundEffect,
-    WindowRegion, WindowRegionRect, WindowRegions,
+    PlatformEvent, Shortcut, ShortcutModifiers, SingleInstancePolicy, TrayIcon, TrayMenuItem,
+    WindowBackgroundEffect, WindowRegion, WindowRegionRect, WindowRegions,
 };
 pub use sabine_platform::{
     ShellSurfaceAnchor, ShellSurfaceKeyboardInteractivity, ShellSurfaceLayer, ShellSurfaceMargin,

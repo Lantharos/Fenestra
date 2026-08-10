@@ -16,11 +16,12 @@ export interface SabineBridge {
 export interface SabineWindowApi {
   show(): void;
   hide(): void;
-  focus(): void;
+  focus(activationToken?: string): void;
   close(): void;
   minimize(): void;
   maximize(): void;
   toggleMaximize(): void;
+  setFullscreen(enabled: boolean): void;
   restore(): void;
   startDrag(): void;
 }

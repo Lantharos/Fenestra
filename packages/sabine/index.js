@@ -109,8 +109,8 @@ export const appWindow = {
   hide() {
     requireApi().window.hide();
   },
-  focus() {
-    requireApi().window.focus();
+  focus(activationToken) {
+    requireApi().window.focus(activationToken);
   },
   close() {
     requireApi().window.close();
@@ -123,6 +123,9 @@ export const appWindow = {
   },
   toggleMaximize() {
     requireApi().window.toggleMaximize();
+  },
+  setFullscreen(enabled) {
+    requireApi().window.setFullscreen(Boolean(enabled));
   },
   restore() {
     requireApi().window.restore();

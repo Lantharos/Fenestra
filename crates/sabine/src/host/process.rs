@@ -1,4 +1,4 @@
-use std::{process::ExitStatus, thread::JoinHandle};
+use std::{process::ExitStatus, thread::JoinHandle, time::Duration};
 
 use sabine_bridge::{
     ActivityOptions, ActivityRecord, LaunchMetrics, SabineActivityLease,
@@ -20,6 +20,8 @@ pub struct SabineProcess {
     pub(crate) child_exit_sender: crossbeam_channel::Sender<u32>,
     pub(crate) child_exit_receiver: crossbeam_channel::Receiver<u32>,
     pub(crate) bridge_thread: Option<JoinHandle<()>>,
+    pub(crate) primary_ready: crossbeam_channel::Receiver<()>,
+    pub(crate) primary_is_ready: bool,
     pub(crate) extra_bridge_threads: Vec<JoinHandle<()>>,
     pub(crate) bridge_emitter: Option<BridgeEventEmitter>,
     pub(crate) desktop_services: Option<DesktopServiceState>,
@@ -42,8 +44,23 @@ impl SabineProcess {
     /// Open another OSR window in this process. Shares this process's bridge
     /// handlers and `app_id`. Handlers registered on `window` are ignored.
     pub fn open_window(&mut self, window: SabineWindow) -> SabineResult<WindowId> {
+        self.wait_for_primary_window()?;
         let (config, url) = window.into_open_window_parts()?;
         crate::osr::launch::attach_open_window(self, &config, &url)
+    }
+
+    fn wait_for_primary_window(&mut self) -> SabineResult<()> {
+        if self.primary_is_ready {
+            return Ok(());
+        }
+        self.primary_ready
+            .recv_timeout(Duration::from_secs(20))
+            .map_err(|_| crate::SabineError::CreationFailed {
+                message: "primary Sabine window did not become ready before opening another window"
+                    .into(),
+            })?;
+        self.primary_is_ready = true;
+        Ok(())
     }
 
     /// Close one OSR window. Returns `false` if the id is unknown. Closing the

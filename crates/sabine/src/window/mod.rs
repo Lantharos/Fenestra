@@ -45,6 +45,15 @@ impl SabineWindow {
         build: impl FnOnce(Self) -> SabineResult<Self>,
         launched: impl FnOnce(&SabineProcess),
     ) -> ! {
+        Self::main_with_process_mut(build, |process| launched(process))
+    }
+
+    /// Runs a Sabine app and allows opening same-process windows before the
+    /// process enters its wait loop.
+    pub fn main_with_process_mut(
+        build: impl FnOnce(Self) -> SabineResult<Self>,
+        launched: impl FnOnce(&mut SabineProcess),
+    ) -> ! {
         let args = std::env::args().collect::<Vec<_>>();
         if crate::dispatch_host_mode_from_args(&args) {
             std::process::exit(0);
@@ -57,8 +66,8 @@ impl SabineWindow {
             }
         };
         match window.launch() {
-            Ok(process) => {
-                launched(&process);
+            Ok(mut process) => {
+                launched(&mut process);
                 match process.wait() {
                     Ok(status) => std::process::exit(status.code().unwrap_or(1)),
                     Err(error) => {

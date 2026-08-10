@@ -170,6 +170,7 @@ pub(crate) fn prepare_bridge_command(command: &mut Command, _bridge_handlers: &B
 pub(crate) struct BridgeDispatch {
     pub(crate) thread: Option<JoinHandle<()>>,
     pub(crate) emitter: Option<BridgeEventEmitter>,
+    pub(crate) ready: crossbeam_channel::Receiver<()>,
 }
 
 pub(crate) fn spawn_bridge_dispatch(
@@ -177,10 +178,12 @@ pub(crate) fn spawn_bridge_dispatch(
     bridge_runtime: sabine_bridge::BridgeRuntime,
     activity: sabine_bridge::ActivityRegistry,
 ) -> BridgeDispatch {
+    let (ready_sender, ready) = crossbeam_channel::bounded(1);
     let Some(stdin) = child.stdin.take() else {
         return BridgeDispatch {
             thread: None,
             emitter: None,
+            ready,
         };
     };
     let stdin = Arc::new(Mutex::new(stdin));
@@ -195,6 +198,7 @@ pub(crate) fn spawn_bridge_dispatch(
         return BridgeDispatch {
             thread: None,
             emitter: Some(emitter),
+            ready,
         };
     };
     let activity_emitter = Some(emitter.clone());
@@ -203,6 +207,10 @@ pub(crate) fn spawn_bridge_dispatch(
     let thread = thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(std::result::Result::ok) {
+            if line == "SABINE_OSR_READY" {
+                let _ = ready_sender.try_send(());
+                continue;
+            }
             let Some(request) = BridgeIpcRequest::parse(&line) else {
                 continue;
             };
@@ -234,6 +242,7 @@ pub(crate) fn spawn_bridge_dispatch(
     BridgeDispatch {
         thread: Some(thread),
         emitter: Some(emitter),
+        ready,
     }
 }
 

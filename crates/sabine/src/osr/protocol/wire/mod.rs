@@ -44,6 +44,8 @@ pub(super) const KIND_GUEST_HIDDEN: u32 = 20;
 pub(super) const KIND_DRAGGABLE_REGIONS_CHANGED: u32 = 21;
 pub(super) const KIND_GUEST_CAPTURE_REQUESTED: u32 = 22;
 pub(super) const KIND_BRIDGE_REQUEST: u32 = 23;
+pub(super) const KIND_FULLSCREEN_REQUESTED: u32 = 27;
+pub(super) const KIND_EXIT_FULLSCREEN_REQUESTED: u32 = 28;
 pub(super) const BATCH_ENTRY_LEN: usize = 28;
 
 pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessage>> {
@@ -162,9 +164,15 @@ pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessa
         KIND_START_DRAG_REQUESTED => OsrMessage::StartDragRequested,
         KIND_MINIMIZE_REQUESTED => OsrMessage::MinimizeRequested,
         KIND_TOGGLE_MAXIMIZE_REQUESTED => OsrMessage::ToggleMaximizeRequested,
+        KIND_FULLSCREEN_REQUESTED => OsrMessage::FullscreenRequested(true),
+        KIND_EXIT_FULLSCREEN_REQUESTED => OsrMessage::FullscreenRequested(false),
         KIND_SHOW_REQUESTED => OsrMessage::ShowRequested,
         KIND_HIDE_REQUESTED => OsrMessage::HideRequested,
-        KIND_FOCUS_REQUESTED => OsrMessage::FocusRequested,
+        KIND_FOCUS_REQUESTED => OsrMessage::FocusRequested(
+            String::from_utf8(payload)
+                .ok()
+                .filter(|token| !token.trim().is_empty()),
+        ),
         KIND_FILE_DRAG_REQUESTED => match parse_file_drag_request(&payload, x, y) {
             Some(request) => OsrMessage::FileDragRequested(request),
             None => {

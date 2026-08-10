@@ -74,6 +74,8 @@ pub(crate) fn launch_process(
         child_exit_sender,
         child_exit_receiver,
         bridge_thread: bridge_dispatch.thread,
+        primary_ready: bridge_dispatch.ready,
+        primary_is_ready: false,
         extra_bridge_threads: Vec::new(),
         bridge_emitter: bridge_dispatch.emitter,
         desktop_services: None,
@@ -177,6 +179,7 @@ pub(crate) fn attach_open_window(
         })?;
     let mut window_config = config.clone();
     window_config.app_id = Some(context.app_id.clone());
+    window_config.bridge = context.bridge.clone();
     let mut child = spawn_osr_host_child(
         &context.runtime_dir,
         &context.host_binary,
@@ -271,6 +274,9 @@ pub(crate) fn cef_osr_command(
             cache_dir.join("browser").display()
         ));
     crate::apply_browser_launch_args(&mut command, &config.browser_options(), config.dev_mode);
+    if config.url.starts_with("file://") {
+        command.arg("--allow-file-access-from-files");
+    }
     crate::host::prepare_detachable_child_command(&mut command);
     command.current_dir(&release_dir);
     #[cfg(target_os = "linux")]

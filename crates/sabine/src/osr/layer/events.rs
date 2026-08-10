@@ -256,13 +256,14 @@ impl OsrLayerHost {
             LayerHostEvent::Message(OsrMessage::FileDragRequested(_)) => {}
             LayerHostEvent::Message(OsrMessage::MinimizeRequested) => {}
             LayerHostEvent::Message(OsrMessage::ToggleMaximizeRequested) => {}
+            LayerHostEvent::Message(OsrMessage::FullscreenRequested(_)) => {}
             LayerHostEvent::Message(OsrMessage::ShowRequested) => {
                 self.set_surface_visible(true, state)
             }
             LayerHostEvent::Message(OsrMessage::HideRequested) => {
                 self.set_surface_visible(false, state)
             }
-            LayerHostEvent::Message(OsrMessage::FocusRequested) => {
+            LayerHostEvent::Message(OsrMessage::FocusRequested(_)) => {
                 self.set_surface_visible(true, state)
             }
             LayerHostEvent::Message(OsrMessage::BridgeRequest(line)) => {
