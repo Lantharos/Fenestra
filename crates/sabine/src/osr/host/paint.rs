@@ -98,7 +98,7 @@ impl OsrNativeHost {
     pub(super) fn accepts_paint(&self) -> bool {
         // Keep compositing while FPS-throttled (blur/occlusion suspend). Only
         // stop accepting paints when the view is actually gone.
-        self.config.visible
+        (self.config.visible || self.config.lifecycle.retain_hidden_frame)
             && !matches!(
                 self.lifecycle_state,
                 LifecycleState::Hibernating | LifecycleState::Hibernated

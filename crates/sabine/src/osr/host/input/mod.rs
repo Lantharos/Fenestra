@@ -20,7 +20,7 @@ impl ApplicationHandler for OsrNativeHost {
         if self.window.is_some() {
             return;
         }
-        if !self.config.visible {
+        if !self.config.visible && !self.config.lifecycle.retain_hidden_frame {
             self.launch_child();
             return;
         }
