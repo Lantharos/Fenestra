@@ -223,9 +223,6 @@ impl OsrNativeHost {
             window.set_visible(false);
         }
         self.suspend(reason);
-        if self.config.hide_on_blur {
-            self.drop_hidden_window();
-        }
     }
 
     pub(super) fn focus_window(&mut self, reason: &str) {
