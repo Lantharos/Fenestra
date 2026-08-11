@@ -16,7 +16,7 @@ use crate::osr::protocol::encode_component;
 
 impl OsrLayerHost {
     pub(super) fn forward_mouse_move(&self, leave: bool) {
-        self.send_control(&format!(
+        self.send_mouse_motion(format!(
             "mouse_move\t{:.2}\t{:.2}\t{}\t{}\n",
             self.cursor_x.max(0.0),
             self.cursor_y.max(0.0),

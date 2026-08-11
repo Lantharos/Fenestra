@@ -42,6 +42,7 @@ impl OsrLayerHost {
             LayerShellEvent::UserEvent(event) => self.handle_host_event(event, state, id),
             LayerShellEvent::NormalDispatch => {
                 self.commit_pending_surface(state, id);
+                self.commit_pending_popup_surface(state);
                 ReturnData::None
             }
             _ => ReturnData::None,
@@ -177,7 +178,7 @@ impl OsrLayerHost {
     ) -> ReturnData<()> {
         match event {
             LayerHostEvent::Connected(stream) => {
-                self.socket = Some(std::sync::Arc::new(std::sync::Mutex::new(stream)));
+                self.control_writer = Some(super::socket::ControlWriter::start(stream));
                 if self.visible {
                     self.set_surface_alpha(self.surface_alpha, state);
                 } else {
@@ -186,7 +187,39 @@ impl OsrLayerHost {
                 self.send_resize();
                 self.force_current_lifecycle("connect");
             }
-            LayerHostEvent::Message(OsrMessage::Frame(frame)) => {
+            LayerHostEvent::MessagesReady(messages) => {
+                for message in messages.drain() {
+                    if let Some(return_data) = self.handle_osr_message(message, state, id) {
+                        return return_data;
+                    }
+                }
+            }
+            LayerHostEvent::Visible(visible) => self.set_surface_visible(visible, state),
+            LayerHostEvent::Alpha(alpha) => self.set_surface_alpha(alpha, state),
+            LayerHostEvent::Margin(margin) => self.set_surface_margin(margin, state),
+            LayerHostEvent::ControlLine(line) => {
+                let mut line = line;
+                if !line.ends_with('\n') {
+                    line.push('\n');
+                }
+                self.send_control(&line);
+            }
+            LayerHostEvent::Disconnected => {
+                self.control_writer = None;
+                return ReturnData::RequestExit;
+            }
+        }
+        ReturnData::None
+    }
+
+    fn handle_osr_message(
+        &mut self,
+        message: OsrMessage,
+        state: &mut WindowState<()>,
+        id: Option<id::Id>,
+    ) -> Option<ReturnData<()>> {
+        match message {
+            OsrMessage::Frame(frame) => {
                 if self.visible {
                     match frame.surface {
                         OsrSurface::Main => {
@@ -199,7 +232,7 @@ impl OsrLayerHost {
                         }
                         OsrSurface::Popup | OsrSurface::Guest(_) => {
                             if let Some(return_data) = self.update_popup_frame(frame, state, id) {
-                                return return_data;
+                                return Some(return_data);
                             }
                         }
                     }
@@ -210,29 +243,33 @@ impl OsrLayerHost {
                     } else {
                         self.hide_surface(state);
                     }
+                } else {
+                    self.cache_hidden_main_frame(frame);
                 }
             }
-            LayerHostEvent::Message(OsrMessage::PaintBatch(batch)) => {
-                if self.visible
-                    && let Some(return_data) = self.refresh_batch_surface(batch, state, id)
-                {
-                    return return_data;
+            OsrMessage::PaintBatch(batch) => {
+                if self.visible {
+                    if let Some(return_data) = self.refresh_batch_surface(batch, state, id) {
+                        return Some(return_data);
+                    }
+                } else {
+                    self.cache_hidden_main_batch(batch);
                 }
             }
-            LayerHostEvent::Message(OsrMessage::AccelFrame(frame)) => {
+            OsrMessage::AccelFrame(frame) => {
                 crate::osr::accel::discard_frame(frame);
             }
-            LayerHostEvent::Message(OsrMessage::PopupHidden) => {
+            OsrMessage::PopupHidden => {
                 self.close_popup(state);
             }
-            LayerHostEvent::Message(OsrMessage::GuestHidden(_id)) => {
+            OsrMessage::GuestHidden(_id) => {
                 self.close_popup(state);
             }
-            LayerHostEvent::Message(OsrMessage::GuestCaptureRequested {
+            OsrMessage::GuestCaptureRequested {
                 browser_id,
                 request_id,
                 ..
-            }) => {
+            } => {
                 let result = self
                     .popup
                     .as_ref()
@@ -249,28 +286,22 @@ impl OsrLayerHost {
                     "SABINE_BRIDGE_RESPONSE\t{browser_id}\t{request_id}\t{status}\t{payload}\n"
                 ));
             }
-            LayerHostEvent::Message(OsrMessage::DraggableRegionsChanged { .. }) => {}
-            LayerHostEvent::Message(OsrMessage::Cursor(cursor)) => {
+            OsrMessage::DraggableRegionsChanged { .. } => {}
+            OsrMessage::Cursor(cursor) => {
                 self.cursor_shape = cursor;
             }
-            LayerHostEvent::Message(OsrMessage::CloseRequested) => {
-                return ReturnData::RequestExit;
+            OsrMessage::CloseRequested => {
+                return Some(ReturnData::RequestExit);
             }
-            LayerHostEvent::Message(OsrMessage::StartDragRequested) => {}
-            LayerHostEvent::Message(OsrMessage::FileDragRequested(_)) => {}
-            LayerHostEvent::Message(OsrMessage::MinimizeRequested) => {}
-            LayerHostEvent::Message(OsrMessage::ToggleMaximizeRequested) => {}
-            LayerHostEvent::Message(OsrMessage::FullscreenRequested(_)) => {}
-            LayerHostEvent::Message(OsrMessage::ShowRequested) => {
-                self.set_surface_visible(true, state)
-            }
-            LayerHostEvent::Message(OsrMessage::HideRequested) => {
-                self.set_surface_visible(false, state)
-            }
-            LayerHostEvent::Message(OsrMessage::FocusRequested(_)) => {
-                self.set_surface_visible(true, state)
-            }
-            LayerHostEvent::Message(OsrMessage::BridgeRequest(line)) => {
+            OsrMessage::StartDragRequested => {}
+            OsrMessage::FileDragRequested(_) => {}
+            OsrMessage::MinimizeRequested => {}
+            OsrMessage::ToggleMaximizeRequested => {}
+            OsrMessage::FullscreenRequested(_) => {}
+            OsrMessage::ShowRequested => self.set_surface_visible(true, state),
+            OsrMessage::HideRequested => self.set_surface_visible(false, state),
+            OsrMessage::FocusRequested(_) => self.set_surface_visible(true, state),
+            OsrMessage::BridgeRequest(line) => {
                 if !line.is_empty() {
                     let mut output = std::io::stdout();
                     use std::io::Write;
@@ -278,22 +309,8 @@ impl OsrLayerHost {
                     let _ = output.flush();
                 }
             }
-            LayerHostEvent::Visible(visible) => self.set_surface_visible(visible, state),
-            LayerHostEvent::Alpha(alpha) => self.set_surface_alpha(alpha, state),
-            LayerHostEvent::Margin(margin) => self.set_surface_margin(margin, state),
-            LayerHostEvent::ControlLine(line) => {
-                let mut line = line;
-                if !line.ends_with('\n') {
-                    line.push('\n');
-                }
-                self.send_control(&line);
-            }
-            LayerHostEvent::Disconnected => {
-                self.socket = None;
-                return ReturnData::RequestExit;
-            }
         }
-        ReturnData::None
+        None
     }
 
     pub(super) fn ensure_child(&mut self) {

@@ -1,24 +1,207 @@
 use std::{
-    io::{self, BufRead},
+    collections::VecDeque,
+    io::{self, BufRead, Write},
     net::Shutdown,
     os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
+    sync::{Arc, Condvar, Mutex},
     thread,
 };
 
 use layershellev::calloop::channel::Sender;
 
 use crate::ShellSurfaceMargin;
-use crate::osr::protocol::{OsrMessage, read_message};
+use crate::osr::protocol::{OsrMessage, OsrPaintBatch, read_message};
 
 pub(super) enum LayerHostEvent {
     Connected(UnixStream),
-    Message(OsrMessage),
+    MessagesReady(Arc<MessageQueue>),
     Visible(bool),
     Alpha(f32),
     Margin(ShellSurfaceMargin),
     ControlLine(String),
     Disconnected,
+}
+
+pub(super) struct MessageQueue {
+    state: Mutex<MessageQueueState>,
+}
+
+#[derive(Default)]
+struct MessageQueueState {
+    messages: VecDeque<OsrMessage>,
+    wake_queued: bool,
+}
+
+impl MessageQueue {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(MessageQueueState::default()),
+        }
+    }
+
+    fn push(&self, message: OsrMessage) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            return false;
+        };
+        match message {
+            OsrMessage::PaintBatch(incoming) => {
+                let incoming = match state.messages.back_mut() {
+                    Some(OsrMessage::PaintBatch(queued)) => merge_paint_batch(queued, incoming),
+                    _ => Some(incoming),
+                };
+                if let Some(incoming) = incoming {
+                    state.messages.push_back(OsrMessage::PaintBatch(incoming));
+                }
+            }
+            message => state.messages.push_back(message),
+        }
+        if state.wake_queued {
+            false
+        } else {
+            state.wake_queued = true;
+            true
+        }
+    }
+
+    pub(super) fn drain(&self) -> VecDeque<OsrMessage> {
+        let Ok(mut state) = self.state.lock() else {
+            return VecDeque::new();
+        };
+        state.wake_queued = false;
+        std::mem::take(&mut state.messages)
+    }
+}
+
+fn merge_paint_batch(queued: &mut OsrPaintBatch, incoming: OsrPaintBatch) -> Option<OsrPaintBatch> {
+    if queued.surface != incoming.surface
+        || queued.width != incoming.width
+        || queued.height != incoming.height
+    {
+        return Some(incoming);
+    }
+    queued.x = incoming.x;
+    queued.y = incoming.y;
+    for frame in incoming.frames {
+        queued
+            .frames
+            .retain(|queued_frame| !frame_covers(&frame, queued_frame));
+        queued.frames.push(frame);
+    }
+    None
+}
+
+fn frame_covers(
+    newer: &crate::osr::protocol::OsrFrame,
+    older: &crate::osr::protocol::OsrFrame,
+) -> bool {
+    let newer_right = i64::from(newer.x) + i64::from(newer.width);
+    let newer_bottom = i64::from(newer.y) + i64::from(newer.height);
+    let older_right = i64::from(older.x) + i64::from(older.width);
+    let older_bottom = i64::from(older.y) + i64::from(older.height);
+    newer.x <= older.x
+        && newer.y <= older.y
+        && newer_right >= older_right
+        && newer_bottom >= older_bottom
+}
+
+pub(super) struct ControlWriter {
+    queue: Arc<ControlQueue>,
+}
+
+struct ControlQueue {
+    state: Mutex<ControlQueueState>,
+    ready: Condvar,
+}
+
+struct ControlQueueState {
+    messages: VecDeque<ControlMessage>,
+    closed: bool,
+}
+
+enum ControlMessage {
+    Motion(String),
+    Ordered(String),
+}
+
+impl ControlWriter {
+    pub(super) fn start(mut stream: UnixStream) -> Self {
+        let queue = Arc::new(ControlQueue {
+            state: Mutex::new(ControlQueueState {
+                messages: VecDeque::new(),
+                closed: false,
+            }),
+            ready: Condvar::new(),
+        });
+        let worker_queue = Arc::clone(&queue);
+        thread::spawn(move || {
+            while let Some(message) = worker_queue.next() {
+                let line = match message {
+                    ControlMessage::Motion(line) | ControlMessage::Ordered(line) => line,
+                };
+                if stream.write_all(line.as_bytes()).is_err() {
+                    break;
+                }
+            }
+        });
+        Self { queue }
+    }
+
+    pub(super) fn send(&self, line: String) {
+        self.queue.push(ControlMessage::Ordered(line));
+    }
+
+    pub(super) fn send_motion(&self, line: String) {
+        let Ok(mut state) = self.queue.state.lock() else {
+            return;
+        };
+        if state.closed {
+            return;
+        }
+        if let Some(ControlMessage::Motion(pending)) = state.messages.back_mut() {
+            *pending = line;
+        } else {
+            state.messages.push_back(ControlMessage::Motion(line));
+        }
+        drop(state);
+        self.queue.ready.notify_one();
+    }
+}
+
+impl Drop for ControlWriter {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.queue.state.lock() {
+            state.closed = true;
+        }
+        self.queue.ready.notify_one();
+    }
+}
+
+impl ControlQueue {
+    fn push(&self, message: ControlMessage) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        if state.closed {
+            return;
+        }
+        state.messages.push_back(message);
+        drop(state);
+        self.ready.notify_one();
+    }
+
+    fn next(&self) -> Option<ControlMessage> {
+        let mut state = self.state.lock().ok()?;
+        loop {
+            if let Some(message) = state.messages.pop_front() {
+                return Some(message);
+            }
+            if state.closed {
+                return None;
+            }
+            state = self.ready.wait(state).ok()?;
+        }
+    }
 }
 
 pub(super) fn start_layer_parent_bridge_reader(sender: Sender<LayerHostEvent>) {
@@ -75,6 +258,7 @@ fn start_socket_reader(
     sender: Sender<LayerHostEvent>,
 ) {
     thread::spawn(move || {
+        let messages = Arc::new(MessageQueue::new());
         let mut stream = loop {
             let Ok((mut candidate, _)) = listener.accept() else {
                 endpoint.unlink();
@@ -94,7 +278,11 @@ fn start_socket_reader(
         loop {
             match read_message(&mut stream) {
                 Ok(Some(message)) => {
-                    if sender.send(LayerHostEvent::Message(message)).is_err() {
+                    if messages.push(message)
+                        && sender
+                            .send(LayerHostEvent::MessagesReady(Arc::clone(&messages)))
+                            .is_err()
+                    {
                         break;
                     }
                 }

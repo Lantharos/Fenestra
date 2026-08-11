@@ -3,14 +3,19 @@ use std::fs::File;
 use layershellev::reexport::xdg_positioner::{Anchor, ConstraintAdjustment, Gravity};
 use layershellev::{NewPopUpSettings, PopupPlacement, ReturnData, WindowState, id};
 use sabine_platform::{WindowBackgroundEffect, WindowOptions, WindowRegion, WindowRegions};
+use smithay_client_toolkit::shm::{Shm, slot::SlotPool};
 use wayland_client::{QueueHandle, protocol::wl_buffer::WlBuffer};
 
 use crate::osr::frame_buffer::buffer_len;
 use crate::osr::protocol::{OsrFrame, OsrPaintBatch, OsrSurface};
 
-use super::buffer::{DamageRect, paint_buffer_file, paint_frames_buffer_file};
+use super::buffer::{
+    DamageRect, compose_frames_buffer, paint_buffer_file, paint_frames_buffer_file,
+};
 use super::surface::create_buffer;
 use super::types::{OsrLayerHost, PopupSurface};
+
+const MAX_POPUP_BUFFERS: usize = 4;
 
 impl OsrLayerHost {
     pub(super) fn install_popup_buffer(
@@ -26,9 +31,6 @@ impl OsrLayerHost {
         };
         popup.size = (width, height);
         popup.mapped = false;
-        if let Ok(clone) = file.try_clone() {
-            popup.buffer_file = Some(clone);
-        }
         let byte_len = buffer_len(width, height);
         let paint_result = if popup.pending_frames.is_empty() {
             paint_buffer_file(
@@ -56,7 +58,9 @@ impl OsrLayerHost {
             let _ = file.set_len(byte_len as u64);
         }
         let buffer = create_buffer(file, shm, qh, width, height);
-        popup.wayland_buffer = Some(buffer.clone());
+        popup.pool = SlotPool::new(byte_len.max(1), &Shm::from(shm.clone())).ok();
+        popup.buffers.clear();
+        popup.pending_refresh = false;
         buffer
     }
 
@@ -139,8 +143,9 @@ impl OsrLayerHost {
             size,
             frame: Some(frame),
             pending_frames: Vec::new(),
-            buffer_file: None,
-            wayland_buffer: None,
+            pool: None,
+            buffers: Vec::new(),
+            pending_refresh: false,
             buffer: Vec::new(),
             scratch: Vec::new(),
             mapped: false,
@@ -168,24 +173,16 @@ impl OsrLayerHost {
         let Some(popup) = self.popup.as_mut() else {
             return;
         };
-        let Some(file) = &popup.buffer_file else {
-            return;
-        };
-        let Ok(mut file) = file.try_clone() else {
-            return;
-        };
-        let damage = match paint_buffer_file(
-            &mut file,
+        let damage = compose_frames_buffer(
             popup.size.0,
             popup.size.1,
-            popup.frame.as_ref(),
-            None,
+            popup
+                .frame
+                .as_ref()
+                .map(std::slice::from_ref)
+                .unwrap_or_default(),
             &mut popup.buffer,
-            &mut popup.scratch,
-        ) {
-            Ok(damage) => damage,
-            Err(_) => return,
-        };
+        );
         self.commit_popup_surface(state, damage);
     }
 
@@ -197,17 +194,23 @@ impl OsrLayerHost {
         let Some(unit) = state.get_unit_with_id(popup.id) else {
             return;
         };
-        let Some(buffer) = popup.wayland_buffer.as_ref() else {
-            unit.refresh();
+        let Some(buffer_index) = prepare_popup_buffer(popup) else {
+            if popup.pool.is_none() {
+                unit.refresh();
+            }
+            popup.pending_refresh = true;
             return;
         };
-        let damage = if popup.mapped {
+        let damage = if popup.mapped && !popup.pending_refresh {
             damage
         } else {
             DamageRect::full(popup.size.0, popup.size.1)
         };
         let surface = unit.get_wlsurface();
-        surface.attach(Some(buffer), 0, 0);
+        if popup.buffers[buffer_index].attach_to(surface).is_err() {
+            popup.pending_refresh = true;
+            return;
+        }
         surface.damage_buffer(
             damage.x as i32,
             damage.y as i32,
@@ -215,7 +218,20 @@ impl OsrLayerHost {
             damage.height as i32,
         );
         surface.commit();
+        super::surface::flush_surface(surface);
+        popup.pending_refresh = false;
         popup.mapped = true;
+    }
+
+    pub(super) fn commit_pending_popup_surface(&mut self, state: &mut WindowState<()>) {
+        let Some(popup) = self.popup.as_ref() else {
+            return;
+        };
+        if !popup.pending_refresh {
+            return;
+        }
+        let damage = DamageRect::full(popup.size.0, popup.size.1);
+        self.commit_popup_surface(state, damage);
     }
 
     pub(super) fn ensure_popup_effect(&mut self, state: &WindowState<()>) {
@@ -264,36 +280,47 @@ impl OsrLayerHost {
         let Some(popup) = self.popup.as_mut() else {
             return;
         };
-        let Some(file) = &popup.buffer_file else {
-            if let Some(frame) = batch.frames.last().cloned() {
-                popup.frame = Some(frame);
-            }
-            return;
-        };
-        let Ok(mut file) = file.try_clone() else {
-            return;
-        };
         let local_frames = batch
             .frames
             .iter()
             .cloned()
             .map(local_popup_frame)
             .collect::<Vec<_>>();
-        let damage = match paint_frames_buffer_file(
-            &mut file,
-            popup.size.0,
-            popup.size.1,
-            &local_frames,
-            &[],
-            &mut popup.buffer,
-            &mut popup.scratch,
-        ) {
-            Ok(damage) => damage,
-            Err(_) => return,
-        };
+        let damage =
+            compose_frames_buffer(popup.size.0, popup.size.1, &local_frames, &mut popup.buffer);
         popup.frame = local_frames.last().cloned();
         self.commit_popup_surface(state, damage);
     }
+}
+
+fn prepare_popup_buffer(popup: &mut PopupSurface) -> Option<usize> {
+    let pool = popup.pool.as_mut()?;
+    let pixels = popup.buffer.as_slice();
+    if pixels.len() != buffer_len(popup.size.0, popup.size.1) {
+        return None;
+    }
+
+    for (index, buffer) in popup.buffers.iter().enumerate() {
+        if let Some(canvas) = buffer.canvas(pool) {
+            canvas.copy_from_slice(pixels);
+            return Some(index);
+        }
+    }
+
+    if popup.buffers.len() >= MAX_POPUP_BUFFERS {
+        return None;
+    }
+    let (buffer, canvas) = pool
+        .create_buffer(
+            popup.size.0 as i32,
+            popup.size.1 as i32,
+            (popup.size.0 * 4) as i32,
+            wayland_client::protocol::wl_shm::Format::Argb8888,
+        )
+        .ok()?;
+    canvas.copy_from_slice(pixels);
+    popup.buffers.push(buffer);
+    Some(popup.buffers.len() - 1)
 }
 
 fn local_popup_frame(mut frame: OsrFrame) -> OsrFrame {

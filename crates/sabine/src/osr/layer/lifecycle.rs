@@ -4,14 +4,17 @@ use layershellev::WindowState;
 
 impl OsrLayerHost {
     pub(super) fn send_control(&self, line: &str) {
-        let Some(socket) = &self.socket else {
+        let Some(writer) = &self.control_writer else {
             return;
         };
-        if let Ok(mut socket) = socket.lock() {
-            use std::io::Write;
-            let _ = socket.write_all(line.as_bytes());
-            let _ = socket.flush();
-        }
+        writer.send(line.to_string());
+    }
+
+    pub(super) fn send_mouse_motion(&self, line: String) {
+        let Some(writer) = &self.control_writer else {
+            return;
+        };
+        writer.send_motion(line);
     }
 
     pub(super) fn send_lifecycle(&self, state: LayerLifecycleState, reason: &str) {

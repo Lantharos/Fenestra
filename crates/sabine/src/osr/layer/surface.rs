@@ -1,24 +1,56 @@
-use std::{
-    fs::{File, OpenOptions},
-    os::fd::AsFd,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{fs::File, os::fd::AsFd};
 
 use layershellev::{WindowState, reexport::wl_shm};
 use sabine_platform::ShellSurfaceKeyboardInteractivity;
 use smithay_client_toolkit::shm::{Shm, slot::SlotPool};
-use wayland_client::{QueueHandle, protocol::wl_buffer::WlBuffer};
+use wayland_client::{Proxy, QueueHandle, protocol::wl_buffer::WlBuffer};
 
 use crate::osr::frame_buffer::buffer_len;
 use crate::osr::protocol::{OsrPaintBatch, OsrSurface};
 
-use super::buffer::{DamageRect, paint_buffer_file, paint_frames_buffer_file};
+use super::buffer::{DamageRect, compose_frames_buffer, paint_buffer_file};
 use super::shell::keyboard_for_shell;
 use super::types::OsrLayerHost;
 
 const MAX_MAIN_BUFFERS: usize = 4;
 
 impl OsrLayerHost {
+    pub(super) fn cache_hidden_main_frame(&mut self, frame: crate::osr::protocol::OsrFrame) {
+        if frame.surface != OsrSurface::Main {
+            return;
+        }
+        let frame_size = (frame.width, frame.height);
+        if frame.x == 0 && frame.y == 0 && frame_size == self.surface_size {
+            self.main_buffer.clear();
+            self.main_frame_surface_size = Some(frame_size);
+        } else if self.main_frame_surface_size != Some(self.surface_size) {
+            return;
+        }
+        compose_frames_buffer(
+            self.buffer_size.0,
+            self.buffer_size.1,
+            std::slice::from_ref(&frame),
+            &mut self.main_buffer,
+        );
+        self.main_frame = Some(frame);
+    }
+
+    pub(super) fn cache_hidden_main_batch(&mut self, batch: OsrPaintBatch) {
+        if batch.surface != OsrSurface::Main || (batch.width, batch.height) != self.surface_size {
+            return;
+        }
+        compose_frames_buffer(
+            batch.width,
+            batch.height,
+            &batch.frames,
+            &mut self.main_buffer,
+        );
+        if let Some(frame) = batch.frames.last().cloned() {
+            self.main_frame = Some(frame);
+            self.main_frame_surface_size = Some((batch.width, batch.height));
+        }
+    }
+
     pub(super) fn install_wayland_buffer(
         &mut self,
         file: &mut File,
@@ -58,7 +90,6 @@ impl OsrLayerHost {
             (),
         );
         self.reset_main_pool(shm, byte_len);
-        self.buffer_file = temporary_buffer_file().ok();
         buffer
     }
 
@@ -74,7 +105,6 @@ impl OsrLayerHost {
         self.main_buffer.clear();
         self.scratch.clear();
         self.reset_main_pool(&shm, buffer_len(width, height));
-        self.buffer_file = temporary_buffer_file().ok();
     }
 
     pub(super) fn refresh_surface(
@@ -85,24 +115,15 @@ impl OsrLayerHost {
         if !self.visible || !self.main_frame_ready() {
             return;
         }
-        let Some(file) = &self.buffer_file else {
-            return;
-        };
-        let Ok(mut file) = file.try_clone() else {
-            return;
-        };
-        let damage = match paint_buffer_file(
-            &mut file,
+        let damage = compose_frames_buffer(
             self.buffer_size.0,
             self.buffer_size.1,
-            self.main_frame.as_ref(),
-            None,
+            self.main_frame
+                .as_ref()
+                .map(std::slice::from_ref)
+                .unwrap_or_default(),
             &mut self.main_buffer,
-            &mut self.scratch,
-        ) {
-            Ok(damage) => damage,
-            Err(_) => return,
-        };
+        );
         if let Some(id) = id
             && let Some(unit) = state.get_unit_with_id(id)
         {
@@ -128,24 +149,12 @@ impl OsrLayerHost {
         if matches!(batch.surface, OsrSurface::Popup | OsrSurface::Guest(_)) {
             return self.update_popup_batch(batch, state, id);
         }
-        let Some(file) = &self.buffer_file else {
-            return None;
-        };
-        let Ok(mut file) = file.try_clone() else {
-            return None;
-        };
-        let damage = match paint_frames_buffer_file(
-            &mut file,
+        let damage = compose_frames_buffer(
             self.buffer_size.0,
             self.buffer_size.1,
             &batch.frames,
-            &[],
             &mut self.main_buffer,
-            &mut self.scratch,
-        ) {
-            Ok(damage) => damage,
-            Err(_) => return None,
-        };
+        );
         match batch.surface {
             OsrSurface::Main => {
                 self.main_frame = batch.frames.last().cloned();
@@ -179,6 +188,7 @@ impl OsrLayerHost {
         ));
         unit.get_wlsurface().attach(None, 0, 0);
         unit.get_wlsurface().commit();
+        flush_surface(unit.get_wlsurface());
         self.surface_mapped = false;
     }
 
@@ -225,6 +235,7 @@ impl OsrLayerHost {
             damage.height as i32,
         );
         surface.commit();
+        flush_surface(surface);
         self.pending_surface_refresh = false;
         self.surface_mapped = true;
     }
@@ -303,6 +314,12 @@ impl OsrLayerHost {
     }
 }
 
+pub(super) fn flush_surface(surface: &wayland_client::protocol::wl_surface::WlSurface) {
+    if let Some(backend) = surface.backend().upgrade() {
+        let _ = backend.flush();
+    }
+}
+
 pub(super) fn create_buffer(
     file: &mut File,
     shm: &wl_shm::WlShm,
@@ -321,22 +338,4 @@ pub(super) fn create_buffer(
         qh,
         (),
     )
-}
-
-pub(super) fn temporary_buffer_file() -> std::io::Result<File> {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    let path = std::env::temp_dir().join(format!(
-        "sabine-layer-buffer-{}-{nanos}.shm",
-        std::process::id()
-    ));
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(&path)?;
-    let _ = std::fs::remove_file(path);
-    Ok(file)
 }

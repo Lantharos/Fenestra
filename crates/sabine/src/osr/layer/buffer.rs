@@ -115,6 +115,26 @@ pub(super) fn paint_frames_buffer_file(
     Ok(damage)
 }
 
+pub(super) fn compose_frames_buffer(
+    width: u32,
+    height: u32,
+    frames: &[OsrFrame],
+    buffer: &mut Vec<u8>,
+) -> DamageRect {
+    let resized = ensure_buffer(buffer, buffer_len(width, height));
+    let mut damage = resized.then_some(DamageRect::full(width, height));
+    for frame in frames {
+        compose_frame(frame, buffer, width, height, false);
+        if let Some(frame_damage) = damage_from_frame(frame, width, height) {
+            damage = Some(match damage {
+                Some(damage) => damage.union(frame_damage),
+                None => frame_damage,
+            });
+        }
+    }
+    damage.unwrap_or_else(|| DamageRect::full(width, height))
+}
+
 fn damage_from_frame(frame: &OsrFrame, width: u32, height: u32) -> Option<DamageRect> {
     let left = i64::from(frame.x).max(0);
     let top = i64::from(frame.y).max(0);

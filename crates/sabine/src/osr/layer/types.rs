@@ -1,27 +1,20 @@
-use std::{
-    fs::File,
-    os::unix::net::UnixStream,
-    process::Child,
-    sync::{Arc, Mutex},
-    time::Instant,
-};
+use std::{process::Child, time::Instant};
 
 use layershellev::{WindowState, calloop::channel::Sender, id, reexport::wl_shm::WlShm};
 use smithay_client_toolkit::shm::slot::{Buffer as ShmBuffer, SlotPool};
-use wayland_client::{QueueHandle, protocol::wl_buffer::WlBuffer};
+use wayland_client::QueueHandle;
 
 use crate::osr::host::OsrHostConfig;
 use crate::osr::protocol::OsrFrame;
 
 use super::alpha::LayerAlphaModifier;
-use super::socket::LayerHostEvent;
+use super::socket::{ControlWriter, LayerHostEvent};
 
 pub(super) struct OsrLayerHost {
     pub(super) config: OsrHostConfig,
     pub(super) sender: Sender<LayerHostEvent>,
     pub(super) child: Option<Child>,
-    pub(super) socket: Option<Arc<Mutex<UnixStream>>>,
-    pub(super) buffer_file: Option<File>,
+    pub(super) control_writer: Option<ControlWriter>,
     pub(super) shm: Option<WlShm>,
     pub(super) queue_handle: Option<QueueHandle<WindowState<()>>>,
     pub(super) main_pool: Option<SlotPool>,
@@ -57,8 +50,9 @@ pub(super) struct PopupSurface {
     pub(super) size: (u32, u32),
     pub(super) frame: Option<OsrFrame>,
     pub(super) pending_frames: Vec<OsrFrame>,
-    pub(super) buffer_file: Option<File>,
-    pub(super) wayland_buffer: Option<WlBuffer>,
+    pub(super) pool: Option<SlotPool>,
+    pub(super) buffers: Vec<ShmBuffer>,
+    pub(super) pending_refresh: bool,
     pub(super) buffer: Vec<u8>,
     pub(super) scratch: Vec<u8>,
     pub(super) mapped: bool,
@@ -107,8 +101,7 @@ impl OsrLayerHost {
             config,
             sender,
             child: None,
-            socket: None,
-            buffer_file: None,
+            control_writer: None,
             shm: None,
             queue_handle: None,
             main_pool: None,

@@ -23,7 +23,7 @@ pub(crate) fn run(config: OsrHostConfig) -> Result<(), String> {
         .clone()
         .ok_or_else(|| "missing Sabine shell surface options".to_string())?;
     if shell_surface.size.is_none_or(|(width, height)| {
-        height == 0 || (width == 0 && !shell_surface.anchor.left && !shell_surface.anchor.right)
+        height == 0 || (width == 0 && (!shell_surface.anchor.left || !shell_surface.anchor.right))
     }) {
         let (width, height) = shell_surface.size.unwrap_or((0, 0));
         shell_surface.size = Some((
