@@ -28,6 +28,9 @@ int XIOErrorHandlerImpl(Display* display) {
 
 namespace {
 
+#if defined(OS_LINUX)
+NO_STACK_PROTECTOR
+#endif
 int RunSabineHost(CefMainArgs main_args, int argc, char* argv[]) {
   CefRefPtr<SabineApp> app(new SabineApp);
 
