@@ -94,15 +94,21 @@ fn package_rpm(
     if command_exists("rpmbuild") {
         let rpm_dir = staged.root.join("rpms");
         fs::create_dir_all(&rpm_dir).map_err(|error| error.to_string())?;
+        let spec = fs::canonicalize(&spec).map_err(|error| error.to_string())?;
+        let rpm_dir = fs::canonicalize(&rpm_dir).map_err(|error| error.to_string())?;
+        let source_dir = fs::canonicalize(&staged.app_dir).map_err(|error| error.to_string())?;
+        let buildroot = fs::canonicalize(&staged.root)
+            .map_err(|error| error.to_string())?
+            .join("rpm-buildroot");
         run(Command::new("rpmbuild")
             .arg("-bb")
             .arg(&spec)
             .arg("--buildroot")
-            .arg(staged.root.join("rpm-buildroot"))
+            .arg(buildroot)
             .arg("--define")
             .arg(format!("_rpmdir {}", rpm_dir.display()))
             .arg("--define")
-            .arg(format!("sabine_source {}", staged.app_dir.display())))?;
+            .arg(format!("sabine_source {}", source_dir.display())))?;
         let built = find_file_with_extension(&rpm_dir, "rpm")
             .ok_or_else(|| "rpmbuild completed without producing an RPM".to_string())?;
         ensure_parent(&artifact)?;
