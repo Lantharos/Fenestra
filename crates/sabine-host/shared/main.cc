@@ -14,6 +14,7 @@
 #include "include/base/cef_compiler_specific.h"
 #include "include/cef_app.h"
 #include "include/cef_command_line.h"
+#include "entry.h"
 
 #if defined(CEF_X11)
 namespace {
@@ -26,8 +27,6 @@ int XIOErrorHandlerImpl(Display* display) {
 }
 }  // namespace
 #endif
-
-namespace {
 
 #if defined(OS_LINUX)
 NO_STACK_PROTECTOR
@@ -81,8 +80,6 @@ int RunSabineHost(CefMainArgs main_args, int argc, char* argv[]) {
   return 0;
 }
 
-}  // namespace
-
 #if defined(OS_WIN) || defined(_WIN32)
 int APIENTRY wWinMain(HINSTANCE hInstance,
                       HINSTANCE hPrevInstance,
@@ -94,7 +91,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance,
   CefMainArgs main_args(hInstance);
   return RunSabineHost(main_args, __argc, __argv);
 }
-#else
+#elif !defined(OS_MAC)
 NO_STACK_PROTECTOR
 int main(int argc, char* argv[]) {
   CefMainArgs main_args(argc, argv);

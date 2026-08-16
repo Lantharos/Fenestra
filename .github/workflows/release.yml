@@ -61,7 +61,18 @@ jobs:
           New-Item -ItemType Directory -Force "release/system"
           Copy-Item "target/release/sabine-service$suffix" "release/system/"
           Copy-Item "target/release/sabine-service-daemon$suffix" "release/system/"
-          Copy-Item $env:SABINE_HOST_PATH "release/system/"
+          if ($IsMacOS) {
+            $hostBundle = Get-Item $env:SABINE_HOST_PATH
+            while ($hostBundle -and $hostBundle.Extension -ne ".app") {
+              $hostBundle = $hostBundle.Parent
+            }
+            if (-not $hostBundle) {
+              throw "macOS Sabine host is not inside an app bundle"
+            }
+            Copy-Item $hostBundle.FullName "release/system/" -Recurse
+          } else {
+            Copy-Item $env:SABINE_HOST_PATH "release/system/"
+          }
           Copy-Item "target/release/sabine$suffix" "release/"
       - name: Package assets
         shell: pwsh

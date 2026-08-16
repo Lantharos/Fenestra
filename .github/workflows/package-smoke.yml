@@ -80,6 +80,7 @@ jobs:
           if ($artifacts.Count -ne 1 -or $artifacts[0].Extension -cne "${{ matrix.extension }}") {
             throw "expected one ${{ matrix.extension }} artifact, found $($artifacts.Name -join ', ')"
           }
+          Remove-Item Env:GITHUB_REF_NAME
           cargo run --release -p sabine-cli -- release-manifest release-probe --output dist/sabine-update.json --artifact "${{ matrix.update_target }}=$($artifacts[0].FullName)"
           $manifest = Get-Content dist/sabine-update.json -Raw | ConvertFrom-Json
           if ([string]::IsNullOrWhiteSpace($manifest.signature)) {

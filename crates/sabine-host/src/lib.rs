@@ -18,6 +18,12 @@ use serde::Deserialize;
 const HOST_SOURCES: &[(&str, &str)] = &[
     ("CMakeLists.txt", include_str!("../shared/CMakeLists.txt")),
     ("main.cc", include_str!("../shared/main.cc")),
+    ("entry.h", include_str!("../shared/entry.h")),
+    ("main_mac.mm", include_str!("../shared/main_mac.mm")),
+    (
+        "mac/Info.plist.in",
+        include_str!("../shared/mac/Info.plist.in"),
+    ),
     ("app/app.cc", include_str!("../shared/app/app.cc")),
     ("app/app.h", include_str!("../shared/app/app.h")),
     ("common/json.cc", include_str!("../shared/common/json.cc")),
@@ -103,10 +109,14 @@ pub fn host_binary_name() -> &'static str {
 }
 
 pub fn host_release_binary(runtime_dir: &Path) -> PathBuf {
-    runtime_dir
+    let root = runtime_dir
         .join(".sabine-hosts")
-        .join(host_source_fingerprint())
-        .join(host_binary_name())
+        .join(host_source_fingerprint());
+    if cfg!(target_os = "macos") {
+        root.join("sabine-host.app/Contents/MacOS/sabine-host")
+    } else {
+        root.join(host_binary_name())
+    }
 }
 
 pub fn ensure_host(runtime_dir: &Path) -> Result<PathBuf, String> {
@@ -163,9 +173,9 @@ On Windows, a partial extract often means Git's GNU tar mishandled the path — 
     apply_cmake_generator(&mut configure)?;
     // Forward slashes so CEF's ADD_LOGICAL_TARGET does not treat \U as an escape.
     let cef_root = runtime_dir.to_string_lossy().replace('\\', "/");
-    let output_dir = binary
-        .parent()
-        .expect("host binary has a parent")
+    let output_dir = runtime_dir
+        .join(".sabine-hosts")
+        .join(expected_stamp)
         .to_string_lossy()
         .replace('\\', "/");
     configure
@@ -280,7 +290,7 @@ fn prebuilt_host_path() -> Option<PathBuf> {
     if let Ok(executable) = std::env::current_exe()
         && let Some(directory) = executable.parent()
     {
-        let path = directory.join(host_binary_name());
+        let path = installed_host_path(directory);
         if path.is_file() {
             return Some(path);
         }
@@ -304,11 +314,17 @@ fn prebuilt_host_path() -> Option<PathBuf> {
     let current =
         serde_json::from_slice::<CurrentSystem>(&std::fs::read(bin.join("current.json")).ok()?)
             .ok()?;
-    let path = bin
-        .join("versions")
-        .join(current.active)
-        .join(host_binary_name());
+    let directory = bin.join("versions").join(current.active);
+    let path = installed_host_path(&directory);
     path.is_file().then_some(path)
+}
+
+fn installed_host_path(directory: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        directory.join("sabine-host.app/Contents/MacOS/sabine-host")
+    } else {
+        directory.join(host_binary_name())
+    }
 }
 
 fn apply_cmake_generator(configure: &mut Command) -> Result<(), String> {
@@ -540,11 +556,18 @@ mod tests {
         let embedded: Vec<&str> = HOST_SOURCES
             .iter()
             .map(|(name, _)| *name)
-            .filter(|name| *name != "CMakeLists.txt")
+            .filter(|name| {
+                !matches!(
+                    *name,
+                    "CMakeLists.txt" | "main_mac.mm" | "mac/Info.plist.in"
+                )
+            })
             .collect();
         assert_eq!(
             listed, embedded,
             "HOST_SOURCES must list every CMake host source in the same order"
         );
+        assert!(cmake.contains("list(APPEND SABINE_HOST_SOURCES main_mac.mm)"));
+        assert!(cmake.contains("mac/Info.plist.in"));
     }
 }

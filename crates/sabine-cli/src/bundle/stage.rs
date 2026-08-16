@@ -85,9 +85,21 @@ fn stage_offline_runtime(format: BundleFormat, staged: &StagedBundle) -> Result<
     for (source, name) in [
         (&service, service.file_name().unwrap_or_default()),
         (&daemon, daemon.file_name().unwrap_or_default()),
-        (&host, host.file_name().unwrap_or_default()),
     ] {
         copy_binary(source, &binary_dir.join(name))?;
+    }
+    if cfg!(target_os = "macos") {
+        let host_bundle = host
+            .ancestors()
+            .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+            .ok_or_else(|| "macOS Sabine host is not inside an app bundle".to_string())?;
+        copy_dir_recursive(host_bundle, &binary_dir.join("sabine-host.app"))
+            .map_err(|error| format!("could not stage macOS Sabine host: {error}"))?;
+    } else {
+        copy_binary(
+            &host,
+            &binary_dir.join(host.file_name().unwrap_or_default()),
+        )?;
     }
     let runtime_name = runtime
         .location

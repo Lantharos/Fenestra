@@ -124,22 +124,36 @@ fn seed_managed_install(service: &Path) -> ServiceResult<PathBuf> {
     let destination = versions_dir().join(version);
     let installed_service = destination.join(service_binary_name());
     if complete_service_at(installed_service.clone()).is_none()
-        || !destination.join(sabine_host_name()).is_file()
+        || !destination.join(sabine_host_relative_path()).is_file()
     {
         let staging = versions_dir().join(format!("{version}.installing"));
         if staging.exists() {
             fs::remove_dir_all(&staging)?;
         }
         fs::create_dir_all(&staging)?;
-        for name in [
-            service_binary_name(),
-            service_daemon_binary_name(),
-            sabine_host_name(),
-        ] {
+        for name in [service_binary_name(), service_daemon_binary_name()] {
             let source = source_dir.join(name);
             if !source.is_file() {
                 return Err(ServiceError::Update(format!(
                     "offline Sabine system bundle is missing {name}"
+                )));
+            }
+            let target = staging.join(name);
+            fs::copy(source, &target)?;
+            make_executable(&target)?;
+        }
+        if cfg!(target_os = "macos") {
+            copy_directory(
+                &source_dir.join("sabine-host.app"),
+                &staging.join("sabine-host.app"),
+            )?;
+        } else {
+            let name = sabine_host_relative_path();
+            let source = source_dir.join(&name);
+            if !source.is_file() {
+                return Err(ServiceError::Update(format!(
+                    "offline Sabine system bundle is missing {}",
+                    name.display()
                 )));
             }
             let target = staging.join(name);
@@ -233,7 +247,7 @@ fn install_latest_system(
     let install_dir = versions_dir().join(&manifest.version);
     let destination = install_dir.join(service_binary_name());
     if complete_service_at(destination.clone()).is_none()
-        || !install_dir.join(sabine_host_name()).is_file()
+        || !install_dir.join(sabine_host_relative_path()).is_file()
     {
         install_system_archive(&manifest, &install_dir, on_progress)?;
     }
@@ -297,14 +311,15 @@ fn install_system_archive(
     fs::create_dir_all(&staging)?;
     extract_system_archive(&archive, &staging)?;
     for name in [
-        service_binary_name(),
-        service_daemon_binary_name(),
-        sabine_host_name(),
+        PathBuf::from(service_binary_name()),
+        PathBuf::from(service_daemon_binary_name()),
+        sabine_host_relative_path(),
     ] {
-        let source = staging.join(name);
+        let source = staging.join(&name);
         if !source.is_file() {
             return Err(ServiceError::Update(format!(
-                "Sabine system bundle is missing {name}"
+                "Sabine system bundle is missing {}",
+                name.display()
             )));
         }
         make_executable(&source)?;
@@ -415,12 +430,35 @@ fn system_asset_name() -> String {
     format!("sabine-system-{}.{}", system_target(), extension)
 }
 
-fn sabine_host_name() -> &'static str {
+fn sabine_host_relative_path() -> PathBuf {
     if cfg!(target_os = "windows") {
-        "sabine-host.exe"
+        PathBuf::from("sabine-host.exe")
+    } else if cfg!(target_os = "macos") {
+        PathBuf::from("sabine-host.app/Contents/MacOS/sabine-host")
     } else {
-        "sabine-host"
+        PathBuf::from("sabine-host")
     }
+}
+
+fn copy_directory(source: &Path, destination: &Path) -> ServiceResult<()> {
+    if !source.is_dir() {
+        return Err(ServiceError::Update(format!(
+            "offline Sabine system bundle is missing {}",
+            source.display()
+        )));
+    }
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_directory(&source_path, &destination_path)?;
+        } else {
+            fs::copy(source_path, destination_path)?;
+        }
+    }
+    Ok(())
 }
 
 fn service_binary_name() -> &'static str {
