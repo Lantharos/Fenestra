@@ -1,7 +1,7 @@
 use std::path::Path;
 
 pub(crate) fn detect_version(runtime_dir: &Path) -> String {
-    let version_file = runtime_dir.join("VERSION");
+    let version_file = runtime_dir.join(".sabine-version");
     std::fs::read_to_string(version_file)
         .map(|v| v.trim().to_string())
         .unwrap_or_else(|_| "unknown".to_string())
@@ -48,5 +48,26 @@ pub(crate) fn cef_platform_key() -> Option<&'static str> {
         ("macos", "x86_64") => Some("macosx64"),
         ("macos", "aarch64") => Some("macosarm64"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_version;
+
+    #[test]
+    fn runtime_marker_does_not_use_cef_version_header_name() {
+        let root =
+            std::env::temp_dir().join(format!("sabine-version-marker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("version"), "CEF C++ header").unwrap();
+        std::fs::write(root.join(".sabine-version"), "151.3.18").unwrap();
+        assert_eq!(detect_version(&root), "151.3.18");
+        assert_eq!(
+            std::fs::read_to_string(root.join("version")).unwrap(),
+            "CEF C++ header"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

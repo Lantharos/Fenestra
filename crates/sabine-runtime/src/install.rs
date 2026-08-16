@@ -151,7 +151,7 @@ fn install_user_runtime_inner(
         "Installing runtime",
     ));
     std::fs::rename(&extracted, &plan.install_dir)?;
-    std::fs::write(plan.install_dir.join("VERSION"), &plan.version)?;
+    std::fs::write(plan.install_dir.join(".sabine-version"), &plan.version)?;
     if !runtime_is_valid(&plan.install_dir) {
         let path = plan.install_dir.clone();
         let _ = std::fs::remove_dir_all(&path);
