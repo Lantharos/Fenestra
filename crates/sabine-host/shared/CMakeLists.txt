@@ -5,7 +5,7 @@ project(sabine_cef_host)
 set(CMAKE_CONFIGURATION_TYPES Debug Release)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(SABINE_CEF_API_VERSION "13300" CACHE STRING "Stable CEF API used by Sabine")
+set(SABINE_CEF_API_VERSION "13800" CACHE STRING "Stable CEF API used by Sabine")
 add_compile_definitions(CEF_API_VERSION=${SABINE_CEF_API_VERSION})
 
 if(NOT CEF_ROOT)
