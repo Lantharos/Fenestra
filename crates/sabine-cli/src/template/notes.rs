@@ -19,7 +19,7 @@ pub(super) fn write_notes_template(root: &Path, name: &str) -> std::io::Result<(
 fn notes_sabine_toml(name: &str) -> String {
     let id = sanitize_id(name);
     format!(
-        "[app]\nid = \"dev.sabine.{id}\"\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[web]\nroot = \"ui\"\nentry = \"ui/index.html\"\n"
+        "[app]\nid = \"dev.sabine.{id}\"\nname = \"{name}\"\nversion = \"0.1.0\"\nicon = \"assets/icon.svg\"\n\n[web]\nroot = \"ui\"\nentry = \"ui/index.html\"\n"
     )
 }
 

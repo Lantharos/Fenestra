@@ -30,6 +30,7 @@ fn app_sabine_toml(name: &str) -> String {
 id = "dev.sabine.{id}"
 name = "{name}"
 version = "0.1.0"
+icon = "assets/icon.svg"
 
 [web]
 root = "ui"
