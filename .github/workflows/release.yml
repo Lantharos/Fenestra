@@ -63,7 +63,7 @@ jobs:
           Copy-Item "target/release/sabine-service-daemon$suffix" "release/system/"
           if ($IsMacOS) {
             $hostBundle = Get-Item $env:SABINE_HOST_PATH
-            while ($hostBundle -and $hostBundle.Extension -ne ".app") {
+            while ($hostBundle -and $hostBundle.Name -notlike "*.app") {
               $hostBundle = $hostBundle.Parent
             }
             if (-not $hostBundle) {
