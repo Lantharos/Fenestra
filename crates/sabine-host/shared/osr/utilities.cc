@@ -53,7 +53,7 @@ std::mutex g_handlers_mutex;
 std::vector<SabineOsrHandler*> g_handlers;
 const size_t kSharedPaintThreshold = 256 * 1024;
 const size_t kBatchEntryLen = 28;
-#ifndef MFD_CLOEXEC
+#if defined(SYS_memfd_create) && !defined(MFD_CLOEXEC)
 constexpr unsigned int MFD_CLOEXEC = 0x0001U;
 #endif
 

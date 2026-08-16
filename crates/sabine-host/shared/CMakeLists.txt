@@ -25,6 +25,8 @@ find_package(CEF REQUIRED)
 
 if(OS_MAC)
   enable_language(OBJCXX)
+  set(CMAKE_OBJCXX_STANDARD 20)
+  set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
 endif()
 
 add_subdirectory(${CEF_LIBCEF_DLL_WRAPPER_PATH} libcef_dll_wrapper)
