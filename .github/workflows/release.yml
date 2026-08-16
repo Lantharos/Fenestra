@@ -62,14 +62,14 @@ jobs:
           Copy-Item "target/release/sabine-service$suffix" "release/system/"
           Copy-Item "target/release/sabine-service-daemon$suffix" "release/system/"
           if ($IsMacOS) {
-            $hostBundle = Get-Item $env:SABINE_HOST_PATH
-            while ($hostBundle -and $hostBundle.Name -notlike "*.app") {
-              $hostBundle = $hostBundle.Parent
-            }
-            if (-not $hostBundle) {
+            if ($env:SABINE_HOST_PATH -notmatch '^(.+\.app)(?:[/\\].*)?$') {
               throw "macOS Sabine host is not inside an app bundle"
             }
-            Copy-Item $hostBundle.FullName "release/system/" -Recurse
+            $hostBundle = $Matches[1]
+            if (-not (Test-Path -LiteralPath $hostBundle -PathType Container)) {
+              throw "macOS Sabine host app bundle does not exist"
+            }
+            Copy-Item -LiteralPath $hostBundle "release/system/" -Recurse
           } else {
             Copy-Item $env:SABINE_HOST_PATH "release/system/"
           }
