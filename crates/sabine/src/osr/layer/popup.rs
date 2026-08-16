@@ -176,11 +176,7 @@ impl OsrLayerHost {
         let damage = compose_frames_buffer(
             popup.size.0,
             popup.size.1,
-            popup
-                .frame
-                .as_ref()
-                .map(std::slice::from_ref)
-                .unwrap_or_default(),
+            popup.frame.as_slice(),
             &mut popup.buffer,
         );
         self.commit_popup_surface(state, damage);

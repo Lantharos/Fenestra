@@ -118,10 +118,7 @@ impl OsrLayerHost {
         let damage = compose_frames_buffer(
             self.buffer_size.0,
             self.buffer_size.1,
-            self.main_frame
-                .as_ref()
-                .map(std::slice::from_ref)
-                .unwrap_or_default(),
+            self.main_frame.as_slice(),
             &mut self.main_buffer,
         );
         if let Some(id) = id
