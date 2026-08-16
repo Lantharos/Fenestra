@@ -45,7 +45,7 @@ jobs:
           }
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install --yes libwayland-dev libxkbcommon-dev ninja-build
+        run: sudo apt-get update && sudo apt-get install --yes libwayland-dev libxkbcommon-dev libx11-dev libgtk-3-dev libnss3-dev libasound2-dev ninja-build
       - run: rustup toolchain install 1.89 --profile minimal
       - run: rustup override set 1.89
       - run: cargo build --release -p sabine-cli -p sabine-service

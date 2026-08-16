@@ -76,12 +76,12 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
           cargo run --release -p sabine-cli -- bundle release-probe --target "${{ matrix.target }}" --release
-          $artifacts = @(Get-ChildItem release-probe/dist/artifacts -File)
+          $artifacts = @(Get-ChildItem dist/artifacts -File)
           if ($artifacts.Count -ne 1 -or $artifacts[0].Extension -cne "${{ matrix.extension }}") {
             throw "expected one ${{ matrix.extension }} artifact, found $($artifacts.Name -join ', ')"
           }
-          cargo run --release -p sabine-cli -- release-manifest release-probe --output release-probe/dist/sabine-update.json --artifact "${{ matrix.update_target }}=$($artifacts[0].FullName)"
-          $manifest = Get-Content release-probe/dist/sabine-update.json -Raw | ConvertFrom-Json
+          cargo run --release -p sabine-cli -- release-manifest release-probe --output dist/sabine-update.json --artifact "${{ matrix.update_target }}=$($artifacts[0].FullName)"
+          $manifest = Get-Content dist/sabine-update.json -Raw | ConvertFrom-Json
           if ([string]::IsNullOrWhiteSpace($manifest.signature)) {
             throw "release manifest signature is missing"
           }
@@ -89,6 +89,6 @@ jobs:
         with:
           name: package-${{ matrix.update_target }}
           path: |
-            release-probe/dist/artifacts/*
-            release-probe/dist/sabine-update.json
+            dist/artifacts/*
+            dist/sabine-update.json
           if-no-files-found: error

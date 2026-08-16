@@ -18,7 +18,7 @@ fn runtime_resources_present(runtime_dir: &Path) -> bool {
     resource_roots(runtime_dir).into_iter().any(|root| {
         root.join("icudtl.dat").is_file()
             && root.join("resources.pak").is_file()
-            && locales_present(&root.join("locales"))
+            && locales_present(&root)
     })
 }
 
@@ -55,9 +55,10 @@ fn resource_roots(runtime_dir: &Path) -> Vec<PathBuf> {
     Vec::new()
 }
 
-fn locales_present(path: &Path) -> bool {
-    path.is_dir()
-        && std::fs::read_dir(path).is_ok_and(|entries| {
+fn locales_present(resource_root: &Path) -> bool {
+    let flat_locales = resource_root.join("locales");
+    if flat_locales.is_dir()
+        && std::fs::read_dir(flat_locales).is_ok_and(|entries| {
             entries.flatten().any(|entry| {
                 entry.path().is_file()
                     && entry
@@ -66,6 +67,20 @@ fn locales_present(path: &Path) -> bool {
                         .is_some_and(|extension| extension == "pak")
             })
         })
+    {
+        return true;
+    }
+
+    std::fs::read_dir(resource_root).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            entry.path().is_dir()
+                && entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "lproj")
+                && entry.path().join("locale.pak").is_file()
+        })
+    })
 }
 
 pub(crate) fn runtime_is_valid(runtime_dir: &Path) -> bool {
@@ -87,6 +102,16 @@ mod tests {
         std::fs::create_dir_all(root.join("Release")).unwrap();
         std::fs::create_dir_all(root.join("Resources")).unwrap();
         assert!(!runtime_is_valid(&root));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn accepts_macos_localized_resource_layout() {
+        let root = scratch("mac-locales");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("en.lproj")).unwrap();
+        std::fs::write(root.join("en.lproj/locale.pak"), []).unwrap();
+        assert!(locales_present(&root));
         std::fs::remove_dir_all(root).unwrap();
     }
 
