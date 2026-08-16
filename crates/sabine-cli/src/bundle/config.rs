@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use sabine_service::{AppInstallMode, AppUpdateConfig, AppUpdateSource, UpdatePolicy};
 use serde::Deserialize;
 
 #[derive(Debug)]
@@ -16,6 +17,7 @@ pub(super) struct BundleApp {
     pub source_dir: PathBuf,
     pub cargo_package: String,
     pub web: Option<WebBundle>,
+    pub updates: Option<sabine_service::AppUpdateConfig>,
 }
 
 #[derive(Debug)]
@@ -45,6 +47,7 @@ struct SabineFile {
     app: AppSection,
     #[serde(default)]
     web: WebSection,
+    updates: Option<sabine_service::AppUpdateConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -73,6 +76,7 @@ struct WebSection {
 pub(super) fn resolve_app(source: &Path, overrides: ConfigOverrides) -> Result<BundleApp, String> {
     let source_dir = absolute_path(source)?;
     let sabine = read_sabine_file(&source_dir)?;
+    let updates = resolve_updates(sabine.updates.clone())?;
     let cargo_manifest = sabine
         .app
         .cargo_manifest
@@ -110,7 +114,44 @@ pub(super) fn resolve_app(source: &Path, overrides: ConfigOverrides) -> Result<B
         source_dir,
         cargo_package,
         web,
+        updates,
     })
+}
+
+fn github_actions_updates() -> Option<AppUpdateConfig> {
+    let repository = std::env::var("GITHUB_REPOSITORY").ok()?;
+    Some(AppUpdateConfig {
+        source: AppUpdateSource::Github { repository },
+        channel: "stable".to_string(),
+        policy: UpdatePolicy::Automatic,
+        install_mode: AppInstallMode::Managed,
+        public_key: String::new(),
+        package_kind: None,
+    })
+}
+
+fn resolve_updates(configured: Option<AppUpdateConfig>) -> Result<Option<AppUpdateConfig>, String> {
+    let mut updates = configured.or_else(github_actions_updates);
+    let Some(update) = updates.as_mut() else {
+        return Ok(None);
+    };
+    if update.policy == UpdatePolicy::Disabled {
+        return Ok(updates);
+    }
+    if let Ok(private_key) = std::env::var("SABINE_UPDATE_SIGNING_KEY")
+        && !private_key.trim().is_empty()
+    {
+        let public_key = sabine_service::public_key_from_private(&private_key)
+            .map_err(|error| error.to_string())?;
+        if !update.public_key.trim().is_empty() && update.public_key.trim() != public_key {
+            return Err("update public_key does not match SABINE_UPDATE_SIGNING_KEY".to_string());
+        }
+        update.public_key = public_key;
+    }
+    if std::env::var_os("GITHUB_ACTIONS").is_some() && update.public_key.trim().is_empty() {
+        return Err("SABINE_UPDATE_SIGNING_KEY is required for release bundles".to_string());
+    }
+    Ok(updates)
 }
 
 fn resolve_web(

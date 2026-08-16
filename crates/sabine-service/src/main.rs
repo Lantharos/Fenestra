@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use sabine_service::{
-    AppManifest, SabineService, ensure_ready, install_login_autostart_with, load_policy,
-    set_login_autostart, uninstall_login_autostart,
+    AppManifest, AppUpdateStatus, SabineService, ensure_ready, install_login_autostart_with,
+    load_policy, set_login_autostart, uninstall_login_autostart,
 };
 use std::{path::PathBuf, process::ExitCode};
 
@@ -38,6 +38,20 @@ enum Command {
     },
     Update {
         id: String,
+    },
+    ApplyUpdate {
+        id: String,
+        #[arg(long)]
+        wait_pid: Option<u32>,
+        #[arg(long)]
+        relaunch: Option<PathBuf>,
+    },
+    #[command(hide = true)]
+    CompleteSystemUpdate {
+        #[arg(long)]
+        from_pid: u32,
+        #[arg(long)]
+        version: String,
     },
     List {
         #[arg(long)]
@@ -115,12 +129,38 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::Unregister { id } => {
             println!("{}", service.unregister(&id)?.manifest.id);
         }
-        Command::Update { id } => {
-            if service.update_app(&id)? {
-                println!("updated {id}");
-            } else {
-                println!("{id} already up to date");
+        Command::Update { id } => match service.update_app(&id)? {
+            AppUpdateStatus::Current => println!("{id} already up to date"),
+            AppUpdateStatus::Installed { version } => {
+                println!("updated {id} to {version}")
             }
+            AppUpdateStatus::PendingApproval(update) => println!(
+                "update {} for {id} is ready and requires approval",
+                update.version
+            ),
+            AppUpdateStatus::StoreManaged => {
+                println!("{id} is updated by its application store")
+            }
+        },
+        Command::ApplyUpdate {
+            id,
+            wait_pid,
+            relaunch,
+        } => {
+            if let Some(pid) = wait_pid {
+                wait_for_process(pid);
+            }
+            if service.apply_pending_app_update(&id, relaunch.as_deref())? {
+                println!("applied pending update for {id}");
+                if let Some(executable) = relaunch {
+                    std::process::Command::new(executable).spawn()?;
+                }
+            } else {
+                println!("{id} has no pending update");
+            }
+        }
+        Command::CompleteSystemUpdate { from_pid, version } => {
+            sabine_service::complete_system_update(from_pid, &version)?;
         }
         Command::List { json } => {
             let apps = service.apps()?;
@@ -140,6 +180,35 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+#[cfg(unix)]
+fn wait_for_process(pid: u32) {
+    loop {
+        let alive = unsafe { libc::kill(pid as i32, 0) } == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+        if !alive {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn wait_for_process(pid: u32) {
+    use windows::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
+    };
+    if let Ok(handle) = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
+        unsafe {
+            WaitForSingleObject(handle, INFINITE);
+            let _ = CloseHandle(handle);
+        }
+    }
+}
+
+#[cfg(not(any(unix, target_os = "windows")))]
+fn wait_for_process(_pid: u32) {}
 
 fn uninstall_registered_apps(service: &SabineService) -> Result<(), Box<dyn std::error::Error>> {
     for app in service.apps()? {

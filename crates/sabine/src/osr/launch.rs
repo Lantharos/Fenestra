@@ -50,6 +50,11 @@ pub(crate) fn launch_process(
     metrics: LaunchMetrics,
 ) -> SabineResult<SabineProcess> {
     let app_id = require_app_id(config)?.to_string();
+    let runtime_lease = sabine_runtime::RuntimeLease::acquire(runtime_dir).map_err(|error| {
+        SabineError::CreationFailed {
+            message: format!("failed to lease Sabine runtime: {error}"),
+        }
+    })?;
     let host_binary = crate::host::ensure_host(runtime_dir)
         .map_err(|message| SabineError::CreationFailed { message })?;
     metrics.mark("host.ready");
@@ -67,6 +72,7 @@ pub(crate) fn launch_process(
     );
     let (child_exit_sender, child_exit_receiver) = crossbeam_channel::unbounded();
     Ok(SabineProcess {
+        _runtime_lease: runtime_lease,
         child: ManagedChild::new(child, child_exit_sender.clone()),
         primary_alive: true,
         primary_status: None,

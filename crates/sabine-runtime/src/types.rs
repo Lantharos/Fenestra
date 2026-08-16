@@ -45,7 +45,6 @@ impl RuntimeLocation {
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     pub mode: RuntimeMode,
-    pub min_version: String,
     pub index_url: Option<String>,
     pub allow_user_install: bool,
     pub allow_bundled: bool,
@@ -56,7 +55,6 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             mode: RuntimeMode::SharedPreferred,
-            min_version: "151".to_string(),
             index_url: None,
             allow_user_install: true,
             allow_bundled: true,

@@ -41,17 +41,9 @@ use windows::Win32::{
     },
 };
 
-pub(super) use super::{EventQueue, HotkeyRuntime, TrayRuntime};
+pub(super) use super::{EventQueue, HotkeyRuntime, MenuActions, ShortcutActions, TrayRuntime};
 
-pub(super) fn spawn_tray_icon(
-    icon: &TrayIcon,
-) -> Result<
-    (
-        TrayRuntime,
-        HashMap<String, (String, String, Option<String>)>,
-    ),
-    String,
-> {
+pub(super) fn spawn_tray_icon(icon: &TrayIcon) -> Result<(TrayRuntime, MenuActions), String> {
     let menu = Menu::new();
     let mut actions = HashMap::new();
     for item in &icon.menu {
@@ -101,7 +93,7 @@ pub(super) fn load_tray_icon(icon: &TrayIcon) -> Result<Icon, String> {
 
 pub(super) fn spawn_global_shortcuts(
     registrations: &[GlobalShortcutRegistration],
-) -> Result<(HotkeyRuntime, HashMap<u32, (String, String)>), String> {
+) -> Result<(HotkeyRuntime, ShortcutActions), String> {
     let manager = GlobalHotKeyManager::new().map_err(|error| error.to_string())?;
     let mut actions = HashMap::new();
     let mut keys = Vec::new();
@@ -204,7 +196,7 @@ pub(super) fn parse_key_code(key: &str) -> Result<Code, String> {
 
 pub(super) fn write_autostart_entry(entry: &AutostartEntry) -> Result<(), String> {
     let name = sanitize_id(&entry.id);
-    let key_path = format!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+    let key_path = "Software\\Microsoft\\Windows\\CurrentVersion\\Run".to_string();
     if entry.enabled {
         set_registry_string(HKEY_CURRENT_USER, &key_path, &name, &entry.command)?;
     } else {

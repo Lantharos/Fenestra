@@ -77,6 +77,11 @@ impl SabineWindow {
         self
     }
 
+    pub fn app_updates(mut self, updates: sabine_service::AppUpdateConfig) -> Self {
+        self.config.app_update = Some(updates);
+        self
+    }
+
     pub fn size(mut self, width: u32, height: u32) -> Self {
         self.config.width = width;
         self.config.height = height;

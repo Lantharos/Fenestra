@@ -84,7 +84,8 @@ void CreateBrowser(CefRefPtr<CefCommandLine> command_line) {
 }
 }  // namespace
 
-SabineApp::SabineApp() = default;
+SabineApp::SabineApp(bool runtime_smoke_test)
+    : runtime_smoke_test_(runtime_smoke_test) {}
 
 void SabineApp::OnBeforeCommandLineProcessing(
     const CefString& process_type,
@@ -134,6 +135,9 @@ void SabineApp::OnBeforeCommandLineProcessing(
 
 void SabineApp::OnContextInitialized() {
   CEF_REQUIRE_UI_THREAD();
+  if (runtime_smoke_test_) {
+    return;
+  }
   CreateBrowser(CefCommandLine::GetGlobalCommandLine());
 }
 

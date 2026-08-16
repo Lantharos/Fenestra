@@ -28,6 +28,7 @@ pub struct BundleOptions {
     pub name: Option<String>,
     pub version: Option<String>,
     pub json: bool,
+    pub offline: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,7 +140,7 @@ pub fn bundle(options: BundleOptions) -> Result<ExitCode, String> {
         ));
     }
 
-    let staged = stage_bundle(&app, format, &binary, &options.out)?;
+    let staged = stage_bundle(&app, format, &binary, &options.out, options.offline)?;
     let packaged = package_bundle(&app, format, &staged)?;
     if options.json {
         println!("{}", bundle_json(&app, format, &staged, &packaged));

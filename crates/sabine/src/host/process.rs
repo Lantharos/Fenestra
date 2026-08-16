@@ -13,6 +13,7 @@ use crate::osr::launch::OpenWindowContext;
 use crate::{SabineResult, SabineWindow};
 
 pub struct SabineProcess {
+    pub(crate) _runtime_lease: sabine_runtime::RuntimeLease,
     pub(crate) child: ManagedChild,
     pub(crate) primary_alive: bool,
     pub(crate) primary_status: Option<ExitStatus>,

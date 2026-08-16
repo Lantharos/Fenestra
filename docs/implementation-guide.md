@@ -2,6 +2,39 @@
 
 This document describes the current architecture and the boundaries contributors should preserve.
 
+## Release and update model
+
+Sabine publishes the CLI, service, daemon, and prebuilt CEF host as one `vX.Y.Z` release train. A
+platform system archive and `sabine-release.json` are immutable release inputs. Metadata is signed
+with Ed25519; bootstrap verifies the embedded trust key and artifact SHA-256, then installs the
+binaries into a versioned directory. The active pointer changes atomically and the previous version
+is retained until the replacement daemon reports healthy; failed handoff restores the previous
+pointer and daemon. The host is compiled against CEF Stable API 133, so the runtime service can
+independently install newer compatible CEF builds. Apps negotiate Sabine behavior and capabilities
+and never request a Chromium version.
+
+App releases are separate from Sabine releases. `[updates]` in `Sabine.toml` identifies a GitHub
+repository or HTTPS manifest endpoint. Sabine's reusable GitHub Actions workflow builds native
+artifacts and emits a signed `sabine-update.json`. The service verifies its configured app public
+key, then validates app id, channel, exact platform/package target, version, artifact URL, and
+SHA-256 before staging it. Each app has its own Actions signing secret; only the public key ships in
+the app.
+
+Writable managed archives activate side by side in the background. The original executable acts as
+a stable bootstrap and forwards the next launch to the executable recorded in the service registry.
+Native packages are also downloaded in the background, but activation is foreground: the next app
+launch offers Install or Later, exits after acceptance, invokes MSI, DMG replacement, AppImage
+replacement, or `pkexec` for deb/rpm, and relaunches after a successful installer exit. Store-owned
+installations remain owned by the store.
+
+CEF installation is a separate release stream. The daemon downloads the newest compatible Standard
+runtime into a side-by-side directory, initializes it with the installed host as a health probe, and
+only then leaves it selectable. Failed runtimes receive an unusable marker and resolution returns to
+the previous runtime. Each running host owns a process lease; pruning keeps the newest two runtimes
+and never removes a leased directory. Offline bundles include a real runtime and the complete system
+bootstrap, but first launch adopts the embedded binaries into the normal managed layout so both
+streams continue updating.
+
 ## Process model
 
 A Sabine app can run in three modes from the same executable:

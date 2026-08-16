@@ -5,14 +5,15 @@
 
 use std::{
     fs::OpenOptions,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use sabine_bridge::INSTALL_SCRIPT;
+use serde::Deserialize;
 
 const HOST_SOURCES: &[(&str, &str)] = &[
     ("CMakeLists.txt", include_str!("../shared/CMakeLists.txt")),
@@ -102,24 +103,26 @@ pub fn host_binary_name() -> &'static str {
 }
 
 pub fn host_release_binary(runtime_dir: &Path) -> PathBuf {
-    runtime_dir.join("Release").join(host_binary_name())
+    runtime_dir
+        .join(".sabine-hosts")
+        .join(host_source_fingerprint())
+        .join(host_binary_name())
 }
 
 pub fn ensure_host(runtime_dir: &Path) -> Result<PathBuf, String> {
+    if let Some(host) = available_host(runtime_dir) {
+        return Ok(host);
+    }
     let binary = host_release_binary(runtime_dir);
-    let source_dir = runtime_dir.join(".sabine-host-src");
-    let build_dir = runtime_dir.join(".sabine-host-build");
-    let source_stamp = build_dir.join("sabine-host-source.fnv");
     let expected_stamp = host_source_fingerprint();
-    if binary.is_file()
-        && std::fs::read_to_string(&source_stamp).is_ok_and(|stamp| stamp.trim() == expected_stamp)
-    {
+    let work_dir = runtime_dir.join(".sabine-host-build").join(&expected_stamp);
+    let source_dir = work_dir.join("src");
+    let build_dir = work_dir.join("build");
+    if binary.is_file() {
         return Ok(binary);
     }
     let _lock = HostBuildLock::acquire(runtime_dir)?;
-    if binary.is_file()
-        && std::fs::read_to_string(&source_stamp).is_ok_and(|stamp| stamp.trim() == expected_stamp)
-    {
+    if binary.is_file() {
         return Ok(binary);
     }
     let missing = [
@@ -144,8 +147,8 @@ On Windows, a partial extract often means Git's GNU tar mishandled the path — 
         ));
     }
 
-    if source_dir.exists() {
-        std::fs::remove_dir_all(&source_dir).map_err(|error| error.to_string())?;
+    if work_dir.exists() {
+        std::fs::remove_dir_all(&work_dir).map_err(|error| error.to_string())?;
     }
     std::fs::create_dir_all(&source_dir).map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&build_dir).map_err(|error| error.to_string())?;
@@ -160,9 +163,15 @@ On Windows, a partial extract often means Git's GNU tar mishandled the path — 
     apply_cmake_generator(&mut configure)?;
     // Forward slashes so CEF's ADD_LOGICAL_TARGET does not treat \U as an escape.
     let cef_root = runtime_dir.to_string_lossy().replace('\\', "/");
+    let output_dir = binary
+        .parent()
+        .expect("host binary has a parent")
+        .to_string_lossy()
+        .replace('\\', "/");
     configure
         .arg("-DCMAKE_BUILD_TYPE=Release")
-        .arg(format!("-DCEF_ROOT={cef_root}"));
+        .arg(format!("-DCEF_ROOT={cef_root}"))
+        .arg(format!("-DSABINE_HOST_OUTPUT_DIR={output_dir}"));
     run_checked(&mut configure)?;
     run_checked(
         Command::new("cmake")
@@ -176,7 +185,6 @@ On Windows, a partial extract often means Git's GNU tar mishandled the path — 
     )?;
 
     if binary.is_file() {
-        std::fs::write(source_stamp, expected_stamp).map_err(|error| error.to_string())?;
         Ok(binary)
     } else {
         Err(format!(
@@ -184,6 +192,123 @@ On Windows, a partial extract often means Git's GNU tar mishandled the path — 
             binary.display()
         ))
     }
+}
+
+pub fn available_host(runtime_dir: &Path) -> Option<PathBuf> {
+    prebuilt_host_path().or_else(|| {
+        let path = host_release_binary(runtime_dir);
+        path.is_file().then_some(path)
+    })
+}
+
+pub fn smoke_test_runtime(host: &Path, runtime_dir: &Path) -> Result<(), String> {
+    let release_dir = runtime_dir.join("Release");
+    let mut command = Command::new(host);
+    command
+        .arg("--sabine-runtime-smoke-test")
+        .current_dir(&release_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "linux")]
+    {
+        let release = release_dir.to_string_lossy();
+        let existing = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+        command.env(
+            "LD_LIBRARY_PATH",
+            if existing.is_empty() {
+                release.into_owned()
+            } else {
+                format!("{release}:{existing}")
+            },
+        );
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let release = release_dir.to_string_lossy();
+        let existing = std::env::var("PATH").unwrap_or_default();
+        command.env(
+            "PATH",
+            if existing.is_empty() {
+                release.into_owned()
+            } else {
+                format!("{release};{existing}")
+            },
+        );
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("could not start CEF runtime probe: {error}"))?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("could not wait for CEF runtime probe: {error}"))?
+        {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("CEF runtime probe timed out after 30 seconds".to_string());
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    if status.success() {
+        Ok(())
+    } else {
+        let details = if stderr.trim().is_empty() {
+            String::new()
+        } else {
+            format!(": {}", stderr.trim())
+        };
+        Err(format!("CEF runtime probe exited with {status}{details}"))
+    }
+}
+
+fn prebuilt_host_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("SABINE_HOST_PATH") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(directory) = executable.parent()
+    {
+        let path = directory.join(host_binary_name());
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let root = if cfg!(target_os = "windows") {
+        PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Sabine")
+    } else if cfg!(target_os = "macos") {
+        PathBuf::from(std::env::var_os("HOME")?)
+            .join("Library/Application Support")
+            .join("Sabine")
+    } else if let Some(path) = std::env::var_os("XDG_DATA_HOME") {
+        PathBuf::from(path).join("sabine")
+    } else {
+        PathBuf::from(std::env::var_os("HOME")?).join(".local/share/sabine")
+    };
+    #[derive(Deserialize)]
+    struct CurrentSystem {
+        active: String,
+    }
+    let bin = root.join("bin");
+    let current =
+        serde_json::from_slice::<CurrentSystem>(&std::fs::read(bin.join("current.json")).ok()?)
+            .ok()?;
+    let path = bin
+        .join("versions")
+        .join(current.active)
+        .join(host_binary_name());
+    path.is_file().then_some(path)
 }
 
 fn apply_cmake_generator(configure: &mut Command) -> Result<(), String> {

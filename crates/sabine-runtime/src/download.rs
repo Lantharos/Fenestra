@@ -149,8 +149,7 @@ pub fn latest_install_plan(config: &RuntimeConfig) -> Result<RuntimeInstallPlan,
     let platform_index = index.platforms.get(platform).ok_or_else(|| {
         RuntimeError::InstallationFailed(format!("CEF index does not contain platform {platform}"))
     })?;
-    let min_major = config
-        .min_version
+    let min_major = crate::MIN_CEF_MAJOR
         .split('.')
         .next()
         .and_then(|major| major.parse::<u32>().ok())
@@ -179,7 +178,7 @@ pub fn latest_install_plan(config: &RuntimeConfig) -> Result<RuntimeInstallPlan,
     let Some((version, file)) = candidates.into_iter().next() else {
         return Err(RuntimeError::NotFound(format!(
             "no Standard CEF build found for {platform} at Chromium {} or newer",
-            config.min_version,
+            crate::MIN_CEF_MAJOR,
         )));
     };
 

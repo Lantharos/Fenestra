@@ -252,7 +252,7 @@ fn launcher_script(app: &SourceApp, app_dir: &Path, assets: &StagedAssets) -> St
                 web_entry.display()
             ));
         }
-        return format!(
+        format!(
             "@echo off\r\nset \"SABINE_APP_ID={}\"\r\nset \"SABINE_APP_DIR={}\"\r\nset \"SABINE_SOURCE_DIR={}\"\r\n{}cd /d \"{}\"\r\n{} %*\r\n",
             app.id,
             app_dir.display(),
@@ -260,7 +260,7 @@ fn launcher_script(app: &SourceApp, app_dir: &Path, assets: &StagedAssets) -> St
             environment,
             app.source.display(),
             command
-        );
+        )
     }
     #[cfg(not(target_os = "windows"))]
     {

@@ -380,11 +380,18 @@ mod tests {
 
     #[test]
     fn emitter_detach_stops_broadcast() {
-        let mut child = Command::new("cat")
+        let mut command = if cfg!(target_os = "windows") {
+            let mut command = Command::new("cmd");
+            command.args(["/d", "/c", "more"]);
+            command
+        } else {
+            Command::new("cat")
+        };
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .spawn()
-            .expect("cat");
+            .expect("stdin reader");
         let stdin = Arc::new(Mutex::new(child.stdin.take().expect("stdin")));
         let emitter = BridgeEventEmitter {
             targets: Arc::new(Mutex::new(vec![BridgeTarget {

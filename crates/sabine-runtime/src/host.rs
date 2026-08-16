@@ -69,7 +69,7 @@ fn locales_present(path: &Path) -> bool {
 }
 
 pub(crate) fn runtime_is_valid(runtime_dir: &Path) -> bool {
-    runtime_is_standard(runtime_dir)
+    !runtime_dir.join(".sabine-unusable").exists() && runtime_is_standard(runtime_dir)
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@
 #include <X11/Xlib.h>
 #endif
 
+#include <cstdlib>
 #include <string>
 
 #include "include/base/cef_compiler_specific.h"
@@ -32,7 +33,15 @@ namespace {
 NO_STACK_PROTECTOR
 #endif
 int RunSabineHost(CefMainArgs main_args, int argc, char* argv[]) {
-  CefRefPtr<SabineApp> app(new SabineApp);
+  CefRefPtr<CefCommandLine> command_line = CefCommandLine::CreateCommandLine();
+#if defined(OS_WIN) || defined(_WIN32)
+  command_line->InitFromString(::GetCommandLineW());
+#else
+  command_line->InitFromArgv(argc, argv);
+#endif
+  const bool runtime_smoke_test =
+      command_line->HasSwitch("sabine-runtime-smoke-test");
+  CefRefPtr<SabineApp> app(new SabineApp(runtime_smoke_test));
 
   int exit_code = CefExecuteProcess(main_args, app.get(), nullptr);
   if (exit_code >= 0) {
@@ -43,9 +52,6 @@ int RunSabineHost(CefMainArgs main_args, int argc, char* argv[]) {
   XSetErrorHandler(XErrorHandlerImpl);
   XSetIOErrorHandler(XIOErrorHandlerImpl);
 #endif
-
-  CefRefPtr<CefCommandLine> command_line = CefCommandLine::CreateCommandLine();
-  command_line->InitFromArgv(argc, argv);
 
   CefSettings settings;
   settings.no_sandbox = true;
@@ -64,6 +70,10 @@ int RunSabineHost(CefMainArgs main_args, int argc, char* argv[]) {
 
   if (!CefInitialize(main_args, settings, app.get(), nullptr)) {
     return CefGetExitCode();
+  }
+
+  if (runtime_smoke_test) {
+    std::_Exit(0);
   }
 
   CefRunMessageLoop();

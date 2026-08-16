@@ -14,6 +14,7 @@ use std::{
 
 use crate::types::{
     AppManifest, REGISTRY_VERSION, RegisteredApp, ServiceError, ServiceResult, unix_timestamp,
+    version_is_newer,
 };
 
 #[derive(Clone, Debug)]
@@ -49,6 +50,12 @@ impl SabineService {
         manifest.validate()?;
         let _lock = RegistryLock::acquire(&self.root)?;
         let mut registry = self.load_registry()?;
+        if let Some(existing) = registry.apps.get(&manifest.id)
+            && version_is_newer(&existing.manifest.version, &manifest.version)
+            && existing.manifest.executable.is_file()
+        {
+            return Ok(existing.clone());
+        }
         let now = unix_timestamp();
         let registered_at = registry
             .apps
@@ -145,7 +152,7 @@ impl SabineService {
             .open(&temporary)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
-        replace_registry_file(&temporary, &path)?;
+        replace_file(&temporary, &path)?;
         Ok(())
     }
 }
@@ -211,7 +218,7 @@ impl Drop for RegistryLock {
     }
 }
 
-fn replace_registry_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+pub(crate) fn replace_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
     #[cfg(not(target_os = "windows"))]
     return std::fs::rename(temporary, destination);
 

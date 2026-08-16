@@ -12,6 +12,9 @@ use winit::{
     window::{Window, WindowAttributes, WindowId},
 };
 
+mod confirm;
+pub(super) use confirm::confirm_update;
+
 const WIDTH: u32 = 480;
 const HEIGHT: u32 = 148;
 const BG: u32 = 0xFF_16_16_18;

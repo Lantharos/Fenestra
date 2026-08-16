@@ -1,16 +1,41 @@
-use crate::{PrepareProgress, PrepareStage, ServiceError, ServiceResult, service_data_dir};
+use crate::{
+    PrepareProgress, PrepareStage, ServiceError, ServiceResult, SystemReleaseManifest,
+    registry::replace_file, service_data_dir, verify_system_release,
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::{BufRead, BufReader},
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
 const SERVICE_REPO: &str = "Lantharos/Sabine";
-const SERVICE_GIT_URL: &str = "https://github.com/Lantharos/Sabine";
+const SYSTEM_UPDATE_PUBLIC_KEYS: &str = include_str!("../update-public-key.txt");
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct SystemInstallationState {
+    schema: u32,
+    active: String,
+    previous: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StagedSystemUpdate {
+    pub version: String,
+    pub service: PathBuf,
+    pub previous_service: Option<PathBuf>,
+}
 
 pub fn cached_service_path() -> PathBuf {
-    service_data_dir().join("bin").join(service_binary_name())
+    current_installation()
+        .map(|(_, path)| path.join(service_binary_name()))
+        .unwrap_or_else(|| {
+            versions_dir()
+                .join(env!("CARGO_PKG_VERSION"))
+                .join(service_binary_name())
+        })
 }
 
 pub fn service_daemon_path(service: &Path) -> PathBuf {
@@ -22,20 +47,16 @@ fn complete_service_at(path: PathBuf) -> Option<PathBuf> {
 }
 
 pub fn find_service_executable() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("SABINE_SERVICE_PATH") {
-        let path = PathBuf::from(path);
-        if let Some(path) = complete_service_at(path) {
-            return Some(path);
-        }
+    if let Some(path) = configured_service() {
+        return Some(path);
     }
 
-    if let Ok(current) = std::env::current_exe()
-        && let Some(directory) = current.parent()
-    {
-        let candidate = directory.join(service_binary_name());
-        if let Some(candidate) = complete_service_at(candidate) {
-            return Some(candidate);
-        }
+    if let Some((_, directory)) = current_installation() {
+        return complete_service_at(directory.join(service_binary_name()));
+    }
+
+    if let Some(path) = adjacent_service() {
+        return Some(path);
     }
 
     if let Ok(path) = which(service_binary_name())
@@ -44,19 +65,25 @@ pub fn find_service_executable() -> Option<PathBuf> {
         return Some(path);
     }
 
-    complete_service_at(cached_service_path())
+    None
 }
 
 pub fn ensure_service_executable(
     mut on_progress: impl FnMut(PrepareProgress),
 ) -> ServiceResult<PathBuf> {
-    if let Some(path) = find_service_executable() {
+    if let Some(path) = configured_service() {
         return Ok(path);
     }
-
-    let destination = cached_service_path();
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)?;
+    if let Some((_, directory)) = current_installation() {
+        return Ok(directory.join(service_binary_name()));
+    }
+    if let Some(path) = adjacent_service() {
+        return seed_managed_install(&path);
+    }
+    if let Ok(path) = which(service_binary_name())
+        && let Some(path) = complete_service_at(path)
+    {
+        return Ok(path);
     }
 
     on_progress(PrepareProgress {
@@ -65,161 +92,303 @@ pub fn ensure_service_executable(
         fraction: Some(0.02),
     });
 
-    match try_download_release_service(&destination, &mut on_progress) {
-        Ok(()) => {
-            on_progress(PrepareProgress {
-                stage: PrepareStage::Service,
-                message: "Sabine service ready".to_string(),
-                fraction: Some(0.08),
-            });
-            Ok(destination)
-        }
-        Err(download_error) => {
-            on_progress(PrepareProgress {
-                stage: PrepareStage::Service,
-                message: "Release asset missing; building Sabine service from GitHub".to_string(),
-                fraction: Some(0.03),
-            });
-            install_service_via_cargo(&destination, &mut on_progress).map_err(|cargo_error| {
-                ServiceError::Update(format!(
-                    "{download_error}; cargo install also failed: {cargo_error}"
-                ))
-            })?;
-            on_progress(PrepareProgress {
-                stage: PrepareStage::Service,
-                message: "Sabine service ready".to_string(),
-                fraction: Some(0.08),
-            });
-            Ok(destination)
-        }
-    }
-}
-
-fn try_download_release_service(
-    destination: &Path,
-    on_progress: &mut impl FnMut(PrepareProgress),
-) -> ServiceResult<()> {
-    let temporary = destination.with_extension("download");
-    let daemon_destination = service_daemon_path(destination);
-    let daemon_temporary = daemon_destination.with_extension("download");
-    let url = service_download_url(false);
-    download_file(&url, &temporary, on_progress)?;
-    let daemon_url = service_download_url(true);
-    if let Err(error) = download_file(&daemon_url, &daemon_temporary, on_progress) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error);
-    }
-    finalize_service_binary(&temporary, destination)?;
-    finalize_service_binary(&daemon_temporary, &daemon_destination)?;
-    Ok(())
-}
-
-fn install_service_via_cargo(
-    destination: &Path,
-    on_progress: &mut impl FnMut(PrepareProgress),
-) -> ServiceResult<()> {
-    if which("cargo").is_err() {
-        return Err(ServiceError::Update(
-            "Rust/cargo is required to build sabine-service until GitHub Releases publish binaries. \
-Install Rust from https://rustup.rs, or set SABINE_SERVICE_PATH / SABINE_SERVICE_URL."
-                .into(),
-        ));
-    }
-
+    let update = install_latest_system(false, &mut on_progress)?;
+    let destination = update
+        .map(|update| update.service)
+        .or_else(|| complete_service_at(cached_service_path()))
+        .ok_or_else(|| ServiceError::Update("Sabine system installation is incomplete".into()))?;
     on_progress(PrepareProgress {
         stage: PrepareStage::Service,
-        message: "Building Sabine service with cargo (this can take a few minutes)".to_string(),
-        fraction: Some(0.04),
+        message: "Sabine service ready".to_string(),
+        fraction: Some(0.08),
     });
+    Ok(destination)
+}
 
-    let cargo_root = destination
-        .parent()
-        .map(|parent| parent.join(".cargo-root"))
-        .ok_or_else(|| ServiceError::Update("invalid service destination".into()))?;
-    if cargo_root.exists() {
-        let _ = fs::remove_dir_all(&cargo_root);
-    }
-    fs::create_dir_all(&cargo_root)?;
+fn configured_service() -> Option<PathBuf> {
+    std::env::var_os("SABINE_SERVICE_PATH")
+        .map(PathBuf::from)
+        .and_then(complete_service_at)
+}
 
-    let status = Command::new("cargo")
-        .args(["install", "--git", SERVICE_GIT_URL, "--force", "--root"])
-        .arg(&cargo_root)
-        .arg("sabine-service")
-        .status()
-        .map_err(|error| ServiceError::Update(format!("failed to run cargo: {error}")))?;
-    if !status.success() {
-        let _ = fs::remove_dir_all(&cargo_root);
-        return Err(ServiceError::Update(format!(
-            "cargo install --git {SERVICE_GIT_URL} sabine-service failed with {status}"
-        )));
-    }
+fn adjacent_service() -> Option<PathBuf> {
+    let current = std::env::current_exe().ok()?;
+    complete_service_at(current.parent()?.join(service_binary_name()))
+}
 
-    let installed = cargo_root.join("bin").join(service_binary_name());
-    let installed_daemon = cargo_root.join("bin").join(service_daemon_binary_name());
-    if !installed.is_file() || !installed_daemon.is_file() {
-        let _ = fs::remove_dir_all(&cargo_root);
-        return Err(ServiceError::Update(format!(
-            "cargo install succeeded but {} and {} were not both created",
-            installed.display(),
-            installed_daemon.display()
-        )));
-    }
-    fs::copy(&installed, destination).map_err(|error| {
-        ServiceError::Update(format!(
-            "failed to copy service binary to {}: {error}",
-            destination.display()
-        ))
+fn seed_managed_install(service: &Path) -> ServiceResult<PathBuf> {
+    let source_dir = service.parent().ok_or_else(|| {
+        ServiceError::Update("bundled Sabine service has no parent directory".to_string())
     })?;
-    let daemon_destination = service_daemon_path(destination);
-    fs::copy(&installed_daemon, &daemon_destination).map_err(|error| {
-        ServiceError::Update(format!(
-            "failed to copy service daemon to {}: {error}",
-            daemon_destination.display()
-        ))
-    })?;
-    #[cfg(unix)]
+    let version = env!("CARGO_PKG_VERSION");
+    let destination = versions_dir().join(version);
+    let installed_service = destination.join(service_binary_name());
+    if complete_service_at(installed_service.clone()).is_none()
+        || !destination.join(sabine_host_name()).is_file()
     {
-        use std::os::unix::fs::PermissionsExt;
-        for path in [destination, daemon_destination.as_path()] {
-            let mut permissions = fs::metadata(path)?.permissions();
-            permissions.set_mode(0o755);
-            fs::set_permissions(path, permissions)?;
+        let staging = versions_dir().join(format!("{version}.installing"));
+        if staging.exists() {
+            fs::remove_dir_all(&staging)?;
+        }
+        fs::create_dir_all(&staging)?;
+        for name in [
+            service_binary_name(),
+            service_daemon_binary_name(),
+            sabine_host_name(),
+        ] {
+            let source = source_dir.join(name);
+            if !source.is_file() {
+                return Err(ServiceError::Update(format!(
+                    "offline Sabine system bundle is missing {name}"
+                )));
+            }
+            let target = staging.join(name);
+            fs::copy(source, &target)?;
+            make_executable(&target)?;
+        }
+        if destination.exists() {
+            fs::remove_dir_all(&destination)?;
+        }
+        fs::rename(staging, &destination)?;
+    }
+    write_installation_state(&SystemInstallationState {
+        schema: 1,
+        active: version.to_string(),
+        previous: None,
+    })?;
+    Ok(installed_service)
+}
+
+pub fn stage_system_update() -> ServiceResult<Option<StagedSystemUpdate>> {
+    if read_installation_state().is_none() {
+        return Ok(None);
+    }
+    install_latest_system(true, &mut |_| {})
+}
+
+pub fn rollback_system_update(failed_version: &str) -> ServiceResult<Option<PathBuf>> {
+    let Some(state) = read_installation_state() else {
+        return Ok(None);
+    };
+    if state.active != failed_version {
+        return Ok(complete_service_at(
+            versions_dir()
+                .join(&state.active)
+                .join(service_binary_name()),
+        ));
+    }
+    let Some(previous) = state.previous else {
+        return Ok(None);
+    };
+    let service = versions_dir().join(&previous).join(service_binary_name());
+    let Some(service) = complete_service_at(service) else {
+        return Ok(None);
+    };
+    write_installation_state(&SystemInstallationState {
+        schema: 1,
+        active: previous,
+        previous: None,
+    })?;
+    let failed = versions_dir().join(failed_version);
+    if failed.is_dir() {
+        let _ = fs::remove_dir_all(failed);
+    }
+    Ok(Some(service))
+}
+
+fn install_latest_system(
+    require_newer: bool,
+    on_progress: &mut impl FnMut(PrepareProgress),
+) -> ServiceResult<Option<StagedSystemUpdate>> {
+    let manifest = fetch_system_manifest()?;
+    if !SYSTEM_UPDATE_PUBLIC_KEYS
+        .lines()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .any(|key| verify_system_release(&manifest, key).is_ok())
+    {
+        return Err(ServiceError::Update(
+            "Sabine release signature is not trusted".to_string(),
+        ));
+    }
+    if manifest.schema != 1 {
+        return Err(ServiceError::Update(format!(
+            "unsupported Sabine release schema {}",
+            manifest.schema
+        )));
+    }
+    if manifest.version.trim().is_empty() {
+        return Err(ServiceError::Update(
+            "Sabine release version is missing".to_string(),
+        ));
+    }
+    let previous = read_installation_state();
+    if require_newer
+        && previous
+            .as_ref()
+            .is_some_and(|state| !crate::types::version_is_newer(&manifest.version, &state.active))
+    {
+        return Ok(None);
+    }
+    let install_dir = versions_dir().join(&manifest.version);
+    let destination = install_dir.join(service_binary_name());
+    if complete_service_at(destination.clone()).is_none()
+        || !install_dir.join(sabine_host_name()).is_file()
+    {
+        install_system_archive(&manifest, &install_dir, on_progress)?;
+    }
+    let previous_version = previous
+        .as_ref()
+        .map(|state| state.active.clone())
+        .filter(|version| version != &manifest.version);
+    write_installation_state(&SystemInstallationState {
+        schema: 1,
+        active: manifest.version.clone(),
+        previous: previous_version.clone(),
+    })?;
+    prune_system_versions(&manifest.version, previous_version.as_deref())?;
+    Ok(Some(StagedSystemUpdate {
+        version: manifest.version,
+        service: destination,
+        previous_service: previous_version
+            .map(|version| versions_dir().join(version).join(service_binary_name()))
+            .and_then(complete_service_at),
+    }))
+}
+
+fn install_system_archive(
+    manifest: &SystemReleaseManifest,
+    install_dir: &Path,
+    on_progress: &mut impl FnMut(PrepareProgress),
+) -> ServiceResult<()> {
+    let name = system_asset_name();
+    let artifact = manifest
+        .artifacts
+        .get(&name)
+        .ok_or_else(|| ServiceError::Update(format!("Sabine release has no {name} artifact")))?;
+    if !artifact.url.starts_with("https://") {
+        return Err(ServiceError::Update(
+            "Sabine system artifact URL must use HTTPS".to_string(),
+        ));
+    }
+    if artifact.sha256.len() != 64 || !artifact.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(ServiceError::Update(
+            "Sabine system artifact SHA-256 is invalid".to_string(),
+        ));
+    }
+    let downloads = service_data_dir().join("downloads/system");
+    fs::create_dir_all(&downloads)?;
+    let archive = downloads.join(format!("{}-{name}", manifest.version));
+    download_file(&artifact.url, &archive, on_progress)?;
+    verify_sha256(&archive, &artifact.sha256)?;
+    let actual_size = fs::metadata(&archive)?.len();
+    if actual_size != artifact.size {
+        return Err(ServiceError::Update(format!(
+            "Sabine system bundle size mismatch: expected {}, got {actual_size}",
+            artifact.size
+        )));
+    }
+
+    let staging = versions_dir().join(format!("{}.installing", manifest.version));
+    if staging.exists() {
+        fs::remove_dir_all(&staging)?;
+    }
+    fs::create_dir_all(&staging)?;
+    extract_system_archive(&archive, &staging)?;
+    for name in [
+        service_binary_name(),
+        service_daemon_binary_name(),
+        sabine_host_name(),
+    ] {
+        let source = staging.join(name);
+        if !source.is_file() {
+            return Err(ServiceError::Update(format!(
+                "Sabine system bundle is missing {name}"
+            )));
+        }
+        make_executable(&source)?;
+    }
+    if install_dir.exists() {
+        fs::remove_dir_all(install_dir)?;
+    }
+    fs::rename(&staging, install_dir)?;
+    let _ = fs::remove_file(archive);
+    Ok(())
+}
+
+fn versions_dir() -> PathBuf {
+    service_data_dir().join("bin/versions")
+}
+
+fn installation_state_path() -> PathBuf {
+    service_data_dir().join("bin/current.json")
+}
+
+fn read_installation_state() -> Option<SystemInstallationState> {
+    let state = serde_json::from_slice::<SystemInstallationState>(
+        &fs::read(installation_state_path()).ok()?,
+    )
+    .ok()?;
+    (state.schema == 1).then_some(state)
+}
+
+fn current_installation() -> Option<(String, PathBuf)> {
+    let state = read_installation_state()?;
+    let path = versions_dir().join(&state.active);
+    complete_service_at(path.join(service_binary_name()))?;
+    Some((state.active, path))
+}
+
+fn write_installation_state(state: &SystemInstallationState) -> ServiceResult<()> {
+    let path = installation_state_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("new");
+    let mut file = fs::File::create(&temporary)?;
+    file.write_all(&serde_json::to_vec_pretty(state).expect("system state is serializable"))?;
+    file.sync_all()?;
+    replace_file(&temporary, &path)?;
+    Ok(())
+}
+
+fn prune_system_versions(active: &str, previous: Option<&str>) -> ServiceResult<()> {
+    let base = versions_dir();
+    if !base.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(base)? {
+        let path = entry?.path();
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if path.is_dir()
+            && name != active
+            && Some(name) != previous
+            && !name.ends_with(".installing")
+        {
+            let _ = fs::remove_dir_all(path);
         }
     }
-    let _ = fs::remove_dir_all(&cargo_root);
     Ok(())
 }
 
-fn finalize_service_binary(temporary: &Path, destination: &Path) -> ServiceResult<()> {
+fn make_executable(path: &Path) -> ServiceResult<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(temporary)?.permissions();
+        let mut permissions = fs::metadata(path)?.permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(temporary, permissions)?;
+        fs::set_permissions(path, permissions)?;
     }
-    fs::rename(temporary, destination)?;
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
-fn service_download_url(daemon: bool) -> String {
-    let override_name = if daemon {
-        "SABINE_SERVICE_DAEMON_URL"
-    } else {
-        "SABINE_SERVICE_URL"
-    };
-    if let Ok(url) = std::env::var(override_name)
-        && !url.trim().is_empty()
-    {
-        return url;
-    }
-    format!(
-        "https://github.com/{SERVICE_REPO}/releases/latest/download/{}",
-        service_asset_name(daemon)
-    )
-}
-
-fn service_asset_name(daemon: bool) -> String {
+fn system_target() -> String {
     let os = if cfg!(target_os = "windows") {
         "windows"
     } else if cfg!(target_os = "macos") {
@@ -234,15 +403,23 @@ fn service_asset_name(daemon: bool) -> String {
     } else {
         "unknown"
     };
-    let executable = if daemon {
-        "sabine-service-daemon"
+    format!("{os}-{arch}")
+}
+
+fn system_asset_name() -> String {
+    let extension = if cfg!(target_os = "windows") {
+        "zip"
     } else {
-        "sabine-service"
+        "tar.gz"
     };
+    format!("sabine-system-{}.{}", system_target(), extension)
+}
+
+fn sabine_host_name() -> &'static str {
     if cfg!(target_os = "windows") {
-        format!("{executable}-{os}-{arch}.exe")
+        "sabine-host.exe"
     } else {
-        format!("{executable}-{os}-{arch}")
+        "sabine-host"
     }
 }
 
@@ -281,48 +458,126 @@ fn download_file(
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut child = Command::new("curl")
-        .args([
-            "-L",
-            "--fail",
-            "-o",
-            destination.to_string_lossy().as_ref(),
-            url,
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| ServiceError::Update(format!("failed to run curl: {error}")))?;
-    if let Some(stderr) = child.stderr.take() {
-        let reader = BufReader::new(stderr);
-        for line in reader.split(b'\r').flatten() {
-            if let Some(percent) = parse_curl_percent(&line) {
-                on_progress(PrepareProgress {
-                    stage: PrepareStage::Service,
-                    message: format!("Downloading Sabine service ({percent:.0}%)"),
-                    fraction: Some(0.02 + (percent / 100.0) * 0.06),
-                });
-            }
+    let temporary = destination.with_extension("download");
+    let response = ureq::get(url)
+        .call()
+        .map_err(|error| ServiceError::Update(format!("release download failed: {error}")))?;
+    let total = response
+        .headers()
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
+    let (_, body) = response.into_parts();
+    let mut reader = body.into_reader();
+    let mut output = fs::File::create(&temporary)?;
+    let mut downloaded = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        output.write_all(&buffer[..read])?;
+        downloaded += read as u64;
+        if let Some(total) = total.filter(|total| *total > 0) {
+            let percent = (downloaded as f64 / total as f64 * 100.0).min(100.0);
+            on_progress(PrepareProgress {
+                stage: PrepareStage::Service,
+                message: format!("Downloading Sabine service ({percent:.0}%)"),
+                fraction: Some(0.02 + (percent as f32 / 100.0) * 0.06),
+            });
         }
     }
-    let status = child
-        .wait()
-        .map_err(|error| ServiceError::Update(format!("curl wait failed: {error}")))?;
-    if status.success() {
+    output.flush()?;
+    output.sync_all()?;
+    replace_file(&temporary, destination)?;
+    Ok(())
+}
+
+fn fetch_system_manifest() -> ServiceResult<SystemReleaseManifest> {
+    let url = std::env::var("SABINE_RELEASE_MANIFEST_URL").unwrap_or_else(|_| {
+        format!("https://github.com/{SERVICE_REPO}/releases/latest/download/sabine-release.json")
+    });
+    if !url.starts_with("https://") {
+        return Err(ServiceError::Update(
+            "Sabine release manifest must use HTTPS".to_string(),
+        ));
+    }
+    let mut response = ureq::get(&url).call().map_err(|error| {
+        ServiceError::Update(format!("release manifest request failed: {error}"))
+    })?;
+    let body = response
+        .body_mut()
+        .read_to_vec()
+        .map_err(|error| ServiceError::Update(format!("release manifest read failed: {error}")))?;
+    serde_json::from_slice(&body)
+        .map_err(|error| ServiceError::Update(format!("invalid Sabine release manifest: {error}")))
+}
+
+fn verify_sha256(path: &Path, expected: &str) -> ServiceResult<()> {
+    let mut input = fs::File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = input.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    let actual = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    if actual.eq_ignore_ascii_case(expected) {
         Ok(())
     } else {
-        let _ = fs::remove_file(destination);
         Err(ServiceError::Update(format!(
-            "failed to download Sabine service from {url}"
+            "Sabine system bundle hash mismatch: expected {expected}, got {actual}"
         )))
     }
 }
 
-fn parse_curl_percent(line: &[u8]) -> Option<f32> {
-    let text = String::from_utf8_lossy(line);
-    let token = text.split_whitespace().next()?;
-    let percent = token.parse::<f32>().ok()?;
-    (0.0..=100.0).contains(&percent).then_some(percent)
+fn extract_system_archive(archive: &Path, destination: &Path) -> ServiceResult<()> {
+    let listing = Command::new("tar")
+        .arg("-tf")
+        .arg(archive)
+        .output()
+        .map_err(|error| {
+            ServiceError::Update(format!("failed to inspect system bundle: {error}"))
+        })?;
+    if !listing.status.success() {
+        return Err(ServiceError::Update(
+            "could not inspect Sabine system bundle".to_string(),
+        ));
+    }
+    for entry in String::from_utf8_lossy(&listing.stdout).lines() {
+        let path = Path::new(entry);
+        if path.is_absolute()
+            || path
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(ServiceError::Update(
+                "Sabine system bundle contains an unsafe path".to_string(),
+            ));
+        }
+    }
+    let status = Command::new("tar")
+        .arg("-xf")
+        .arg(archive)
+        .arg("-C")
+        .arg(destination)
+        .stdin(Stdio::null())
+        .status()
+        .map_err(|error| {
+            ServiceError::Update(format!("failed to extract system bundle: {error}"))
+        })?;
+    status
+        .success()
+        .then_some(())
+        .ok_or_else(|| ServiceError::Update("could not extract Sabine system bundle".to_string()))
 }
 
 #[cfg(test)]
@@ -331,8 +586,8 @@ mod tests {
 
     #[test]
     fn asset_names_are_platform_shaped() {
-        let name = service_asset_name(false);
-        assert!(name.starts_with("sabine-service-"));
+        let name = system_asset_name();
+        assert!(name.starts_with("sabine-system-"));
         assert!(name.contains("linux") || name.contains("macos") || name.contains("windows"));
     }
 

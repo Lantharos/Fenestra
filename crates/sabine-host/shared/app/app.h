@@ -11,7 +11,7 @@ class SabineApp : public CefApp,
                 public CefBrowserProcessHandler,
                 public CefRenderProcessHandler {
  public:
-  SabineApp();
+  explicit SabineApp(bool runtime_smoke_test = false);
 
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override {
     return this;
@@ -37,6 +37,7 @@ class SabineApp : public CefApp,
 
  private:
   std::set<int> unprivileged_browsers_;
+  const bool runtime_smoke_test_;
 
   IMPLEMENT_REFCOUNTING(SabineApp);
 };

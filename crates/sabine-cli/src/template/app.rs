@@ -9,7 +9,11 @@ pub(super) fn write_app_template(root: &Path, name: &str) -> std::io::Result<()>
     fs::create_dir_all(root.join("ui/src"))?;
     fs::write(root.join("Cargo.toml"), cargo_toml(name))?;
     fs::write(root.join("Sabine.toml"), app_sabine_toml(name))?;
-    fs::write(root.join("package.json"), app_package_json(name))?;
+    let local_package = write_local_sabine_package(root)?;
+    fs::write(
+        root.join("package.json"),
+        app_package_json(name, local_package),
+    )?;
     fs::write(root.join("vite.config.ts"), app_vite_config())?;
     fs::write(root.join("tsconfig.json"), app_tsconfig())?;
     fs::write(root.join("src/main.rs"), app_main_rs())?;
@@ -37,7 +41,12 @@ build = "bun run build"
     )
 }
 
-fn app_package_json(name: &str) -> String {
+fn app_package_json(name: &str, local_package: bool) -> String {
+    let sabine_dependency = if local_package {
+        "file:vendor/sabine".to_string()
+    } else {
+        format!("github:Lantharos/Sabine#v{}", env!("CARGO_PKG_VERSION"))
+    };
     format!(
         r#"{{
   "name": "{name}",
@@ -49,15 +58,32 @@ fn app_package_json(name: &str) -> String {
     "preview": "vite preview"
   }},
   "dependencies": {{
-    "@lantharos/sabine": "github:Lantharos/Sabine"
+    "@lantharos/sabine": "{sabine_dependency}"
   }},
   "devDependencies": {{
     "typescript": "^5.9.2",
     "vite": "^7.1.2"
   }}
 }}
-"#
+"#,
     )
+}
+
+fn write_local_sabine_package(root: &Path) -> std::io::Result<bool> {
+    let cli_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let local = cli_dir
+        .parent()
+        .and_then(Path::parent)
+        .map(|root| root.join("packages/sabine"));
+    let Some(local) = local.filter(|path| path.join("package.json").is_file()) else {
+        return Ok(false);
+    };
+    let destination = root.join("vendor/sabine");
+    fs::create_dir_all(&destination)?;
+    for name in ["package.json", "index.js", "index.d.ts", "README.md"] {
+        fs::copy(local.join(name), destination.join(name))?;
+    }
+    Ok(true)
 }
 
 fn app_vite_config() -> &'static str {

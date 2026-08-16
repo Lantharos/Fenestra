@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 pub fn system_runtime_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
-        return std::env::var_os("ProgramFiles")
+        std::env::var_os("ProgramFiles")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"))
-            .join("Sabine/Runtime/cef");
+            .join("Sabine/Runtime/cef")
     }
     #[cfg(target_os = "macos")]
     {

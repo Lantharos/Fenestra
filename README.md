@@ -10,18 +10,17 @@ browser engine across every Sabine app on the machine.
 
 ```toml
 [dependencies]
-sabine = { git = "https://github.com/Lantharos/Sabine" }
+sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.0" }
 ```
 
 ```sh
-cargo install --git https://github.com/Lantharos/Sabine sabine-cli
-cargo install --git https://github.com/Lantharos/Sabine sabine-service
+cargo install --git https://github.com/Lantharos/Sabine --tag v0.1.0 sabine-cli
 ```
 
 For the TypeScript helpers used by the web UI:
 
 ```sh
-bun add github:Lantharos/Sabine
+bun add github:Lantharos/Sabine#v0.1.0
 ```
 
 ## Why Sabine
@@ -148,6 +147,12 @@ dist = "ui/dist"
 entry = "ui/dist/index.html"
 dev_port = 5173
 build = "bun run build"
+
+[updates]
+provider = "github"
+repository = "your-name/my-app"
+channel = "stable"
+policy = "automatic"
 ```
 
 ```sh
@@ -158,6 +163,42 @@ sabine bundle . --target deb --release
 sabine bundle . --target msi --release
 sabine bundle . --target dmg --release
 ```
+
+## Publishing and updates
+
+Sabine uses one coordinated `vX.Y.Z` GitHub Release for the CLI, service, daemon, and prebuilt CEF
+host. The release workflow builds the complete system bundle for each platform and signs one
+immutable release manifest. Bootstrap verifies the Ed25519 signature and artifact SHA-256 before
+installing the binaries side by side. Customer machines do not compile Sabine or require Rust,
+CMake, or a C++ toolchain. CEF remains a separately managed runtime and apps never select a
+Chromium version.
+
+New apps include a release workflow that calls Sabine's reusable workflow. Run the one-time release
+setup from the app repository; it creates the app's signing key, stores the private seed directly as
+a GitHub Actions secret, enables immutable Releases, and writes the repository and public key to
+`Sabine.toml`:
+
+```sh
+sabine release-init --repository owner/repository
+```
+
+For each release, set the version in `Sabine.toml`, commit it, and push the matching tag:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow builds MSI, DMG, AppImage, deb, and rpm artifacts, signs `sabine-update.json`, attaches
+the exact platform/package mapping, attests the artifacts, and creates the GitHub Release. The daemon
+downloads updates in the background. Sabine-managed archives activate side by side; their stable
+bootstrap forwards to the current release on the next launch. Native packages are staged silently,
+then offer Install or Later when the app next opens. Accepting closes the app, requests elevation
+when needed, installs, and relaunches it. Store installs remain owned by the store.
+
+Pass `--offline` to `sabine bundle` to include a working CEF runtime and Sabine system bootstrap.
+The embedded system is adopted into the same versioned installation on first launch, then resumes
+normal background updates. No compiler is needed on the destination machine.
 
 ## Runtime and service
 
@@ -172,24 +213,29 @@ Sabine keeps the Chromium runtime under the platform application-data directory.
 console window to the login process.
 
 1. The first app launches with Sabine bootstrap code and a native progress window.
-2. Bootstrap obtains the service CLI and daemon (GitHub Releases if available, otherwise
-   `cargo install --git https://github.com/Lantharos/Sabine sabine-service`), then starts it.
-3. The service installs the latest compatible Chromium runtime.
+2. Bootstrap downloads the signed service, daemon, and prebuilt CEF host system bundle from the
+   latest Sabine GitHub Release, installs it in a versioned directory, then starts it.
+3. The service installs the latest compatible Chromium runtime and validates it by initializing CEF
+   with the installed host before selecting it.
 4. The app registers with the service and starts.
 
-Later apps reuse that service and runtime. By default the service also starts at login so the
-runtime stays warm. Prefer on-demand start with `sabine-service prefer-on-demand`.
+Later apps reuse that service and runtime. Updates are atomic: Sabine retains the previous system
+version until the replacement daemon reports healthy, and CEF runtimes in active use hold leases so
+maintenance cannot prune them. A failed CEF initialization is quarantined and resolution falls back
+to the previous runtime. By default the service also starts at login so the runtime stays warm.
+Prefer on-demand start with `sabine-service prefer-on-demand`.
 
 Service acquisition order:
 
 1. `SABINE_SERVICE_PATH` if set
-2. Binary next to the current executable / on `PATH` / cached under the Sabine data dir
-3. GitHub Releases asset:
-   `https://github.com/Lantharos/Sabine/releases/latest/download/sabine-service-{os}-{arch}`
-4. Fallback: build from git with cargo (requires a Rust toolchain)
+2. Active versioned installation under the Sabine data dir
+3. Complete offline bootstrap beside the app, adopted into the versioned installation
+4. Binary on `PATH` for development
+5. The platform system bundle described by
+   `https://github.com/Lantharos/Sabine/releases/latest/download/sabine-release.json`
 
-The daemon asset follows the same naming scheme with a `sabine-service-daemon` prefix. Override
-release URLs with `SABINE_SERVICE_URL` and `SABINE_SERVICE_DAEMON_URL`.
+Override the release metadata URL with `SABINE_RELEASE_MANIFEST_URL` for development or a private
+mirror.
 
 ```sh
 sabine runtime doctor

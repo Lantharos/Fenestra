@@ -212,8 +212,8 @@ fn doctor_runtime(json: bool) -> ExitCode {
     let has_compatible = resolved.is_some();
     let host_ready = resolved
         .as_ref()
-        .map(|runtime| sabine_host::host_release_binary(runtime.location.path()))
-        .is_some_and(|path| path.is_file());
+        .and_then(|runtime| sabine_host::available_host(runtime.location.path()))
+        .is_some();
     let status = if has_compatible {
         "ok"
     } else if runtimes.is_empty() {

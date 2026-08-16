@@ -3,17 +3,21 @@ mod download;
 mod error;
 mod host;
 mod install;
+mod lease;
 mod paths;
 mod resolve;
 mod types;
 mod version;
 
+pub(crate) const MIN_CEF_MAJOR: &str = "151";
+
 pub use download::{DEFAULT_CEF_INDEX_URL, latest_install_plan};
 pub use error::RuntimeError;
 pub use install::{
     install_user_runtime, install_user_runtime_with_progress, prune_user_runtimes,
-    remove_user_runtime_version, update_user_runtime_with_progress,
+    quarantine_user_runtime, remove_user_runtime_version, update_user_runtime_with_progress,
 };
+pub use lease::RuntimeLease;
 pub use paths::{
     bundled_runtime_path, runtime_version_path, system_runtime_path, user_runtime_path,
 };

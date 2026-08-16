@@ -90,18 +90,55 @@ fn package_rpm(
 ) -> Result<(), String> {
     let spec = staged.root.join(format!("{}.spec", app.id));
     fs::write(&spec, rpm_spec(app, &staged.executable)).map_err(|error| error.to_string())?;
-    write_script(
-        &staged.root.join("build-rpm.sh"),
-        &shell_script(&[&format!(
-            "rpmbuild -bb '{}' --buildroot '{}'",
-            spec.display(),
-            staged.app_dir.display()
-        )]),
-    )?;
-    result
-        .notes
-        .push("wrote RPM spec and build-rpm.sh".to_string());
+    let artifact = artifact_path(app, staged, BundleFormat::Rpm, "rpm");
+    if command_exists("rpmbuild") {
+        let rpm_dir = staged.root.join("rpms");
+        fs::create_dir_all(&rpm_dir).map_err(|error| error.to_string())?;
+        run(Command::new("rpmbuild")
+            .arg("-bb")
+            .arg(&spec)
+            .arg("--buildroot")
+            .arg(staged.root.join("rpm-buildroot"))
+            .arg("--define")
+            .arg(format!("_rpmdir {}", rpm_dir.display()))
+            .arg("--define")
+            .arg(format!("sabine_source {}", staged.app_dir.display())))?;
+        let built = find_file_with_extension(&rpm_dir, "rpm")
+            .ok_or_else(|| "rpmbuild completed without producing an RPM".to_string())?;
+        ensure_parent(&artifact)?;
+        fs::copy(built, &artifact).map_err(|error| error.to_string())?;
+        result.artifacts.push(artifact);
+    } else {
+        write_script(
+            &staged.root.join("build-rpm.sh"),
+            &shell_script(&[&format!(
+                "rpmbuild -bb '{}' --buildroot '{}'",
+                spec.display(),
+                staged.app_dir.display()
+            )]),
+        )?;
+        result
+            .notes
+            .push("rpmbuild not found; wrote build-rpm.sh".to_string());
+    }
     Ok(())
+}
+
+fn find_file_with_extension(root: &Path, extension: &str) -> Option<PathBuf> {
+    for entry in fs::read_dir(root).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_file_with_extension(&path, extension) {
+                return Some(found);
+            }
+        } else if path
+            .extension()
+            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(extension))
+        {
+            return Some(path);
+        }
+    }
+    None
 }
 
 fn package_appimage(
@@ -148,7 +185,7 @@ fn package_dmg(
             .arg("-volname")
             .arg(&app.name)
             .arg("-srcfolder")
-            .arg(&staged.app_dir)
+            .arg(&staged.root)
             .arg("-ov")
             .arg("-format")
             .arg("UDZO")
@@ -186,12 +223,19 @@ fn package_msi(
 ) -> Result<(), String> {
     let wxs = staged.root.join("installer.wxs");
     let artifact = artifact_path(app, staged, BundleFormat::Msi, "msi");
-    fs::write(&wxs, wix_source(app, &staged.app_dir.display().to_string()))
-        .map_err(|error| error.to_string())?;
+    let source_dir = fs::canonicalize(&staged.app_dir).map_err(|error| error.to_string())?;
+    fs::write(
+        &wxs,
+        wix_source(app, &source_dir.display().to_string(), &staged.executable),
+    )
+    .map_err(|error| error.to_string())?;
     if command_exists("wix") {
         ensure_parent(&artifact)?;
+        let _ = fs::remove_file(artifact.with_extension("wixpdb"));
         run(Command::new("wix")
             .arg("build")
+            .arg("-wx")
+            .args(["-pdbtype", "none"])
             .arg(&wxs)
             .arg("-o")
             .arg(&artifact))?;
@@ -289,6 +333,7 @@ fn artifact_path(
     staged
         .root
         .parent()
+        .and_then(Path::parent)
         .unwrap_or(&staged.root)
         .join("artifacts")
         .join(format!(
@@ -348,8 +393,12 @@ fn run(command: &mut Command) -> Result<(), String> {
 }
 
 fn command_exists(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|path| path.join(name).is_file()))
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|path| {
+            path.join(name).is_file()
+                || (cfg!(windows) && path.join(format!("{name}.exe")).is_file())
+        })
+    })
 }
 
 fn make_executable(path: &Path) -> io::Result<()> {

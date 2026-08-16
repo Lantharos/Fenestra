@@ -1,0 +1,94 @@
+name: Package smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: msi
+            update_target: windows-x86_64-msi
+            extension: .msi
+          - os: macos-15
+            target: dmg
+            update_target: macos-aarch64-dmg
+            extension: .dmg
+          - os: macos-15-intel
+            target: dmg
+            update_target: macos-x86_64-dmg
+            extension: .dmg
+          - os: ubuntu-24.04
+            target: appimage
+            update_target: linux-x86_64-appimage
+            extension: .AppImage
+          - os: ubuntu-24.04
+            target: deb
+            update_target: linux-x86_64-deb
+            extension: .deb
+          - os: ubuntu-24.04
+            target: rpm
+            update_target: linux-x86_64-rpm
+            extension: .rpm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: rustup toolchain install 1.89 --profile minimal
+      - run: rustup override set 1.89
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwayland-dev libxkbcommon-dev rpm
+          if [ "${{ matrix.target }}" = "appimage" ]; then
+            sudo curl --fail --location --output /usr/local/bin/appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+            sudo chmod +x /usr/local/bin/appimagetool
+          fi
+      - name: Install Windows packaging dependencies
+        if: runner.os == 'Windows'
+        run: dotnet tool install --global wix --version 6.0.2
+      - name: Generate real app and signing key
+        shell: pwsh
+        run: |
+          cargo run --release -p sabine-cli -- new release-probe
+          $privateKey = cargo run --release -p sabine-cli -- release-keygen --public-output release-probe/update-public-key.txt | Select-Object -Last 1
+          if ([string]::IsNullOrWhiteSpace($privateKey)) {
+            throw "release key generation failed"
+          }
+          "SABINE_UPDATE_SIGNING_KEY=$privateKey" >> $env:GITHUB_ENV
+      - name: Install and build web application
+        working-directory: release-probe
+        run: |
+          bun install
+          bun run build
+      - name: Build native package and signed metadata
+        shell: pwsh
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          cargo run --release -p sabine-cli -- bundle release-probe --target "${{ matrix.target }}" --release
+          $artifacts = @(Get-ChildItem release-probe/dist/artifacts -File)
+          if ($artifacts.Count -ne 1 -or $artifacts[0].Extension -cne "${{ matrix.extension }}") {
+            throw "expected one ${{ matrix.extension }} artifact, found $($artifacts.Name -join ', ')"
+          }
+          cargo run --release -p sabine-cli -- release-manifest release-probe --output release-probe/dist/sabine-update.json --artifact "${{ matrix.update_target }}=$($artifacts[0].FullName)"
+          $manifest = Get-Content release-probe/dist/sabine-update.json -Raw | ConvertFrom-Json
+          if ([string]::IsNullOrWhiteSpace($manifest.signature)) {
+            throw "release manifest signature is missing"
+          }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-${{ matrix.update_target }}
+          path: |
+            release-probe/dist/artifacts/*
+            release-probe/dist/sabine-update.json
+          if-no-files-found: error

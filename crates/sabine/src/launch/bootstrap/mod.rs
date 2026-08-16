@@ -3,7 +3,7 @@ mod ui;
 use crate::window::config::SabineWindowConfig;
 use crate::{SabineError, SabineResult};
 use sabine_runtime::{RuntimeConfig, RuntimeMode, resolve_runtime};
-use sabine_service::{AppManifest, prepare_machine_with_progress};
+use sabine_service::{AppManifest, SabineService, prepare_machine_with_progress};
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
@@ -59,10 +59,76 @@ pub(crate) fn prepare(config: &SabineWindowConfig) -> SabineResult<()> {
                 report.runtime_version, report.daemon_running, report.login_autostart
             );
         }
+        relaunch_managed_update(config);
+        offer_pending_update(config);
         return Ok(());
     }
 
-    run_bootstrap_install(config, register)
+    run_bootstrap_install(config, register)?;
+    relaunch_managed_update(config);
+    offer_pending_update(config);
+    Ok(())
+}
+
+fn relaunch_managed_update(config: &SabineWindowConfig) {
+    let Some(id) = config.app_id.as_deref() else {
+        return;
+    };
+    let Ok(registered) = SabineService::default().app(id) else {
+        return;
+    };
+    let Ok(current) = std::env::current_exe() else {
+        return;
+    };
+    let desired = registered.manifest.executable;
+    let current = current.canonicalize().unwrap_or(current);
+    let desired = desired.canonicalize().unwrap_or(desired);
+    if current == desired || !desired.is_file() {
+        return;
+    }
+    let launched = Command::new(desired)
+        .args(std::env::args_os().skip(1))
+        .stdin(Stdio::null())
+        .spawn()
+        .is_ok();
+    if launched {
+        std::process::exit(0);
+    }
+}
+
+fn offer_pending_update(config: &SabineWindowConfig) {
+    let Some(id) = config.app_id.as_deref() else {
+        return;
+    };
+    let service = SabineService::default();
+    let Ok(Some(update)) = service.pending_app_update(id) else {
+        return;
+    };
+    if !ui::confirm_update(&config.title, &update.version).unwrap_or(false) {
+        return;
+    }
+    let Ok(service_executable) = sabine_service::resolve_service_executable() else {
+        return;
+    };
+    let executable = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok());
+    let Some(executable) = executable else {
+        return;
+    };
+    let spawned = Command::new(service_executable)
+        .arg("apply-update")
+        .arg(id)
+        .arg("--wait-pid")
+        .arg(std::process::id().to_string())
+        .arg("--relaunch")
+        .arg(executable)
+        .stdin(Stdio::null())
+        .spawn()
+        .is_ok();
+    if spawned {
+        std::process::exit(0);
+    }
 }
 
 fn run_bootstrap_install(
@@ -108,7 +174,7 @@ pub(crate) fn app_manifest(config: &SabineWindowConfig) -> Option<AppManifest> {
             .unwrap_or_else(|| "0.0.0".to_string()),
         executable,
         args: Vec::new(),
-        update: None,
+        update: config.app_update.clone(),
     })
 }
 
@@ -125,7 +191,6 @@ fn write_bootstrap(
     };
     let mut body = serde_json::json!({
         "mode": mode,
-        "min_version": config.min_version,
         "index_url": config.index_url,
         "allow_user_install": config.allow_user_install,
         "allow_bundled": config.allow_bundled,
@@ -134,13 +199,7 @@ fn write_bootstrap(
         body["bundled_dir"] = dir.display().to_string().into();
     }
     if let Some(manifest) = register {
-        body["register"] = serde_json::json!({
-            "id": manifest.id,
-            "name": manifest.name,
-            "version": manifest.version,
-            "executable": manifest.executable,
-            "args": manifest.args,
-        });
+        body["register"] = serde_json::to_value(manifest).expect("app manifest is serializable");
     }
     std::fs::write(
         path,
@@ -158,11 +217,6 @@ fn read_bootstrap(path: PathBuf) -> Result<(RuntimeConfig, Option<AppManifest>),
             .and_then(Value::as_str)
             .and_then(RuntimeMode::parse)
             .unwrap_or(RuntimeMode::SharedPreferred),
-        min_version: value
-            .get("min_version")
-            .and_then(Value::as_str)
-            .unwrap_or("151")
-            .to_string(),
         index_url: value
             .get("index_url")
             .and_then(Value::as_str)
@@ -180,29 +234,12 @@ fn read_bootstrap(path: PathBuf) -> Result<(RuntimeConfig, Option<AppManifest>),
             .and_then(Value::as_str)
             .map(PathBuf::from),
     };
-    let register = value.get("register").and_then(|entry| {
-        Some(AppManifest {
-            id: entry.get("id")?.as_str()?.to_string(),
-            name: entry.get("name")?.as_str()?.to_string(),
-            version: entry
-                .get("version")
-                .and_then(Value::as_str)
-                .unwrap_or("0.0.0")
-                .to_string(),
-            executable: PathBuf::from(entry.get("executable")?.as_str()?),
-            args: entry
-                .get("args")
-                .and_then(Value::as_array)
-                .map(|args| {
-                    args.iter()
-                        .filter_map(Value::as_str)
-                        .map(ToString::to_string)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            update: None,
-        })
-    });
+    let register = value
+        .get("register")
+        .cloned()
+        .map(serde_json::from_value::<AppManifest>)
+        .transpose()
+        .map_err(|error| format!("invalid app registration: {error}"))?;
     Ok((config, register))
 }
 

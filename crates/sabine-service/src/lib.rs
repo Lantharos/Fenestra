@@ -1,24 +1,31 @@
 mod install;
 mod lifecycle;
 mod registry;
+mod signing;
 mod types;
 mod updates;
 
 pub use install::{
-    cached_service_path, ensure_service_executable, find_service_executable, service_daemon_path,
+    StagedSystemUpdate, cached_service_path, ensure_service_executable, find_service_executable,
+    rollback_system_update, service_daemon_path, stage_system_update,
 };
 pub use lifecycle::{
     PrepareProgress, PrepareStage, ServicePolicy, ServiceReadyReport, adopt, adopt_with_runtime,
-    ensure_daemon_running, ensure_ready, ensure_ready_with_runtime, install_login_autostart,
-    install_login_autostart_with, is_daemon_running, load_policy, policy_path,
-    prepare_machine_with_progress, resolve_service_executable, run_daemon, save_policy,
-    set_login_autostart, start_daemon, uninstall_login_autostart,
+    complete_system_update, ensure_daemon_running, ensure_ready, ensure_ready_with_runtime,
+    install_login_autostart, install_login_autostart_with, is_daemon_running, load_policy,
+    policy_path, prepare_machine_with_progress, resolve_service_executable, run_daemon,
+    save_policy, set_login_autostart, start_daemon, uninstall_login_autostart,
 };
 pub use registry::SabineService;
+pub use signing::{
+    public_key_from_private, sign_app_release, sign_system_release, verify_app_release,
+    verify_system_release,
+};
 pub use types::{
-    AppArtifact, AppManifest, AppReleaseManifest, AppUpdateConfig, MaintenanceReport,
-    RegisteredApp, ServiceError, ServiceResult, UpdatePolicy, default_maintenance_interval,
-    service_data_dir, valid_app_id,
+    AppArtifact, AppArtifactKind, AppInstallMode, AppManifest, AppReleaseManifest, AppUpdateConfig,
+    AppUpdateSource, AppUpdateStatus, MaintenanceReport, PendingAppUpdate, RegisteredApp,
+    ServiceError, ServiceResult, SystemReleaseArtifact, SystemReleaseManifest, UpdatePolicy,
+    default_maintenance_interval, service_data_dir, valid_app_id,
 };
 
 #[cfg(test)]
@@ -43,9 +50,14 @@ mod tests {
             executable: std::path::PathBuf::from("/opt/notes/notes"),
             args: Vec::new(),
             update: Some(AppUpdateConfig {
-                manifest_url: "https://updates.example.test/notes.json".to_string(),
+                source: AppUpdateSource::Http {
+                    url: "https://updates.example.test/notes.json".to_string(),
+                },
                 channel: "stable".to_string(),
                 policy: UpdatePolicy::Automatic,
+                install_mode: AppInstallMode::Managed,
+                public_key: "VXtTlN3HZuGwYByjJu+3HQGavjJwRo0i9/RGrT6Ua6M=".to_string(),
+                package_kind: None,
             }),
         }
     }
@@ -67,7 +79,9 @@ mod tests {
     fn registry_rejects_insecure_update_urls() {
         let service = service();
         let mut app = manifest();
-        app.update.as_mut().unwrap().manifest_url = "http://example.test/app.json".to_string();
+        app.update.as_mut().unwrap().source = AppUpdateSource::Http {
+            url: "http://example.test/app.json".to_string(),
+        };
         assert!(matches!(
             service.register(app),
             Err(ServiceError::InvalidManifest(_))
@@ -82,9 +96,12 @@ mod tests {
     }
 
     #[test]
-    fn update_versions_compare_numeric_segments() {
+    fn update_versions_follow_semver_precedence() {
         assert!(types::version_is_newer("1.10.0", "1.9.9"));
+        assert!(types::version_is_newer("1.2.0", "1.2.0-beta.1"));
+        assert!(!types::version_is_newer("1.2.0-beta.1", "1.2.0"));
         assert!(!types::version_is_newer("1.2.0", "1.2.0"));
         assert!(!types::version_is_newer("1.1.9", "1.2.0"));
+        assert!(!types::version_is_newer("latest", "1.2.0"));
     }
 }

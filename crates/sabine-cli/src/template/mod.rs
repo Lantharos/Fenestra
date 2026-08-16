@@ -3,7 +3,7 @@
 mod app;
 mod notes;
 
-use std::{path::PathBuf, process::ExitCode};
+use std::{fs, path::PathBuf, process::ExitCode};
 
 use app::write_app_template;
 use notes::write_notes_template;
@@ -27,7 +27,8 @@ pub fn new_app(name: &str, template: &str) -> ExitCode {
     let result = match template {
         "notes" => write_notes_template(&root, name),
         _ => write_app_template(&root, name),
-    };
+    }
+    .and_then(|_| write_release_workflow(&root));
     match result {
         Ok(()) => {
             println!("Created Sabine app at {}", root.display());
@@ -39,6 +40,36 @@ pub fn new_app(name: &str, template: &str) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+fn write_release_workflow(root: &std::path::Path) -> std::io::Result<()> {
+    let workflows = root.join(".github/workflows");
+    fs::create_dir_all(&workflows)?;
+    fs::write(
+        workflows.join("release.yml"),
+        format!(
+            r#"name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    uses: Lantharos/Sabine/.github/workflows/release-app.yml@v{version}
+    with:
+      sabine_version: v{version}
+    secrets: inherit
+"#,
+            version = env!("CARGO_PKG_VERSION")
+        ),
+    )
 }
 
 pub(crate) fn sanitize_id(name: &str) -> String {
@@ -62,9 +93,15 @@ fn is_valid_name(name: &str) -> bool {
 
 pub(crate) fn cargo_toml(name: &str) -> String {
     let sabine_dep = sabine_path()
-        .map(|path| format!("{{ path = \"{}\" }}", path.display()))
+        .map(|path| {
+            let path = path.display().to_string().replace('\\', "\\\\");
+            format!("{{ path = \"{path}\" }}")
+        })
         .unwrap_or_else(|| {
-            "{ git = \"https://github.com/Lantharos/Sabine\", package = \"sabine\" }".to_string()
+            format!(
+                "{{ git = \"https://github.com/Lantharos/Sabine\", tag = \"v{}\", package = \"sabine\" }}",
+                env!("CARGO_PKG_VERSION")
+            )
         });
     format!(
         r#"[package]
@@ -76,6 +113,8 @@ edition = "2024"
 sabine = {sabine_dep}
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
+
+[workspace]
 "#
     )
 }

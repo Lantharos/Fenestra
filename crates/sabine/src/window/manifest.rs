@@ -18,6 +18,7 @@ struct SabineFile {
     app: AppSection,
     #[serde(default)]
     web: WebSection,
+    updates: Option<sabine_service::AppUpdateConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -56,6 +57,9 @@ impl SabineWindow {
                 source,
             })?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
+        if base.join("runtimes/cef").is_dir() {
+            self.config.runtime.bundled_dir = Some(base.to_path_buf());
+        }
         if let Some(id) = file.app.id {
             self = self.app_id(id);
         }
@@ -65,6 +69,7 @@ impl SabineWindow {
         if let Some(version) = file.app.version {
             self = self.app_version(version);
         }
+        self.config.app_update = file.updates;
         if let Some(entry) = file.web.entry {
             let entry_path = base.join(&entry);
             self = self.entry(entry_path.display().to_string());

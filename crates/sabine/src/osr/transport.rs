@@ -88,6 +88,7 @@ pub(crate) fn authenticate_peer(_stream: &IpcStream) -> io::Result<()> {
 }
 
 const HEALTH_PROBE: &[u8] = b"sabine-osr-probe-v1";
+#[cfg(unix)]
 const HEALTH_PROBE_LINE: &[u8] = b"sabine-osr-probe-v1\n";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

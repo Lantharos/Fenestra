@@ -7,6 +7,7 @@ use sabine_platform::{
     WindowRegions,
 };
 use sabine_runtime::RuntimeConfig;
+use sabine_service::AppUpdateConfig;
 
 use crate::launch::browser::BrowserOptions;
 use crate::{SabineError, SabineResult};
@@ -18,6 +19,7 @@ pub(crate) struct SabineWindowConfig {
     pub dev_url: Option<String>,
     pub app_id: Option<String>,
     pub app_version: Option<String>,
+    pub app_update: Option<AppUpdateConfig>,
     pub title: String,
     pub width: u32,
     pub height: u32,
@@ -54,6 +56,7 @@ impl Default for SabineWindowConfig {
             dev_url: None,
             app_id: None,
             app_version: None,
+            app_update: None,
             title: "Sabine".to_string(),
             width: 900,
             height: 640,

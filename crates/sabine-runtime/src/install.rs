@@ -16,6 +16,7 @@ use crate::download::{
 };
 use crate::error::RuntimeError;
 use crate::host::runtime_is_valid;
+use crate::lease::runtime_is_leased;
 use crate::paths::user_runtime_path;
 use crate::resolve::resolve_runtime;
 use crate::types::{
@@ -69,6 +70,9 @@ fn install_user_runtime_inner(
         "Preparing runtime",
     ));
     let plan = latest_install_plan(config)?;
+    if plan.install_dir.join(".sabine-unusable").is_file() {
+        return resolve_runtime(config);
+    }
     if runtime_is_valid(&plan.install_dir) && detect_version(&plan.install_dir) == plan.version {
         progress(RuntimeInstallProgress::new(
             RuntimeInstallStep::Complete,
@@ -175,6 +179,20 @@ fn install_user_runtime_inner(
     })
 }
 
+pub fn quarantine_user_runtime(runtime: &RuntimeInfo, reason: &str) -> Result<bool, RuntimeError> {
+    let RuntimeLocation::UserLocal(path) = &runtime.location else {
+        return Ok(false);
+    };
+    let mut marker = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path.join(".sabine-unusable"))?;
+    writeln!(marker, "{reason}")?;
+    marker.sync_all()?;
+    Ok(true)
+}
+
 fn cleanup_install_work_dir(work_dir: &Path, keep_archive_name: &str) -> Result<(), RuntimeError> {
     if !work_dir.is_dir() {
         return Ok(());
@@ -257,6 +275,9 @@ pub fn prune_user_runtimes(keep_latest: usize) -> Result<usize, RuntimeError> {
 
     let mut removed = 0;
     for path in runtimes.into_iter().skip(keep_latest.max(1)) {
+        if runtime_is_leased(&path)? {
+            continue;
+        }
         std::fs::remove_dir_all(path)?;
         removed += 1;
     }
@@ -278,6 +299,9 @@ pub fn remove_user_runtime_version(version: &str) -> Result<bool, RuntimeError> 
         .filter(|path| path.is_dir() && is_runtime_dir(path))
         .filter(|path| detect_version(path) == version)
     {
+        if runtime_is_leased(&path)? {
+            continue;
+        }
         std::fs::remove_dir_all(path)?;
         removed = true;
     }

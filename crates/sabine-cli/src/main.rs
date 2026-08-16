@@ -2,6 +2,7 @@ mod bundle;
 mod dev;
 mod icon_assets;
 mod process_tree;
+mod release;
 mod runtime;
 mod source_assets;
 mod source_desktop;
@@ -94,6 +95,37 @@ enum Command {
         version: Option<String>,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        offline: bool,
+    },
+    ReleaseManifest {
+        #[arg(default_value = ".")]
+        source: PathBuf,
+        #[arg(long, default_value = "dist/sabine-update.json")]
+        output: PathBuf,
+        #[arg(long, default_value = "stable")]
+        channel: String,
+        #[arg(long, required = true)]
+        artifact: Vec<String>,
+        #[arg(long)]
+        executable: Vec<String>,
+    },
+    SystemReleaseManifest {
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        directory: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    ReleaseKeygen {
+        #[arg(long)]
+        public_output: PathBuf,
+    },
+    ReleasePublicKey,
+    ReleaseInit {
+        #[arg(long)]
+        repository: Option<String>,
     },
 }
 
@@ -193,6 +225,7 @@ fn main() -> ExitCode {
             name,
             version,
             json,
+            offline,
         } => match bundle::bundle(BundleOptions {
             source,
             target,
@@ -208,6 +241,7 @@ fn main() -> ExitCode {
             name,
             version,
             json,
+            offline,
         }) {
             Ok(code) => code,
             Err(error) => {
@@ -215,5 +249,69 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         },
+        Command::ReleaseManifest {
+            source,
+            output,
+            channel,
+            artifact,
+            executable,
+        } => match release::write_manifest(&source, &output, &channel, &artifact, &executable) {
+            Ok(()) => {
+                println!("wrote {}", output.display());
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(1)
+            }
+        },
+        Command::SystemReleaseManifest {
+            version,
+            directory,
+            output,
+        } => match release::write_system_manifest(&version, &directory, &output) {
+            Ok(()) => {
+                println!("wrote {}", output.display());
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(1)
+            }
+        },
+        Command::ReleaseKeygen { public_output } => {
+            match release::generate_signing_key(&public_output) {
+                Ok(private_key) => {
+                    println!("{private_key}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        Command::ReleasePublicKey => match release::signing_public_key() {
+            Ok(public_key) => {
+                println!("{public_key}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(1)
+            }
+        },
+        Command::ReleaseInit { repository } => {
+            match release::initialize_github_release(repository.as_deref()) {
+                Ok(public_key) => {
+                    println!("configured signed immutable releases (public key {public_key})");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
     }
 }

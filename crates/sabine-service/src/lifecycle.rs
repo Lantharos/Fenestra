@@ -10,10 +10,12 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    time::Duration,
 };
 
 const POLICY_FILE: &str = "service-policy.json";
 const PID_FILE: &str = "service.pid";
+const DAEMON_STATE_FILE: &str = "daemon-state.json";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
@@ -280,6 +282,14 @@ pub fn run_daemon() -> ServiceResult<()> {
     };
     let service = SabineService::default();
     loop {
+        match crate::stage_system_update() {
+            Ok(Some(update)) => {
+                begin_system_handoff(&update)?;
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(error) => eprintln!("Sabine self-update failed: {error}"),
+        }
         if let Err(error) = service.maintain() {
             eprintln!("Sabine maintenance failed: {error}");
         }
@@ -287,8 +297,113 @@ pub fn run_daemon() -> ServiceResult<()> {
     }
 }
 
+pub fn complete_system_update(from_pid: u32, version: &str) -> ServiceResult<()> {
+    #[cfg(target_os = "macos")]
+    unload_macos_daemon();
+    wait_for_process_exit(from_pid);
+    let active = crate::cached_service_path();
+    start_updated_daemon(&active)?;
+    if wait_for_daemon_version(version, Duration::from_secs(20)) {
+        return Ok(());
+    }
+
+    let previous = crate::rollback_system_update(version)?.ok_or_else(|| {
+        ServiceError::Update(format!(
+            "Sabine {version} did not start and no rollback installation is available"
+        ))
+    })?;
+    start_updated_daemon(&previous)?;
+    let previous_version = previous
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if !wait_for_daemon_version(previous_version, Duration::from_secs(20)) {
+        return Err(ServiceError::Update(
+            "Sabine rollback daemon did not become ready".to_string(),
+        ));
+    }
+    Err(ServiceError::Update(format!(
+        "Sabine {version} failed its startup check and was rolled back"
+    )))
+}
+
+fn start_updated_daemon(service: &Path) -> ServiceResult<()> {
+    if load_policy().login_autostart {
+        install_login_autostart_with(service)?;
+        if cfg!(any(target_os = "linux", target_os = "macos")) {
+            return Ok(());
+        }
+    }
+    start_daemon_at(&crate::service_daemon_path(service))
+}
+
+fn begin_system_handoff(update: &crate::StagedSystemUpdate) -> ServiceResult<()> {
+    let helper = update.previous_service.as_ref().ok_or_else(|| {
+        ServiceError::Update("self-update has no running installation to perform handoff".into())
+    })?;
+    let mut command = Command::new(helper);
+    command
+        .arg("complete-system-update")
+        .arg("--from-pid")
+        .arg(std::process::id().to_string())
+        .arg("--version")
+        .arg(&update.version)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    command.spawn().map_err(|error| {
+        ServiceError::Update(format!("failed to start Sabine update handoff: {error}"))
+    })?;
+    Ok(())
+}
+
+fn start_daemon_at(executable: &Path) -> ServiceResult<()> {
+    let mut command = Command::new(executable);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    command.spawn().map(|_| ()).map_err(|error| {
+        ServiceError::Update(format!(
+            "failed to launch {}: {error}",
+            executable.display()
+        ))
+    })
+}
+
+fn wait_for_daemon_version(version: &str, timeout: Duration) -> bool {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if daemon_state()
+            .is_some_and(|state| state.version == version && process_alive(state.pid as i32))
+        {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
+fn wait_for_process_exit(pid: u32) {
+    while process_alive(pid as i32) {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 struct DaemonPid {
     path: PathBuf,
+    state_path: PathBuf,
     pid: u32,
 }
 
@@ -301,6 +416,10 @@ impl Drop for DaemonPid {
         if owns_file {
             let _ = fs::remove_file(&self.path);
         }
+        let owns_state = daemon_state().is_some_and(|state| state.pid == self.pid);
+        if owns_state {
+            let _ = fs::remove_file(&self.state_path);
+        }
     }
 }
 
@@ -312,7 +431,21 @@ fn claim_daemon_pid() -> ServiceResult<Option<DaemonPid>> {
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(mut file) => {
                 write!(file, "{pid}")?;
-                return Ok(Some(DaemonPid { path, pid }));
+                file.sync_all()?;
+                let state_path = service_data_dir().join(DAEMON_STATE_FILE);
+                let state = DaemonState {
+                    pid,
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                };
+                fs::write(
+                    &state_path,
+                    serde_json::to_vec(&state).expect("daemon state is serializable"),
+                )?;
+                return Ok(Some(DaemonPid {
+                    path,
+                    state_path,
+                    pid,
+                }));
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let existing = fs::read_to_string(&path)
@@ -332,10 +465,20 @@ fn claim_daemon_pid() -> ServiceResult<Option<DaemonPid>> {
     }
 }
 
+#[derive(Deserialize, Serialize)]
+struct DaemonState {
+    pid: u32,
+    version: String,
+}
+
+fn daemon_state() -> Option<DaemonState> {
+    serde_json::from_slice(&fs::read(service_data_dir().join(DAEMON_STATE_FILE)).ok()?).ok()
+}
+
 pub fn resolve_service_executable() -> ServiceResult<PathBuf> {
     crate::find_service_executable().ok_or_else(|| {
         ServiceError::Update(
-            "sabine-service executable not found; it will be downloaded on first launch, or set SABINE_SERVICE_PATH / SABINE_SERVICE_URL".to_string(),
+            "sabine-service executable not found; it will be downloaded on first launch, or set SABINE_SERVICE_PATH / SABINE_RELEASE_MANIFEST_URL".to_string(),
         )
     })
 }
@@ -444,6 +587,7 @@ pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
                 daemon.display()
             ),
         )?;
+        run_checked(Command::new("systemctl").args(["--user", "daemon-reload"]))?;
         run_checked(Command::new("systemctl").args([
             "--user",
             "enable",
@@ -465,7 +609,18 @@ pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
                 daemon.display()
             ),
         )?;
-        run_checked(Command::new("launchctl").args(["load", "-w", &path.display().to_string()]))?;
+        let domain = format!("gui/{}", unsafe { libc::getuid() });
+        let service = format!("{domain}/net.lantharos.sabine");
+        let _ = Command::new("launchctl")
+            .args(["bootout", &service])
+            .status();
+        run_checked(Command::new("launchctl").args([
+            "bootstrap",
+            &domain,
+            &path.display().to_string(),
+        ]))?;
+        run_checked(Command::new("launchctl").args(["enable", &service]))?;
+        run_checked(Command::new("launchctl").args(["kickstart", "-k", &service]))?;
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
@@ -475,6 +630,14 @@ pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn unload_macos_daemon() {
+    let service = format!("gui/{}/net.lantharos.sabine", unsafe { libc::getuid() });
+    let _ = Command::new("launchctl")
+        .args(["bootout", &service])
+        .status();
 }
 
 pub fn uninstall_login_autostart() -> ServiceResult<()> {

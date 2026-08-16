@@ -1,0 +1,106 @@
+name: Release Sabine
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x86_64
+            archive: zip
+          - os: macos-15-intel
+            target: macos-x86_64
+            archive: tar.gz
+          - os: macos-15
+            target: macos-aarch64
+            archive: tar.gz
+          - os: ubuntu-24.04
+            target: linux-x86_64
+            archive: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate release tag
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: |
+          $content = Get-Content Cargo.toml -Raw
+          if ($content -notmatch '(?ms)\[workspace\.package\].*?^version\s*=\s*"([^"]+)"') {
+            throw "workspace version is missing"
+          }
+          if ($env:GITHUB_REF_NAME -ne "v$($Matches[1])") {
+            throw "tag $env:GITHUB_REF_NAME does not match workspace version v$($Matches[1])"
+          }
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libwayland-dev libxkbcommon-dev ninja-build
+      - run: rustup toolchain install 1.89 --profile minimal
+      - run: rustup override set 1.89
+      - run: cargo build --release -p sabine-cli -p sabine-service
+      - name: Prepare stable-ABI CEF host
+        shell: pwsh
+        run: |
+          $hostPath = cargo run --release -p sabine-cli -- runtime prepare | Select-Object -Last 1
+          "SABINE_HOST_PATH=$hostPath" >> $env:GITHUB_ENV
+      - name: Stage system and CLI
+        shell: pwsh
+        run: |
+          $suffix = if ($IsWindows) { ".exe" } else { "" }
+          New-Item -ItemType Directory -Force "release/system"
+          Copy-Item "target/release/sabine-service$suffix" "release/system/"
+          Copy-Item "target/release/sabine-service-daemon$suffix" "release/system/"
+          Copy-Item $env:SABINE_HOST_PATH "release/system/"
+          Copy-Item "target/release/sabine$suffix" "release/"
+      - name: Package assets
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            Compress-Archive -Path "release/system/*" -DestinationPath "release/sabine-system-${{ matrix.target }}.zip"
+            Compress-Archive -Path "release/sabine.exe" -DestinationPath "release/sabine-cli-${{ matrix.target }}.zip"
+          } else {
+            tar -C release/system -czf "release/sabine-system-${{ matrix.target }}.tar.gz" .
+            tar -C release -czf "release/sabine-cli-${{ matrix.target }}.tar.gz" sabine
+          }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            release/sabine-system-*
+            release/sabine-cli-*
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      SABINE_UPDATE_SIGNING_KEY: ${{ secrets.SABINE_UPDATE_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          path: release
+          merge-multiple: true
+      - name: Generate release metadata
+        run: cargo run --release -p sabine-cli -- system-release-manifest --version "$GITHUB_REF_NAME" --directory release --output release/sabine-release.json
+      - uses: actions/attest@v4
+        with:
+          subject-path: release/*
+      - name: Publish immutable release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes release/*
+          gh release edit "$GITHUB_REF_NAME" --draft=false

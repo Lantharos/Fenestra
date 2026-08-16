@@ -30,7 +30,7 @@ pub(crate) fn select_runtime(
     let mut compatible = runtimes
         .into_iter()
         .filter(|runtime| runtime.verified)
-        .filter(|runtime| version_satisfies(&runtime.version, &config.min_version))
+        .filter(|runtime| version_satisfies(&runtime.version, crate::MIN_CEF_MAJOR))
         .filter(|runtime| location_allowed(config.mode, &runtime.location))
         .collect::<Vec<_>>();
 

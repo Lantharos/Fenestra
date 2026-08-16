@@ -1,0 +1,127 @@
+name: Release Sabine app
+
+on:
+  workflow_call:
+    inputs:
+      sabine_version:
+        description: Exact Sabine tag used to build the app
+        required: true
+        type: string
+    secrets:
+      SABINE_UPDATE_SIGNING_KEY:
+        description: Base64 Ed25519 seed used to sign app update metadata
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    env:
+      SABINE_UPDATE_SIGNING_KEY: ${{ secrets.SABINE_UPDATE_SIGNING_KEY }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: msi
+            update_target: windows-x86_64-msi
+          - os: macos-15
+            target: dmg
+            update_target: macos-aarch64-dmg
+          - os: macos-15-intel
+            target: dmg
+            update_target: macos-x86_64-dmg
+          - os: ubuntu-24.04
+            target: appimage
+            update_target: linux-x86_64-appimage
+          - os: ubuntu-24.04
+            target: deb
+            update_target: linux-x86_64-deb
+          - os: ubuntu-24.04
+            target: rpm
+            update_target: linux-x86_64-rpm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate app release tag
+        shell: pwsh
+        run: |
+          $content = Get-Content Sabine.toml -Raw
+          if ($content -notmatch '(?ms)\[app\].*?^version\s*=\s*"([^"]+)"') {
+            throw "Sabine.toml app version is missing"
+          }
+          if ($env:GITHUB_REF_NAME -ne "v$($Matches[1])") {
+            throw "tag $env:GITHUB_REF_NAME does not match app version v$($Matches[1])"
+          }
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: rustup toolchain install 1.89 --profile minimal
+      - run: rustup override set 1.89
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwayland-dev libxkbcommon-dev rpm
+          if [ "${{ matrix.target }}" = "appimage" ]; then
+            curl --fail --location --output /usr/local/bin/appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+            sudo chmod +x /usr/local/bin/appimagetool
+          fi
+      - name: Install Windows packaging dependencies
+        if: runner.os == 'Windows'
+        run: dotnet tool install --global wix --version 6.0.2
+      - name: Install matching Sabine CLI
+        run: cargo install --git https://github.com/Lantharos/Sabine --tag "${{ inputs.sabine_version }}" sabine-cli
+      - name: Bundle application
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: sabine bundle . --target "${{ matrix.target }}" --release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.update_target }}
+          path: dist/artifacts/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      SABINE_UPDATE_SIGNING_KEY: ${{ secrets.SABINE_UPDATE_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup toolchain install 1.89 --profile minimal
+      - run: rustup override set 1.89
+      - name: Install matching Sabine CLI
+        run: cargo install --git https://github.com/Lantharos/Sabine --tag "${{ inputs.sabine_version }}" sabine-cli
+      - uses: actions/download-artifact@v8
+        with:
+          path: release
+      - name: Generate updater manifest
+        shell: pwsh
+        run: |
+          $arguments = @()
+          Get-ChildItem release -Directory | ForEach-Object {
+            $artifact = Get-ChildItem $_.FullName -File | Select-Object -First 1
+            $arguments += "--artifact"
+            $arguments += "$($_.Name)=$($artifact.FullName)"
+          }
+          sabine release-manifest . --output release/sabine-update.json @arguments
+      - name: Flatten release assets
+        shell: pwsh
+        run: |
+          Get-ChildItem release -Directory | ForEach-Object {
+            Get-ChildItem $_.FullName -File | Move-Item -Destination release
+            Remove-Item $_.FullName
+          }
+      - uses: actions/attest@v4
+        with:
+          subject-path: release/*
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes release/*
+          gh release edit "$GITHUB_REF_NAME" --draft=false
