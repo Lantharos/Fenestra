@@ -220,6 +220,7 @@ pub fn smoke_test_runtime(host: &Path, runtime_dir: &Path) -> Result<(), String>
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
+    apply_runtime_resource_args(&mut command, runtime_dir);
     #[cfg(target_os = "linux")]
     {
         let release = release_dir.to_string_lossy();
@@ -325,6 +326,24 @@ fn installed_host_path(directory: &Path) -> PathBuf {
     } else {
         directory.join(host_binary_name())
     }
+}
+
+pub fn apply_runtime_resource_args(command: &mut Command, runtime_dir: &Path) {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let resources = runtime_dir.join("Resources");
+        command
+            .arg(format!(
+                "--sabine-resources-dir-path={}",
+                resources.display()
+            ))
+            .arg(format!(
+                "--sabine-locales-dir-path={}",
+                resources.join("locales").display()
+            ));
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    let _ = (command, runtime_dir);
 }
 
 fn apply_cmake_generator(configure: &mut Command) -> Result<(), String> {
@@ -434,7 +453,7 @@ fn bridge_js_header() -> String {
     output
 }
 
-fn host_source_fingerprint() -> String {
+pub fn host_source_fingerprint() -> String {
     let mut hash = 0xcbf29ce484222325u64;
     for (name, body) in HOST_SOURCES {
         for byte in name.as_bytes() {

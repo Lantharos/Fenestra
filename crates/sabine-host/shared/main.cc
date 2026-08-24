@@ -56,6 +56,18 @@ int RunSabineHost(CefMainArgs main_args, int argc, char* argv[]) {
   settings.no_sandbox = true;
   settings.windowless_rendering_enabled = true;
 
+  const std::string resources_dir_path =
+      command_line->GetSwitchValue("sabine-resources-dir-path");
+  if (!resources_dir_path.empty()) {
+    CefString(&settings.resources_dir_path).FromString(resources_dir_path);
+  }
+
+  const std::string locales_dir_path =
+      command_line->GetSwitchValue("sabine-locales-dir-path");
+  if (!locales_dir_path.empty()) {
+    CefString(&settings.locales_dir_path).FromString(locales_dir_path);
+  }
+
   const std::string root_cache_path =
       command_line->GetSwitchValue("root-cache-path");
   if (!root_cache_path.empty()) {

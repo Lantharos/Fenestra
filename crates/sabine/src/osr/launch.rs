@@ -248,6 +248,7 @@ pub(crate) fn cef_osr_command(
             PathBuf::new()
         });
     let mut command = Command::new(host_binary);
+    sabine_host::apply_runtime_resource_args(&mut command, runtime_dir);
     command
         .arg(format!("--url={}", config.url))
         .arg("--sabine-osr")

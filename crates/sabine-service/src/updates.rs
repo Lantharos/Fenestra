@@ -20,6 +20,7 @@ use crate::verify_app_release;
 
 impl SabineService {
     pub fn maintain(&self) -> ServiceResult<MaintenanceReport> {
+        retry_runtimes_quarantined_by_older_host()?;
         let mut runtime = update_user_runtime_with_progress(&self.runtime, |_| {})?;
         let host = sabine_host::available_host(runtime.location.path()).ok_or_else(|| {
             ServiceError::Update(
@@ -27,7 +28,10 @@ impl SabineService {
             )
         })?;
         if let Err(error) = sabine_host::smoke_test_runtime(&host, runtime.location.path()) {
-            quarantine_user_runtime(&runtime, &error)?;
+            quarantine_user_runtime(
+                &runtime,
+                &format!("host={}\n{error}", sabine_host::host_source_fingerprint()),
+            )?;
             runtime = resolve_runtime(&self.runtime)?;
         }
         let pruned_runtimes = prune_user_runtimes(2)?;
@@ -205,6 +209,28 @@ impl SabineService {
         registered.updated_at = unix_timestamp();
         self.save_registry(&registry)
     }
+}
+
+pub(crate) fn retry_runtimes_quarantined_by_older_host() -> ServiceResult<()> {
+    let root = sabine_runtime::user_runtime_path();
+    let current = format!("host={}", sabine_host::host_source_fingerprint());
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let marker = entry.path().join(".sabine-unusable");
+        let Ok(reason) = std::fs::read_to_string(&marker) else {
+            continue;
+        };
+        if !quarantine_belongs_to_host(&reason, &current) {
+            std::fs::remove_file(marker)?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn quarantine_belongs_to_host(reason: &str, current: &str) -> bool {
+    reason.lines().next() == Some(current)
 }
 
 fn fetch_release(url: &str) -> ServiceResult<AppReleaseManifest> {

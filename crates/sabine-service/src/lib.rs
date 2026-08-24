@@ -110,4 +110,20 @@ mod tests {
         assert_eq!(AppArtifactKind::AppImage.target_suffix(), "appimage");
         assert_eq!(AppArtifactKind::AppImage.config_value(), "app-image");
     }
+
+    #[test]
+    fn runtime_quarantine_is_scoped_to_the_host_build() {
+        assert!(updates::quarantine_belongs_to_host(
+            "host=current\nprobe failed",
+            "host=current"
+        ));
+        assert!(!updates::quarantine_belongs_to_host(
+            "host=previous\nprobe failed",
+            "host=current"
+        ));
+        assert!(!updates::quarantine_belongs_to_host(
+            "legacy probe failure",
+            "host=current"
+        ));
+    }
 }
