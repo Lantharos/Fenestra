@@ -86,11 +86,12 @@ pub(super) fn desktop_entry(app: &BundleApp, executable: &str, icon: Option<&str
         .unwrap_or_default();
     let mime_types = mime_type_line(&app.mime_types);
     format!(
-        "[Desktop Entry]\nType=Application\nName={}\nExec={}\n{}{}Terminal=false\nCategories=Utility;Development;\nStartupNotify=true\n",
+        "[Desktop Entry]\nType=Application\nName={}\nExec={}\n{}{}Terminal=false\nCategories=Utility;Development;\nStartupNotify=true\nStartupWMClass={}\n",
         desktop_value(&app.name),
         desktop_value(executable),
         icon,
-        mime_types
+        mime_types,
+        desktop_value(&app.id)
     )
 }
 

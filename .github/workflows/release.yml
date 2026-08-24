@@ -70,6 +70,10 @@ jobs:
               throw "macOS Sabine host app bundle does not exist"
             }
             Copy-Item -LiteralPath $hostBundle "release/system/" -Recurse
+            $stagedHostBundle = "release/system/sabine-host.app"
+            Remove-Item -LiteralPath "$stagedHostBundle/Contents/Frameworks/Chromium Embedded Framework.framework" -Recurse
+            $env:SABINE_HOST_PATH = "$stagedHostBundle/Contents/MacOS/sabine-host"
+            cargo run --release -p sabine-cli -- runtime doctor
           } else {
             Copy-Item $env:SABINE_HOST_PATH "release/system/"
           }

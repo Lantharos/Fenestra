@@ -4,6 +4,8 @@ use std::sync::Arc;
 use winit::platform::wayland::WindowAttributesWayland;
 #[cfg(target_os = "windows")]
 use winit::platform::windows::WindowAttributesWindows;
+#[cfg(target_os = "linux")]
+use winit::platform::x11::WindowAttributesX11;
 use winit::{
     cursor::CursorIcon,
     dpi::LogicalSize,
@@ -58,18 +60,23 @@ impl OsrNativeHost {
         // kills the Wayland connection.
         #[cfg(target_os = "linux")]
         {
-            let mut wayland_attributes = WindowAttributesWayland::default();
-            let mut has_wayland_attributes = false;
-            if let Some(app_id) = &self.config.app_id {
-                wayland_attributes = wayland_attributes.with_name(app_id, app_id);
-                has_wayland_attributes = true;
-            }
-            if let Some(token) = self.pending_activation_token.take() {
-                wayland_attributes = wayland_attributes.with_activation_token(token);
-                has_wayland_attributes = true;
-            }
-            if has_wayland_attributes {
-                attributes = attributes.with_platform_attributes(Box::new(wayland_attributes));
+            if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                let mut wayland_attributes = WindowAttributesWayland::default();
+                let mut has_wayland_attributes = false;
+                if let Some(app_id) = &self.config.app_id {
+                    wayland_attributes = wayland_attributes.with_name(app_id, app_id);
+                    has_wayland_attributes = true;
+                }
+                if let Some(token) = self.pending_activation_token.take() {
+                    wayland_attributes = wayland_attributes.with_activation_token(token);
+                    has_wayland_attributes = true;
+                }
+                if has_wayland_attributes {
+                    attributes = attributes.with_platform_attributes(Box::new(wayland_attributes));
+                }
+            } else if let Some(app_id) = &self.config.app_id {
+                let x11_attributes = WindowAttributesX11::default().with_name(app_id, app_id);
+                attributes = attributes.with_platform_attributes(Box::new(x11_attributes));
             }
         }
         #[cfg(target_os = "windows")]

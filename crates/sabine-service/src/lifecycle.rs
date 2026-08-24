@@ -339,28 +339,45 @@ fn start_updated_daemon(service: &Path) -> ServiceResult<()> {
 }
 
 fn begin_system_handoff(update: &crate::StagedSystemUpdate) -> ServiceResult<()> {
-    let helper = update.previous_service.as_ref().ok_or_else(|| {
-        ServiceError::Update("self-update has no running installation to perform handoff".into())
-    })?;
-    let mut command = Command::new(helper);
-    command
-        .arg("complete-system-update")
-        .arg("--from-pid")
-        .arg(std::process::id().to_string())
-        .arg("--version")
-        .arg(&update.version)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(target_os = "windows")]
+    #[cfg(target_os = "linux")]
     {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
+        install_login_autostart_with(&update.service)?;
+        run_checked(Command::new("systemctl").args([
+            "--user",
+            "restart",
+            "--no-block",
+            "sabine.service",
+        ]))?;
+        Ok(())
     }
-    command.spawn().map_err(|error| {
-        ServiceError::Update(format!("failed to start Sabine update handoff: {error}"))
-    })?;
-    Ok(())
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let helper = update.previous_service.as_ref().ok_or_else(|| {
+            ServiceError::Update(
+                "self-update has no running installation to perform handoff".into(),
+            )
+        })?;
+        let mut command = Command::new(helper);
+        command
+            .arg("complete-system-update")
+            .arg("--from-pid")
+            .arg(std::process::id().to_string())
+            .arg("--version")
+            .arg(&update.version)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        command.spawn().map_err(|error| {
+            ServiceError::Update(format!("failed to start Sabine update handoff: {error}"))
+        })?;
+        Ok(())
+    }
 }
 
 fn start_daemon_at(executable: &Path) -> ServiceResult<()> {

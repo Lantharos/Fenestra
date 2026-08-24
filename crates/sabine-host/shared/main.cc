@@ -56,6 +56,12 @@ int RunSabineHost(CefMainArgs main_args, int argc, char* argv[]) {
   settings.no_sandbox = true;
   settings.windowless_rendering_enabled = true;
 
+  const std::string framework_dir_path =
+      command_line->GetSwitchValue("sabine-framework-dir-path");
+  if (!framework_dir_path.empty()) {
+    CefString(&settings.framework_dir_path).FromString(framework_dir_path);
+  }
+
   const std::string resources_dir_path =
       command_line->GetSwitchValue("sabine-resources-dir-path");
   if (!resources_dir_path.empty()) {

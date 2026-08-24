@@ -46,6 +46,12 @@ pub(crate) fn run_from_args(args: &[String]) -> bool {
 }
 
 pub(crate) fn prepare(config: &SabineWindowConfig) -> SabineResult<()> {
+    #[cfg(target_os = "linux")]
+    if let Some(app_id) = config.app_id.as_deref()
+        && let Err(error) = crate::desktop::integrate_appimage(app_id)
+    {
+        eprintln!("failed to integrate AppImage with the desktop: {error}");
+    }
     let register = app_manifest(config);
 
     if resolve_runtime(&config.runtime).is_ok() {

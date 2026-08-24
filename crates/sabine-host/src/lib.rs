@@ -342,7 +342,34 @@ pub fn apply_runtime_resource_args(command: &mut Command, runtime_dir: &Path) {
                 resources.join("locales").display()
             ));
     }
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(target_os = "macos")]
+    {
+        let framework_parent = [runtime_dir.join("Release"), runtime_dir.to_path_buf()]
+            .into_iter()
+            .find(|root| root.join("Chromium Embedded Framework.framework").is_dir())
+            .unwrap_or_else(|| runtime_dir.join("Release"));
+        let framework = framework_parent.join("Chromium Embedded Framework.framework");
+        let resources = framework.join("Resources");
+        let existing = std::env::var("DYLD_FRAMEWORK_PATH").unwrap_or_default();
+        command
+            .arg(format!(
+                "--sabine-framework-dir-path={}",
+                framework.display()
+            ))
+            .arg(format!(
+                "--sabine-resources-dir-path={}",
+                resources.display()
+            ))
+            .env(
+                "DYLD_FRAMEWORK_PATH",
+                if existing.is_empty() {
+                    framework_parent.display().to_string()
+                } else {
+                    format!("{}:{existing}", framework_parent.display())
+                },
+            );
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     let _ = (command, runtime_dir);
 }
 
