@@ -1,6 +1,6 @@
 {
   "name": "@lantharos/sabine",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Typed helpers for the Sabine injected web bridge",
   "type": "module",
   "license": "MIT OR Apache-2.0",

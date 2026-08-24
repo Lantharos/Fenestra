@@ -81,6 +81,12 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: sabine bundle . --target "${{ matrix.target }}" --release
+      - name: Name release asset
+        shell: pwsh
+        run: |
+          $artifact = Get-ChildItem dist/artifacts -File | Select-Object -First 1
+          $name = "$($artifact.BaseName)-${{ matrix.update_target }}$($artifact.Extension)"
+          Rename-Item $artifact.FullName $name
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.update_target }}
