@@ -59,6 +59,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - name: Install web dependencies
+        run: bun install --frozen-lockfile
       - run: rustup toolchain install 1.89 --profile minimal
       - run: rustup override set 1.89
       - name: Install Linux packaging dependencies

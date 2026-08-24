@@ -22,7 +22,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -33,12 +33,12 @@ keywords = ["sabine", "cef", "webview", "desktop", "chromium"]
 categories = ["gui", "rendering"]
 
 [workspace.dependencies]
-sabine-runtime = { path = "crates/sabine-runtime", version = "0.1.0" }
-sabine-platform = { path = "crates/sabine-platform", version = "0.1.0" }
-sabine-bridge = { path = "crates/sabine-bridge", version = "0.1.0" }
-sabine-host = { path = "crates/sabine-host", version = "0.1.0" }
-sabine = { path = "crates/sabine", version = "0.1.0" }
-sabine-service = { path = "crates/sabine-service", version = "0.1.0" }
+sabine-runtime = { path = "crates/sabine-runtime", version = "0.1.1" }
+sabine-platform = { path = "crates/sabine-platform", version = "0.1.1" }
+sabine-bridge = { path = "crates/sabine-bridge", version = "0.1.1" }
+sabine-host = { path = "crates/sabine-host", version = "0.1.1" }
+sabine = { path = "crates/sabine", version = "0.1.1" }
+sabine-service = { path = "crates/sabine-service", version = "0.1.1" }
 
 ashpd = { version = "0.13.13", features = ["global_shortcuts"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }
