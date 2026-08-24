@@ -219,7 +219,7 @@ impl AppArtifactKind {
         matches!(self, Self::Deb | Self::Rpm | Self::Msi)
     }
 
-    pub fn as_str(self) -> &'static str {
+    pub fn target_suffix(self) -> &'static str {
         match self {
             Self::Archive => "archive",
             Self::Deb => "deb",
@@ -228,6 +228,13 @@ impl AppArtifactKind {
             Self::Exe => "exe",
             Self::Dmg => "dmg",
             Self::AppImage => "appimage",
+        }
+    }
+
+    pub fn config_value(self) -> &'static str {
+        match self {
+            Self::AppImage => "app-image",
+            _ => self.target_suffix(),
         }
     }
 }
@@ -337,7 +344,7 @@ pub(crate) fn update_artifact_target(
     if install_mode == AppInstallMode::Package
         && let Some(kind) = kind
     {
-        return format!("{}-{}", platform_target(), kind.as_str());
+        return format!("{}-{}", platform_target(), kind.target_suffix());
     }
     platform_target().to_string()
 }

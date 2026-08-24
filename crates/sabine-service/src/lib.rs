@@ -104,4 +104,10 @@ mod tests {
         assert!(!types::version_is_newer("1.1.9", "1.2.0"));
         assert!(!types::version_is_newer("latest", "1.2.0"));
     }
+
+    #[test]
+    fn appimage_target_and_config_names_match_their_consumers() {
+        assert_eq!(AppArtifactKind::AppImage.target_suffix(), "appimage");
+        assert_eq!(AppArtifactKind::AppImage.config_value(), "app-image");
+    }
 }

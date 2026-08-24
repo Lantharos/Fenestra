@@ -74,7 +74,7 @@ pub(super) fn runtime_manifest(
             quote(&updates.public_key)
         ));
         if let Some(kind) = package_kind {
-            manifest.push_str(&format!("package_kind = \"{}\"\n", kind.as_str()));
+            manifest.push_str(&format!("package_kind = \"{}\"\n", kind.config_value()));
         }
     }
     manifest
