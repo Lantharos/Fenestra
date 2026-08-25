@@ -68,6 +68,10 @@ impl BridgeEventEmitter {
         self.emit_host_control("hide", "1")
     }
 
+    pub fn quit(&self) -> bool {
+        self.emit_host_control("quit", "1")
+    }
+
     pub fn focus_window(&self) -> bool {
         self.emit_host_control("focus", "1")
     }

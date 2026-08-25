@@ -87,8 +87,12 @@ impl OsrNativeHost {
                     self.set_content_cursor(cursor_for_cef(&cursor));
                 }
                 super::types::OsrHostEvent::Message(OsrMessage::CloseRequested) => {
-                    self.begin_close(event_loop);
-                    return;
+                    if self.config.hide_on_close {
+                        self.hide_window("close");
+                    } else {
+                        self.begin_close(event_loop);
+                        return;
+                    }
                 }
                 super::types::OsrHostEvent::Message(OsrMessage::StartDragRequested) => {
                     if let Some(window) = &self.window
@@ -157,6 +161,10 @@ impl OsrNativeHost {
                 }
                 super::types::OsrHostEvent::HostControl(HostControl::Visible(false)) => {
                     self.hide_window("hidden")
+                }
+                super::types::OsrHostEvent::HostControl(HostControl::Quit) => {
+                    self.begin_close(event_loop);
+                    return;
                 }
                 super::types::OsrHostEvent::HostControl(HostControl::ActivityBegin(activity)) => {
                     self.begin_activity(activity)
@@ -280,6 +288,7 @@ pub(super) fn host_control_from_parts(command: &str, value: &str) -> Option<Host
         "visible" => bool_control_value(value).map(HostControl::Visible),
         "show" => Some(HostControl::Show),
         "hide" => Some(HostControl::Hide),
+        "quit" => Some(HostControl::Quit),
         "focus" => Some(HostControl::Focus(activation_token_value(Some(
             value.to_string(),
         )))),

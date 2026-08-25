@@ -71,6 +71,7 @@ pub(crate) fn launch_process(
         activity.clone(),
     );
     let (child_exit_sender, child_exit_receiver) = crossbeam_channel::unbounded();
+    let (command_sender, command_receiver) = crossbeam_channel::unbounded();
     Ok(SabineProcess {
         _runtime_lease: runtime_lease,
         child: ManagedChild::new(child, child_exit_sender.clone()),
@@ -79,6 +80,8 @@ pub(crate) fn launch_process(
         extra_windows: Vec::new(),
         child_exit_sender,
         child_exit_receiver,
+        command_sender,
+        command_receiver,
         bridge_thread: bridge_dispatch.thread,
         primary_ready: bridge_dispatch.ready,
         primary_is_ready: false,
@@ -133,6 +136,7 @@ pub(crate) fn spawn_osr_host_child(
         "shell_surface_alpha": config.shell_surface_alpha,
         "active": config.active,
         "hide_on_blur": config.hide_on_blur,
+        "hide_on_close": config.hide_on_close,
         "skip_taskbar": config.skip_taskbar,
         "always_on_top": config.always_on_top,
         "transparent": config.transparent,

@@ -12,6 +12,18 @@ use crate::host::process_tree::ManagedChild;
 use crate::osr::launch::OpenWindowContext;
 use crate::{SabineResult, SabineWindow};
 
+pub(crate) enum ProcessCommand {
+    OpenWindow {
+        window: SabineWindow,
+        response: crossbeam_channel::Sender<SabineResult<WindowId>>,
+    },
+}
+
+#[derive(Clone)]
+pub struct SabineProcessHandle {
+    command_sender: crossbeam_channel::Sender<ProcessCommand>,
+}
+
 pub struct SabineProcess {
     pub(crate) _runtime_lease: sabine_runtime::RuntimeLease,
     pub(crate) child: ManagedChild,
@@ -20,6 +32,8 @@ pub struct SabineProcess {
     pub(crate) extra_windows: Vec<ManagedChild>,
     pub(crate) child_exit_sender: crossbeam_channel::Sender<u32>,
     pub(crate) child_exit_receiver: crossbeam_channel::Receiver<u32>,
+    pub(crate) command_sender: crossbeam_channel::Sender<ProcessCommand>,
+    pub(crate) command_receiver: crossbeam_channel::Receiver<ProcessCommand>,
     pub(crate) bridge_thread: Option<JoinHandle<()>>,
     pub(crate) primary_ready: crossbeam_channel::Receiver<()>,
     pub(crate) primary_is_ready: bool,
@@ -40,6 +54,12 @@ pub type WindowId = u32;
 impl SabineProcess {
     pub fn id(&self) -> u32 {
         self.child.id()
+    }
+
+    pub fn handle(&self) -> SabineProcessHandle {
+        SabineProcessHandle {
+            command_sender: self.command_sender.clone(),
+        }
     }
 
     /// Open another OSR window in this process. Shares this process's bridge
@@ -125,9 +145,19 @@ impl SabineProcess {
             if !self.primary_alive && self.extra_windows.is_empty() {
                 break;
             }
-            self.child_exit_receiver.recv().map_err(|_| {
-                std::io::Error::other("OSR host exit notification channel disconnected")
-            })?;
+            crossbeam_channel::select! {
+                recv(self.child_exit_receiver) -> exited => {
+                    exited.map_err(|_| {
+                        std::io::Error::other("OSR host exit notification channel disconnected")
+                    })?;
+                }
+                recv(self.command_receiver) -> command => {
+                    let Ok(command) = command else {
+                        continue;
+                    };
+                    self.handle_command(command);
+                }
+            }
         }
 
         self.stop_desktop_event_forwarder();
@@ -135,6 +165,15 @@ impl SabineProcess {
         self.primary_status.ok_or_else(|| {
             std::io::Error::other("Sabine process exited without a primary window status")
         })
+    }
+
+    fn handle_command(&mut self, command: ProcessCommand) {
+        match command {
+            ProcessCommand::OpenWindow { window, response } => {
+                let result = self.open_window(window);
+                let _ = response.send(result);
+            }
+        }
     }
 
     pub fn take_desktop_events(&self) -> Vec<PlatformEvent> {
@@ -272,6 +311,22 @@ impl SabineProcess {
         for thread in self.extra_bridge_threads.drain(..) {
             let _ = thread.join();
         }
+    }
+}
+
+impl SabineProcessHandle {
+    pub fn open_window(&self, window: SabineWindow) -> SabineResult<WindowId> {
+        let (response, result) = crossbeam_channel::bounded(1);
+        self.command_sender
+            .send(ProcessCommand::OpenWindow { window, response })
+            .map_err(|_| crate::SabineError::CreationFailed {
+                message: "Sabine process is no longer running".into(),
+            })?;
+        result.recv_timeout(Duration::from_secs(20)).map_err(|_| {
+            crate::SabineError::CreationFailed {
+                message: "Sabine process did not open the window in time".into(),
+            }
+        })?
     }
 }
 

@@ -357,10 +357,20 @@ mod tests {
     fn hidden_builder_uses_hidden_lifecycle_defaults() {
         let window = SabineWindow::new().hidden();
         assert!(!window.config.visible);
+        assert!(!window.config.active);
         assert_eq!(window.config.lifecycle.background_frame_rate, 1);
         assert!(window.config.lifecycle.suspend_on_blur);
         assert_eq!(window.config.lifecycle.hibernate_after, None);
         assert!(window.config.lifecycle.retain_hidden_frame);
+    }
+
+    #[test]
+    fn hide_on_close_is_opt_in() {
+        let default_window = SabineWindow::new();
+        assert!(!default_window.config.hide_on_close);
+
+        let background_window = SabineWindow::new().hide_on_close(true);
+        assert!(background_window.config.hide_on_close);
     }
 
     #[test]

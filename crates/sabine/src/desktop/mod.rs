@@ -11,8 +11,6 @@ mod platform;
 #[path = "stub.rs"]
 mod platform;
 
-#[cfg(target_os = "linux")]
-pub(crate) use platform::integrate_appimage;
 pub use platform::{DesktopServiceState, apply_desktop_services, start_desktop_event_forwarder};
 
 pub(crate) const INSTANCE_ALREADY_RUNNING: &str = "another instance is already running";

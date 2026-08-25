@@ -8,7 +8,6 @@ use sabine_platform::{
     PlatformEvent, SingleInstancePolicy, TrayIcon,
 };
 
-mod appimage;
 mod instance;
 mod links;
 mod shortcuts;
@@ -21,8 +20,6 @@ use instance::SingleInstanceGuard;
 use links::{register_deep_links, register_native_messaging_host, write_autostart_entry};
 use shortcuts::{ShortcutRuntime, spawn_global_shortcut};
 use tray::{TrayRuntime, spawn_tray_icon};
-
-pub(crate) use appimage::integrate_appimage;
 
 pub struct DesktopServiceState {
     event_sender: EventQueue,

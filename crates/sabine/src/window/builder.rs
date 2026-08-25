@@ -37,6 +37,19 @@ impl SabineWindow {
         self
     }
 
+    /// Appends a query string or fragment to the configured web entry.
+    pub fn content_suffix(mut self, suffix: impl AsRef<str>) -> Self {
+        let suffix = suffix.as_ref();
+        if let Some(value) = self.config.dev_url.as_mut() {
+            value.push_str(suffix);
+        } else if let Some(value) = self.config.url.as_mut() {
+            value.push_str(suffix);
+        } else if let Some(value) = self.config.entry.as_mut() {
+            value.push_str(suffix);
+        }
+        self
+    }
+
     /// Enables Chrome remote debugging on the given port.
     ///
     /// When `dev_url` is configured, remote DevTools are enabled automatically on port 9222.
@@ -122,7 +135,7 @@ impl SabineWindow {
     }
 
     pub fn hidden(self) -> Self {
-        self.visible(false)
+        self.visible(false).active(false)
     }
 
     pub fn active(mut self, active: bool) -> Self {
@@ -135,6 +148,11 @@ impl SabineWindow {
         if enabled {
             self.apply_hidden_lifecycle_defaults();
         }
+        self
+    }
+
+    pub fn hide_on_close(mut self, enabled: bool) -> Self {
+        self.config.hide_on_close = enabled;
         self
     }
 

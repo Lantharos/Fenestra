@@ -5,7 +5,7 @@ use std::path::PathBuf;
 mod process;
 mod process_tree;
 
-pub use process::{SabineProcess, WindowId};
+pub use process::{SabineProcess, SabineProcessHandle, WindowId};
 pub(crate) use process_tree::{
     ManagedChild, prepare_child_command, prepare_detachable_child_command,
 };

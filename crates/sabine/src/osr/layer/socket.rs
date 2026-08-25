@@ -19,6 +19,7 @@ pub(super) enum LayerHostEvent {
     Visible(bool),
     Alpha(f32),
     Margin(ShellSurfaceMargin),
+    Quit,
     ControlLine(String),
     Disconnected,
 }
@@ -226,6 +227,10 @@ pub(super) fn start_layer_parent_bridge_reader(sender: Sender<LayerHostEvent>) {
                 }
                 continue;
             }
+            if parse_quit_control(&line) {
+                let _ = sender.send(LayerHostEvent::Quit);
+                break;
+            }
             if sender.send(LayerHostEvent::ControlLine(line)).is_err() {
                 break;
             }
@@ -319,6 +324,10 @@ fn parse_visibility_control(line: &str) -> Option<bool> {
         "hide" => Some(false),
         _ => None,
     }
+}
+
+fn parse_quit_control(line: &str) -> bool {
+    crate::parse_host_control(line).is_some_and(|(command, _)| command == "quit")
 }
 
 fn parse_alpha_control(line: &str) -> Option<f32> {

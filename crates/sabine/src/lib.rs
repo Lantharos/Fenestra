@@ -8,7 +8,7 @@ mod render;
 mod window;
 
 pub use error::{SabineError, SabineResult};
-pub use host::{SabineProcess, WindowId};
+pub use host::{SabineProcess, SabineProcessHandle, WindowId};
 pub use window::{
     AppChrome, SabineLifecyclePolicy, SabineWindow, SabineWindowChrome, SabineWindowControlAction,
 };
@@ -17,8 +17,8 @@ pub use window::{
 pub mod prelude {
     pub use crate::{
         AppChrome, BridgeCommand, BridgeError, BridgeResponse, BridgeResult, SabineError,
-        SabineLifecyclePolicy, SabineProcess, SabineResult, SabineWindow, SabineWindowChrome,
-        TrayIcon, WindowBackgroundEffect, WindowRegion, WindowRegionRect,
+        SabineLifecyclePolicy, SabineProcess, SabineProcessHandle, SabineResult, SabineWindow,
+        SabineWindowChrome, TrayIcon, WindowBackgroundEffect, WindowRegion, WindowRegionRect,
     };
 }
 

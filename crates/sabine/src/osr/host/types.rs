@@ -80,6 +80,7 @@ pub(super) enum HostControl {
     Hide,
     Focus(Option<String>),
     Visible(bool),
+    Quit,
     ActivityBegin(HostActivity),
     ActivityEnd(HostActivity),
 }

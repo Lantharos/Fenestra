@@ -37,6 +37,16 @@ struct WebSection {
 }
 
 impl SabineWindow {
+    /// Creates another window using the current app's resolved identity and
+    /// web entry. The launched process supplies the primary window's bridge.
+    pub fn for_current_app() -> SabineResult<Self> {
+        let mut window = Self::new().with_framework_config()?;
+        if let Some(url) = nonempty_env("SABINE_DEV_URL") {
+            window = window.dev_url(url);
+        }
+        Ok(window)
+    }
+
     /// Applies `[app]` and production `[web]` fields from a `Sabine.toml`.
     ///
     /// Bridge handlers, chrome, and size stay in Rust; identity and content
