@@ -108,7 +108,7 @@ impl SabineService {
         &self,
         mut progress: impl FnMut(RuntimeInstallProgress),
     ) -> ServiceResult<RuntimeInfo> {
-        crate::updates::retry_runtimes_quarantined_by_older_host()?;
+        crate::updates::retry_quarantined_runtimes()?;
         match resolve_runtime(&self.runtime) {
             Ok(runtime) => Ok(runtime),
             Err(_) => {

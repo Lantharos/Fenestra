@@ -28,9 +28,10 @@ replacement, or `pkexec` for deb/rpm, and relaunches after a successful installe
 installations remain owned by the store.
 
 CEF installation is a separate release stream. The daemon downloads the newest compatible Standard
-runtime into a side-by-side directory, initializes it with the installed host as a health probe, and
-only then leaves it selectable. Failed runtimes receive an unusable marker and resolution returns to
-the previous runtime. Each running host owns a process lease; pruning keeps the newest two runtimes
+runtime into a side-by-side directory, initializes it with the installed host using a headless health
+probe, and only then leaves it selectable. Failed runtimes receive an unusable marker and resolution
+returns to the previous runtime. Markers are scoped to the probe version so a fixed probe retries a
+runtime automatically. Each running host owns a process lease; pruning keeps the newest two runtimes
 and never removes a leased directory. Offline bundles include a real runtime and the complete system
 bootstrap, but first launch adopts the embedded binaries into the normal managed layout so both
 streams continue updating.

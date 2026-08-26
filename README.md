@@ -10,17 +10,17 @@ browser engine across every Sabine app on the machine.
 
 ```toml
 [dependencies]
-sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.6" }
+sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.7" }
 ```
 
 ```sh
-cargo install --git https://github.com/Lantharos/Sabine --tag v0.1.6 sabine-cli
+cargo install --git https://github.com/Lantharos/Sabine --tag v0.1.7 sabine-cli
 ```
 
 For the TypeScript helpers used by the web UI:
 
 ```sh
-bun add github:Lantharos/Sabine#v0.1.6
+bun add github:Lantharos/Sabine#v0.1.7
 ```
 
 ## Why Sabine
@@ -215,14 +215,16 @@ console window to the login process.
 1. The first app launches with Sabine bootstrap code and a native progress window.
 2. Bootstrap downloads the signed service, daemon, and prebuilt CEF host system bundle from the
    latest Sabine GitHub Release, installs it in a versioned directory, then starts it.
-3. The service installs the latest compatible Chromium runtime and validates it by initializing CEF
-   with the installed host before selecting it.
+3. The service installs the latest compatible Chromium runtime and validates it with a headless CEF
+   initialization before selecting it, independent of the daemon's graphical-session environment.
 4. The app registers with the service and starts.
 
 Later apps reuse that service and runtime. Updates are atomic: Sabine retains the previous system
 version until the replacement daemon reports healthy, and CEF runtimes in active use hold leases so
 maintenance cannot prune them. A failed CEF initialization is quarantined and resolution falls back
-to the previous runtime. By default the service also starts at login so the runtime stays warm.
+to the previous runtime. Quarantines are scoped to the health-probe version so a corrected probe
+automatically reconsiders runtimes it previously rejected. By default the service also starts at
+login so the runtime stays warm.
 Prefer on-demand start with `sabine-service prefer-on-demand`.
 
 Service acquisition order:

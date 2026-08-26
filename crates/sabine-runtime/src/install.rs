@@ -70,8 +70,16 @@ fn install_user_runtime_inner(
         "Preparing runtime",
     ));
     let plan = latest_install_plan(config)?;
-    if plan.install_dir.join(".sabine-unusable").is_file() {
-        return resolve_runtime(config);
+    let unusable_marker = plan.install_dir.join(".sabine-unusable");
+    if unusable_marker.is_file() {
+        let reason = std::fs::read_to_string(&unusable_marker)
+            .unwrap_or_else(|_| "the runtime failed its health probe".to_string());
+        return Err(RuntimeError::InstallationFailed(format!(
+            "CEF runtime {} is quarantined at {}: {}",
+            plan.version,
+            plan.install_dir.display(),
+            reason.trim()
+        )));
     }
     if runtime_is_valid(&plan.install_dir) && detect_version(&plan.install_dir) == plan.version {
         progress(RuntimeInstallProgress::new(

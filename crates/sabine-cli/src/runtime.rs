@@ -35,6 +35,8 @@ pub fn run_runtime(command: RuntimeCommand) -> ExitCode {
 }
 
 pub fn ensure_runtime_ready() -> Result<std::path::PathBuf, String> {
+    sabine_service::retry_quarantined_runtimes()
+        .map_err(|error| format!("failed to reconsider quarantined CEF runtimes: {error}"))?;
     let config = RuntimeConfig::default();
     let runtime = match resolve_runtime(&config) {
         Ok(runtime) => runtime,
@@ -85,10 +87,11 @@ fn list_runtimes(json: bool) -> ExitCode {
                     sabine_runtime::RuntimeLocation::Bundled(_) => "bundled",
                 };
                 format!(
-                    "{{\"version\":\"{}\",\"location_type\":\"{}\",\"path\":\"{}\"}}",
+                    "{{\"version\":\"{}\",\"location_type\":\"{}\",\"path\":\"{}\",\"verified\":{}}}",
                     r.version,
                     location_type,
-                    r.location.path().display()
+                    r.location.path().display(),
+                    r.verified
                 )
             })
             .collect::<Vec<_>>()
@@ -107,10 +110,15 @@ fn list_runtimes(json: bool) -> ExitCode {
                 sabine_runtime::RuntimeLocation::Bundled(_) => "bundled",
             };
             println!(
-                "  {} {} {}",
+                "  {} {} {}{}",
                 runtime.version,
                 location_type,
-                runtime.location.path().display()
+                runtime.location.path().display(),
+                if runtime.verified {
+                    ""
+                } else {
+                    " (quarantined)"
+                }
             );
         }
     }
@@ -119,6 +127,10 @@ fn list_runtimes(json: bool) -> ExitCode {
 }
 
 fn install_runtime() -> ExitCode {
+    if let Err(error) = sabine_service::retry_quarantined_runtimes() {
+        eprintln!("failed to reconsider quarantined CEF runtimes: {error}");
+        return ExitCode::from(1);
+    }
     let config = RuntimeConfig::default();
 
     let plan = match latest_install_plan(&config) {
@@ -216,6 +228,8 @@ fn doctor_runtime(json: bool) -> ExitCode {
         .is_some();
     let status = if has_compatible {
         "ok"
+    } else if runtimes.iter().any(|runtime| !runtime.verified) {
+        "quarantined"
     } else if runtimes.is_empty() {
         "missing"
     } else {
@@ -228,9 +242,10 @@ fn doctor_runtime(json: bool) -> ExitCode {
             runtimes
                 .iter()
                 .map(|r| format!(
-                    "{{\"version\":\"{}\",\"location\":\"{}\"}}",
+                    "{{\"version\":\"{}\",\"location\":\"{}\",\"verified\":{}}}",
                     r.version,
-                    r.location.path().display()
+                    r.location.path().display(),
+                    r.verified
                 ))
                 .collect::<Vec<_>>()
                 .join(",")
@@ -245,6 +260,15 @@ fn doctor_runtime(json: bool) -> ExitCode {
             "outdated" => {
                 println!("CEF runtime: outdated (found versions below minimum 151)");
                 println!("  Update with: sabine runtime install");
+            }
+            "quarantined" => {
+                println!("CEF runtime: quarantined after a failed health probe");
+                for runtime in runtimes.iter().filter(|runtime| !runtime.verified) {
+                    let marker = runtime.location.path().join(".sabine-unusable");
+                    if let Ok(reason) = std::fs::read_to_string(marker) {
+                        println!("  {}: {}", runtime.location.path().display(), reason.trim());
+                    }
+                }
             }
             _ => {}
         }

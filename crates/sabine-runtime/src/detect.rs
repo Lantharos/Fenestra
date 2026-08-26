@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::host::runtime_is_valid;
+use crate::host::{runtime_is_standard, runtime_is_valid};
 use crate::paths::{bundled_runtime_path, system_runtime_path, user_runtime_path};
 use crate::types::{RuntimeConfig, RuntimeInfo, RuntimeLocation};
 use crate::version::detect_version;
@@ -74,5 +74,5 @@ pub(crate) fn runtime_info(kind: RuntimeLocationKind, path: PathBuf) -> RuntimeI
 }
 
 pub(crate) fn is_runtime_dir(path: &Path) -> bool {
-    runtime_is_valid(path)
+    runtime_is_standard(path)
 }

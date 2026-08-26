@@ -341,7 +341,7 @@ fn start_updated_daemon(service: &Path) -> ServiceResult<()> {
 fn begin_system_handoff(update: &crate::StagedSystemUpdate) -> ServiceResult<()> {
     #[cfg(target_os = "linux")]
     {
-        install_login_autostart_with(&update.service)?;
+        install_login_autostart_with_mode(&update.service, false)?;
         run_checked(Command::new("systemctl").args([
             "--user",
             "restart",
@@ -542,6 +542,15 @@ pub fn install_login_autostart() -> ServiceResult<()> {
 }
 
 pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
+    install_login_autostart_with_mode(executable, true)
+}
+
+fn install_login_autostart_with_mode(
+    executable: &Path,
+    restart_mismatched_daemon: bool,
+) -> ServiceResult<()> {
+    #[cfg(not(target_os = "linux"))]
+    let _ = restart_mismatched_daemon;
     let daemon = service_daemon_path(executable);
     if !daemon.is_file() {
         return Err(ServiceError::Update(format!(
@@ -611,6 +620,9 @@ pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
             "--now",
             "sabine.service",
         ]))?;
+        if restart_mismatched_daemon && !systemd_daemon_matches(&daemon) {
+            run_checked(Command::new("systemctl").args(["--user", "restart", "sabine.service"]))?;
+        }
     }
     #[cfg(target_os = "macos")]
     {
@@ -647,6 +659,33 @@ pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_daemon_matches(expected: &Path) -> bool {
+    let Ok(output) = Command::new("systemctl")
+        .args([
+            "--user",
+            "show",
+            "--property=MainPID",
+            "--value",
+            "sabine.service",
+        ])
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let Ok(pid) = std::str::from_utf8(&output.stdout)
+        .map(str::trim)
+        .unwrap_or_default()
+        .parse::<u32>()
+    else {
+        return false;
+    };
+    fs::canonicalize(format!("/proc/{pid}/exe")).ok() == fs::canonicalize(expected).ok()
 }
 
 #[cfg(target_os = "macos")]

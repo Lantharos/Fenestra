@@ -27,6 +27,7 @@ pub use types::{
     ServiceError, ServiceResult, SystemReleaseArtifact, SystemReleaseManifest, UpdatePolicy,
     default_maintenance_interval, service_data_dir, valid_app_id,
 };
+pub use updates::retry_quarantined_runtimes;
 
 #[cfg(test)]
 mod tests {
@@ -114,12 +115,12 @@ mod tests {
     #[test]
     fn runtime_quarantine_is_scoped_to_the_host_build() {
         assert!(updates::quarantine_belongs_to_host(
-            "host=current\nprobe failed",
-            "host=current"
+            "probe=current\nprobe failed",
+            "probe=current"
         ));
         assert!(!updates::quarantine_belongs_to_host(
-            "host=previous\nprobe failed",
-            "host=current"
+            "probe=previous\nprobe failed",
+            "probe=current"
         ));
         assert!(!updates::quarantine_belongs_to_host(
             "legacy probe failure",

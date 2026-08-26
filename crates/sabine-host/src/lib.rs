@@ -99,6 +99,7 @@ const HOST_SOURCES: &[(&str, &str)] = &[
 
 const HOST_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const HOST_BUILD_LOCK_STALE_AFTER: Duration = Duration::from_secs(30 * 60);
+const RUNTIME_PROBE_VERSION: u32 = 2;
 
 pub fn host_binary_name() -> &'static str {
     if cfg!(target_os = "windows") {
@@ -213,9 +214,21 @@ pub fn available_host(runtime_dir: &Path) -> Option<PathBuf> {
 
 pub fn smoke_test_runtime(host: &Path, runtime_dir: &Path) -> Result<(), String> {
     let release_dir = runtime_dir.join("Release");
+    let cache_dir = std::env::temp_dir().join(format!(
+        "sabine-runtime-probe-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|error| format!("could not create CEF runtime probe cache: {error}"))?;
+    let _cache = TemporaryDirectory(cache_dir.clone());
     let mut command = Command::new(host);
     command
         .arg("--sabine-runtime-smoke-test")
+        .arg(format!("--root-cache-path={}", cache_dir.display()))
         .current_dir(&release_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -223,6 +236,9 @@ pub fn smoke_test_runtime(host: &Path, runtime_dir: &Path) -> Result<(), String>
     apply_runtime_resource_args(&mut command, runtime_dir);
     #[cfg(target_os = "linux")]
     {
+        command
+            .arg("--headless")
+            .arg("--sabine-ozone-platform=headless");
         let release = release_dir.to_string_lossy();
         let existing = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
         command.env(
@@ -278,6 +294,14 @@ pub fn smoke_test_runtime(host: &Path, runtime_dir: &Path) -> Result<(), String>
             format!(": {}", stderr.trim())
         };
         Err(format!("CEF runtime probe exited with {status}{details}"))
+    }
+}
+
+struct TemporaryDirectory(PathBuf);
+
+impl Drop for TemporaryDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -499,6 +523,10 @@ pub fn host_source_fingerprint() -> String {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("{hash:016x}")
+}
+
+pub fn runtime_probe_fingerprint() -> String {
+    format!("{}-{RUNTIME_PROBE_VERSION}", host_source_fingerprint())
 }
 
 fn command_available(name: &str) -> bool {
