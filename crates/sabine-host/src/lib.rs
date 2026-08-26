@@ -213,7 +213,10 @@ pub fn available_host(runtime_dir: &Path) -> Option<PathBuf> {
 }
 
 pub fn smoke_test_runtime(host: &Path, runtime_dir: &Path) -> Result<(), String> {
-    prepare_host_runtime(host, runtime_dir)?;
+    let host = host
+        .canonicalize()
+        .map_err(|error| format!("could not resolve Sabine host {}: {error}", host.display()))?;
+    prepare_host_runtime(&host, runtime_dir)?;
     let binary_dir = runtime_binary_directory(runtime_dir);
     let cache_dir = std::env::temp_dir().join(format!(
         "sabine-runtime-probe-{}-{}",
@@ -226,7 +229,7 @@ pub fn smoke_test_runtime(host: &Path, runtime_dir: &Path) -> Result<(), String>
     std::fs::create_dir_all(&cache_dir)
         .map_err(|error| format!("could not create CEF runtime probe cache: {error}"))?;
     let _cache = TemporaryDirectory(cache_dir.clone());
-    let mut command = Command::new(host);
+    let mut command = Command::new(&host);
     command
         .arg("--sabine-runtime-smoke-test")
         .arg(format!("--root-cache-path={}", cache_dir.display()))

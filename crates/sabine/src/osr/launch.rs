@@ -238,7 +238,13 @@ pub(crate) fn cef_osr_command(
     config: &crate::osr::host::OsrHostConfig,
     viewport: CefViewport,
 ) -> Result<Command, String> {
-    sabine_host::prepare_host_runtime(host_binary, runtime_dir)?;
+    let host_binary = host_binary.canonicalize().map_err(|error| {
+        format!(
+            "could not resolve Sabine host {}: {error}",
+            host_binary.display()
+        )
+    })?;
+    sabine_host::prepare_host_runtime(&host_binary, runtime_dir)?;
     let binary_dir = sabine_host::runtime_binary_directory(runtime_dir);
     let profile_key = config
         .app_id
@@ -252,7 +258,7 @@ pub(crate) fn cef_osr_command(
             eprintln!("failed to write OSR token file: {error}");
             PathBuf::new()
         });
-    let mut command = Command::new(host_binary);
+    let mut command = Command::new(&host_binary);
     sabine_host::apply_runtime_resource_args(&mut command, runtime_dir);
     command
         .arg(format!("--url={}", config.url))
