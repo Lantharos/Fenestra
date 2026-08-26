@@ -10,17 +10,17 @@ browser engine across every Sabine app on the machine.
 
 ```toml
 [dependencies]
-sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.8" }
+sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.9" }
 ```
 
 ```sh
-cargo install --git https://github.com/Lantharos/Sabine --tag v0.1.8 sabine-cli
+cargo install --git https://github.com/Lantharos/Sabine --tag v0.1.9 sabine-cli
 ```
 
 For the TypeScript helpers used by the web UI:
 
 ```sh
-bun add github:Lantharos/Sabine#v0.1.8
+bun add github:Lantharos/Sabine#v0.1.9
 ```
 
 ## Why Sabine

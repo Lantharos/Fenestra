@@ -343,7 +343,7 @@ impl OsrLayerHost {
 
         let (width, height, scale) = self.content_size_for_cef();
         let endpoint = crate::osr::transport::IpcEndpoint::Unix(socket_path);
-        let mut command = crate::osr::cef_osr_command(
+        let mut command = match crate::osr::cef_osr_command(
             &self.config.runtime_dir,
             &self.config.host_binary,
             &endpoint,
@@ -356,7 +356,13 @@ impl OsrLayerHost {
                 frame_rate: self.active_frame_rate(),
                 accelerated_paint: false,
             },
-        );
+        ) {
+            Ok(command) => command,
+            Err(error) => {
+                eprintln!("failed to prepare Sabine layer OSR child: {error}");
+                return;
+            }
+        };
         let child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {

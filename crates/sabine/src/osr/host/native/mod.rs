@@ -202,7 +202,7 @@ impl OsrNativeHost {
         );
 
         let (width, height, scale) = self.content_size_for_cef();
-        let mut command = osr::cef_osr_command(
+        let mut command = match osr::cef_osr_command(
             &self.config.runtime_dir,
             &self.config.host_binary,
             &endpoint,
@@ -218,7 +218,14 @@ impl OsrNativeHost {
                     .as_ref()
                     .is_some_and(|renderer| renderer.supports_accelerated_paint()),
             },
-        );
+        ) {
+            Ok(command) => command,
+            Err(error) => {
+                self.awaiting_connection = false;
+                eprintln!("failed to prepare Sabine OSR child: {error}");
+                return;
+            }
+        };
         let child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {

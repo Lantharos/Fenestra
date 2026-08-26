@@ -237,8 +237,9 @@ pub(crate) fn cef_osr_command(
     authentication_token: &str,
     config: &crate::osr::host::OsrHostConfig,
     viewport: CefViewport,
-) -> Command {
-    let release_dir = runtime_dir.join("Release");
+) -> Result<Command, String> {
+    sabine_host::prepare_host_runtime(host_binary, runtime_dir)?;
+    let binary_dir = sabine_host::runtime_binary_directory(runtime_dir);
     let profile_key = config
         .app_id
         .as_deref()
@@ -290,14 +291,14 @@ pub(crate) fn cef_osr_command(
         command.arg("--allow-file-access-from-files");
     }
     crate::host::prepare_detachable_child_command(&mut command);
-    command.current_dir(&release_dir);
+    command.current_dir(&binary_dir);
     #[cfg(target_os = "linux")]
     {
-        command.env("LD_LIBRARY_PATH", ld_library_path(&release_dir));
+        command.env("LD_LIBRARY_PATH", ld_library_path(&binary_dir));
     }
     #[cfg(target_os = "windows")]
     {
-        let release = release_dir.to_string_lossy();
+        let release = binary_dir.to_string_lossy();
         let path = std::env::var("PATH").unwrap_or_default();
         command.env(
             "PATH",
@@ -328,7 +329,7 @@ pub(crate) fn cef_osr_command(
     command.stdin(Stdio::null());
     command.stdout(Stdio::null());
     command.stderr(Stdio::inherit());
-    command
+    Ok(command)
 }
 
 fn osr_instance_key() -> String {

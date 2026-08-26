@@ -74,6 +74,7 @@ jobs:
             Remove-Item -LiteralPath "$stagedHostBundle/Contents/Frameworks/Chromium Embedded Framework.framework" -Recurse
             $env:SABINE_HOST_PATH = "$stagedHostBundle/Contents/MacOS/sabine-host"
             cargo run --release -p sabine-cli -- runtime doctor
+            Remove-Item -LiteralPath "$stagedHostBundle/Contents/Frameworks/Chromium Embedded Framework.framework" -Force
           } else {
             Copy-Item $env:SABINE_HOST_PATH "release/system/"
           }
