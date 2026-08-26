@@ -12,6 +12,7 @@ use config::SabineWindowConfig;
 pub use config::{
     SabineLifecyclePolicy, SabineWindowChrome, SabineWindowControlAction, SabineWindowControlRegion,
 };
+pub use style::Color as SabineColor;
 
 use crate::{error::SabineResult, host::SabineProcess};
 

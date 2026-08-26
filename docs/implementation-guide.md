@@ -193,7 +193,7 @@ The primary API is a fluent `SabineWindow` builder. Configuration is grouped by 
 the builder keeps common cases one method away:
 
 - content: local entry, production URL, or a dev URL already owned by the CLI
-- window: size, chrome, visibility, transparency, blur and control regions
+- window: size, chrome, visibility, natural background color, transparency, blur and control regions
 - browser: Chromium flags, devtools, profiles and security
 - bridge: descriptors, sync handlers and async handlers
 - lifecycle: foreground/background rates, suspend, hibernate and memory-saver policy
@@ -253,8 +253,10 @@ connection generations prevent a late disconnect from the old browser from clear
 
 Visible windows remain unmapped until the first browser frame when startup or wake completes
 quickly. After 120 milliseconds, Sabine presents a neutral native loading surface using the same
-GPU compositor and window chrome, then replaces it on the first valid browser frame. Live transport
-loss uses the wake path so a window recovers instead of remaining frozen.
+GPU compositor, window chrome, and app background configured with
+`.background_color(SabineColor::rgb8(r, g, b))`. The default is `#111113`. The same color seeds CEF
+before the document paints, avoiding a surface-color jump when the native loader disappears. Live
+transport loss uses the wake path so a window recovers instead of remaining frozen.
 
 Memory saver is explicit. `SabineLifecyclePolicy::memory_saver_hidden_window()` or
 `.memory_saver(true)` enables the aggressive hidden-window policy and prevents Chromium from

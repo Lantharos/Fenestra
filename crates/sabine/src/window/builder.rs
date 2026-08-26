@@ -12,8 +12,8 @@ use sabine_platform::{
 use sabine_runtime::RuntimeConfig;
 
 use super::{
-    SabineLifecyclePolicy, SabineWindow, SabineWindowChrome, SabineWindowControlAction,
-    SabineWindowControlRegion,
+    SabineColor, SabineLifecyclePolicy, SabineWindow, SabineWindowChrome,
+    SabineWindowControlAction, SabineWindowControlRegion,
 };
 use crate::launch::{allow_dev_origins, allow_origin, allow_url_origin};
 
@@ -179,6 +179,13 @@ impl SabineWindow {
         self.config.transparent = false;
         self.config.background_effect = WindowBackgroundEffect::None;
         self.config.regions.blur = None;
+        self
+    }
+
+    /// Sets the app's natural background used before its first web frame and
+    /// by Sabine's native startup and resume surfaces.
+    pub fn background_color(mut self, color: SabineColor) -> Self {
+        self.config.background_color = color;
         self
     }
 

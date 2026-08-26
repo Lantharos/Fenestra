@@ -18,7 +18,7 @@ impl OsrNativeHost {
             y: content_y,
             width,
             height: content_height,
-            color: Color::WINDOW,
+            color: self.config.background_color,
         });
         let center_y = content_y + content_height * 0.5;
         list.push(TextCommand {

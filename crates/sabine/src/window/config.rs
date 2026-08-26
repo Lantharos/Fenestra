@@ -10,6 +10,7 @@ use sabine_runtime::RuntimeConfig;
 use sabine_service::AppUpdateConfig;
 
 use crate::launch::browser::BrowserOptions;
+use crate::window::style::Color;
 use crate::{SabineError, SabineResult};
 
 #[derive(Clone, Debug)]
@@ -34,6 +35,7 @@ pub(crate) struct SabineWindowConfig {
     pub skip_taskbar: bool,
     pub always_on_top: bool,
     pub transparent: bool,
+    pub background_color: Color,
     pub chrome: SabineWindowChrome,
     pub background_effect: WindowBackgroundEffect,
     pub regions: WindowRegions,
@@ -72,6 +74,7 @@ impl Default for SabineWindowConfig {
             skip_taskbar: false,
             always_on_top: false,
             transparent: false,
+            background_color: Color::WINDOW,
             chrome: SabineWindowChrome::System,
             background_effect: WindowBackgroundEffect::None,
             regions: WindowRegions::default(),

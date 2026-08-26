@@ -104,10 +104,11 @@ pub(crate) fn push_rounded_rect_command(
 }
 
 pub(crate) fn to_wgpu_color(color: Color) -> wgpu::Color {
+    let [r, g, b] = color.linear_rgb();
     wgpu::Color {
-        r: f64::from(color.r),
-        g: f64::from(color.g),
-        b: f64::from(color.b),
+        r: f64::from(r),
+        g: f64::from(g),
+        b: f64::from(b),
         a: f64::from(color.a),
     }
 }
@@ -127,7 +128,8 @@ fn push_rect(
     let radius = radius * scale;
     let rect_origin = [x, y];
     let rect_size = [width, height];
-    let color = [color.r, color.g, color.b, color.a];
+    let [r, g, b] = color.linear_rgb();
+    let color = [r, g, b, color.a];
     let points = [
         [x, y],
         [x + width, y],

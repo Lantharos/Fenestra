@@ -295,7 +295,7 @@ mod tests {
 
     use sabine_platform::WindowBackgroundEffect;
 
-    use crate::window::{SabineLifecyclePolicy, SabineWindow};
+    use crate::window::{SabineColor, SabineLifecyclePolicy, SabineWindow};
 
     #[test]
     fn recipes_set_expected_defaults() {
@@ -319,6 +319,21 @@ mod tests {
         assert_eq!(
             tray.config.lifecycle,
             SabineLifecyclePolicy::hidden_window()
+        );
+    }
+
+    #[test]
+    fn app_background_color_is_explicit_and_defaults_dark() {
+        let default_window = SabineWindow::new();
+        assert_eq!(
+            default_window.config.background_color.to_rgba8(),
+            [17, 17, 19, 255]
+        );
+
+        let configured = SabineWindow::new().background_color(SabineColor::rgb8(9, 18, 27));
+        assert_eq!(
+            configured.config.background_color.to_rgba8(),
+            [9, 18, 27, 255]
         );
     }
 

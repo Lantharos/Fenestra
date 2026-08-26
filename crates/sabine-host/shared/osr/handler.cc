@@ -93,6 +93,23 @@ SabineOsrHandler* SabineOsrHandler::GetInstance() {
   return g_instance;
 }
 
+cef_color_t SwitchColor(CefRefPtr<CefCommandLine> command_line,
+                        const std::string& name,
+                        cef_color_t fallback) {
+  const std::string value = command_line->GetSwitchValue(name);
+  if (value.empty()) {
+    return fallback;
+  }
+  char* end = nullptr;
+  errno = 0;
+  const unsigned long parsed = std::strtoul(value.c_str(), &end, 0);
+  if (errno != 0 || end == value.c_str() || *end != '\0' ||
+      parsed > std::numeric_limits<uint32_t>::max()) {
+    return fallback;
+  }
+  return static_cast<cef_color_t>(parsed);
+}
+
 void CreateSabineOsrBrowser(CefRefPtr<CefCommandLine> command_line) {
   const std::string url_value = command_line->GetSwitchValue("url");
   const std::string url =
@@ -144,6 +161,10 @@ void CreateSabineOsrBrowser(CefRefPtr<CefCommandLine> command_line) {
 	  browser_settings.windowless_frame_rate = active_frame_rate;
   if (command_line->HasSwitch("sabine-transparent")) {
     browser_settings.background_color = CefColorSetARGB(0, 0, 0, 0);
+  } else {
+    browser_settings.background_color = SwitchColor(
+        command_line, "sabine-background-color",
+        CefColorSetARGB(255, 17, 17, 19));
   }
 
 	  CefWindowInfo window_info;

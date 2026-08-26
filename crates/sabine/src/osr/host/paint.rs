@@ -377,11 +377,11 @@ impl OsrNativeHost {
             .as_ref()
             .is_some_and(|renderer| renderer.surface_alpha_is_opaque());
         let background = if self.config.transparent && opaque_swapchain {
-            Color::WINDOW
+            self.config.background_color
         } else if self.config.transparent {
             Color::rgba(0.0, 0.0, 0.0, 0.0)
         } else {
-            Color::WINDOW
+            self.config.background_color
         };
         let mut list = DisplayList::new(background);
         if !self.config.transparent || uses_sabine_chrome(self.config.chrome) {
@@ -396,12 +396,10 @@ impl OsrNativeHost {
                 width,
                 height,
                 radius,
-                color: Color::rgba(
-                    0.08,
-                    0.08,
-                    0.08,
-                    if self.config.transparent { 0.38 } else { 1.0 },
-                ),
+                color: self
+                    .config
+                    .background_color
+                    .opacity(if self.config.transparent { 0.38 } else { 1.0 }),
             });
         }
         // Solid underlay for opaque regions so glass windows only show blur
@@ -417,7 +415,7 @@ impl OsrNativeHost {
                     y: rect.y as f32,
                     width: rect.width as f32,
                     height: rect.height as f32,
-                    color: Color::WINDOW,
+                    color: self.config.background_color,
                 });
             }
         }

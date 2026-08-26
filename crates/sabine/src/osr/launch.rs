@@ -140,6 +140,7 @@ pub(crate) fn spawn_osr_host_child(
         "skip_taskbar": config.skip_taskbar,
         "always_on_top": config.always_on_top,
         "transparent": config.transparent,
+        "background_color": config.background_color.to_rgba8(),
         "shell_surface": crate::osr::protocol::shell_surface_to_json(config.shell_surface.as_ref()),
         "background_effect": config.background_effect.as_str(),
         "chrome": config.chrome.as_str(),
@@ -325,6 +326,15 @@ pub(crate) fn cef_osr_command(
     // Env remains a fallback for non-handoff launches; the token file is what
     // survives CEF process-singleton relaunch into the primary process.
     command.env(crate::osr::transport::OSR_TOKEN_ENV, authentication_token);
+    command
+        .arg(format!(
+            "--sabine-background-color={}",
+            config.background_color.to_opaque_argb_hex()
+        ))
+        .arg(format!(
+            "--default-background-color={}",
+            config.background_color.to_opaque_argb_hex()
+        ));
     if config.transparent {
         command
             .arg("--sabine-transparent")

@@ -10,17 +10,17 @@ browser engine across every Sabine app on the machine.
 
 ```toml
 [dependencies]
-sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.11" }
+sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.12" }
 ```
 
 ```sh
-cargo install --git https://github.com/Lantharos/Sabine --tag v0.1.11 sabine-cli
+cargo install --git https://github.com/Lantharos/Sabine --tag v0.1.12 sabine-cli
 ```
 
 For the TypeScript helpers used by the web UI:
 
 ```sh
-bun add github:Lantharos/Sabine#v0.1.11
+bun add github:Lantharos/Sabine#v0.1.12
 ```
 
 ## Why Sabine
@@ -61,6 +61,7 @@ fn main() {
     SabineWindow::main(|window| {
         Ok(window
             .app()
+            .background_color(SabineColor::rgb8(15, 17, 21))
             .size(960, 640)
             .bridge_typed("app.version", |_request: VersionRequest| {
                 Ok(VersionResponse {

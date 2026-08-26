@@ -7,6 +7,7 @@ use crate::osr::protocol::{
     control_regions_from_json, lifecycle_from_json, rects_from_json, regions_from_json,
     shell_surface_from_json,
 };
+use crate::window::style::Color;
 use crate::{SabineLifecyclePolicy, SabineWindowChrome, SabineWindowControlRegion};
 
 #[derive(Clone, Debug)]
@@ -31,6 +32,7 @@ pub(crate) struct OsrHostConfig {
     pub skip_taskbar: bool,
     pub always_on_top: bool,
     pub transparent: bool,
+    pub background_color: Color,
     pub shell_surface: Option<ShellSurfaceOptions>,
     pub background_effect: WindowBackgroundEffect,
     pub chrome: SabineWindowChrome,
@@ -132,7 +134,8 @@ impl OsrHostConfig {
             transparent: value
                 .get("transparent")
                 .and_then(serde_json::Value::as_bool)
-                .unwrap_or(true),
+                .unwrap_or(false),
+            background_color: color_value(&value, "background_color")?,
             shell_surface: shell_surface_from_json(value.get("shell_surface")),
             background_effect: value
                 .get("background_effect")
@@ -143,7 +146,7 @@ impl OsrHostConfig {
                 .get("chrome")
                 .and_then(serde_json::Value::as_str)
                 .and_then(SabineWindowChrome::parse)
-                .unwrap_or(SabineWindowChrome::Frameless),
+                .unwrap_or(SabineWindowChrome::System),
             bridge_commands: value
                 .get("bridge_commands")
                 .and_then(serde_json::Value::as_array)
@@ -182,6 +185,25 @@ impl OsrHostConfig {
     }
 }
 
+fn color_value(value: &serde_json::Value, key: &str) -> Result<Color, String> {
+    let components = value
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("OSR host config missing {key}"))?;
+    let mut rgba = [0_u8; 4];
+    if components.len() != rgba.len() {
+        return Err(format!("OSR host config {key} must contain four bytes"));
+    }
+    for (target, component) in rgba.iter_mut().zip(components) {
+        let component = component
+            .as_u64()
+            .and_then(|value| u8::try_from(value).ok())
+            .ok_or_else(|| format!("OSR host config {key} contains an invalid byte"))?;
+        *target = component;
+    }
+    Ok(Color::rgba8(rgba[0], rgba[1], rgba[2], rgba[3]))
+}
+
 pub(super) fn path_value(value: &serde_json::Value, key: &str) -> Result<PathBuf, String> {
     value
         .get(key)
@@ -196,4 +218,20 @@ pub(super) fn string_value(value: &serde_json::Value, key: &str) -> Result<Strin
         .and_then(serde_json::Value::as_str)
         .map(ToString::to_string)
         .ok_or_else(|| format!("OSR host config missing {key}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::color_value;
+    #[test]
+    fn host_background_color_requires_four_byte_components() {
+        let configured = serde_json::json!({ "background": [12, 34, 56, 78] });
+        assert_eq!(
+            color_value(&configured, "background").unwrap().to_rgba8(),
+            [12, 34, 56, 78]
+        );
+
+        let malformed = serde_json::json!({ "background": [12, 34, 999] });
+        assert!(color_value(&malformed, "background").is_err());
+    }
 }

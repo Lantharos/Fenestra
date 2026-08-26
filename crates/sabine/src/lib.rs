@@ -10,15 +10,17 @@ mod window;
 pub use error::{SabineError, SabineResult};
 pub use host::{SabineProcess, SabineProcessHandle, WindowId};
 pub use window::{
-    AppChrome, SabineLifecyclePolicy, SabineWindow, SabineWindowChrome, SabineWindowControlAction,
+    AppChrome, SabineColor, SabineLifecyclePolicy, SabineWindow, SabineWindowChrome,
+    SabineWindowControlAction,
 };
 
 /// Common imports for app authors.
 pub mod prelude {
     pub use crate::{
-        AppChrome, BridgeCommand, BridgeError, BridgeResponse, BridgeResult, SabineError,
-        SabineLifecyclePolicy, SabineProcess, SabineProcessHandle, SabineResult, SabineWindow,
-        SabineWindowChrome, TrayIcon, WindowBackgroundEffect, WindowRegion, WindowRegionRect,
+        AppChrome, BridgeCommand, BridgeError, BridgeResponse, BridgeResult, SabineColor,
+        SabineError, SabineLifecyclePolicy, SabineProcess, SabineProcessHandle, SabineResult,
+        SabineWindow, SabineWindowChrome, TrayIcon, WindowBackgroundEffect, WindowRegion,
+        WindowRegionRect,
     };
 }
 
