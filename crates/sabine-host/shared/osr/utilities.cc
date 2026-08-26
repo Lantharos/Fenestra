@@ -180,6 +180,22 @@ std::string UrlOrigin(const std::string& url) {
   return authority.empty() ? "null" : scheme + "://" + authority;
 }
 
+std::string HtmlEscape(const std::string& value) {
+  std::string escaped;
+  escaped.reserve(value.size());
+  for (const char character : value) {
+    switch (character) {
+      case '&': escaped += "&amp;"; break;
+      case '<': escaped += "&lt;"; break;
+      case '>': escaped += "&gt;"; break;
+      case '"': escaped += "&quot;"; break;
+      case '\'': escaped += "&#39;"; break;
+      default: escaped += character; break;
+    }
+  }
+  return escaped;
+}
+
 std::string BridgeInstallScript(const std::set<std::string>& commands) {
   // See the matching comment in handler.cc: the canonical bridge script is
   // embedded as SABINE_BRIDGE_JS_RAW by host.rs at C++ build time.

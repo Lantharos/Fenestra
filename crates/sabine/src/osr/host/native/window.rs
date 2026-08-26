@@ -120,7 +120,7 @@ impl OsrNativeHost {
         self.launch_child();
         self.upload_cached_textures();
         if self.main_frame.is_some() {
-            self.present_after_first_frame();
+            self.present_rendered_surface("first_paint");
         }
         if self.config.visible
             && let Some(window) = &self.window

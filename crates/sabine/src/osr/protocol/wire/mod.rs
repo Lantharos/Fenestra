@@ -46,6 +46,8 @@ pub(super) const KIND_GUEST_CAPTURE_REQUESTED: u32 = 22;
 pub(super) const KIND_BRIDGE_REQUEST: u32 = 23;
 pub(super) const KIND_FULLSCREEN_REQUESTED: u32 = 27;
 pub(super) const KIND_EXIT_FULLSCREEN_REQUESTED: u32 = 28;
+pub(super) const KIND_MAIN_LOAD_STARTED: u32 = 29;
+pub(super) const KIND_MAIN_LOAD_READY: u32 = 30;
 pub(super) const BATCH_ENTRY_LEN: usize = 28;
 
 pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessage>> {
@@ -173,7 +175,7 @@ pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessa
                 .ok()
                 .filter(|token| !token.trim().is_empty()),
         ),
-        KIND_FILE_DRAG_REQUESTED => match parse_file_drag_request(&payload, x, y) {
+        KIND_FILE_DRAG_REQUESTED => match parse_file_drag_request(&payload) {
             Some(request) => OsrMessage::FileDragRequested(request),
             None => {
                 return Err(io::Error::new(
@@ -182,6 +184,8 @@ pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessa
                 ));
             }
         },
+        KIND_MAIN_LOAD_STARTED => OsrMessage::MainLoadStarted,
+        KIND_MAIN_LOAD_READY => OsrMessage::MainLoadReady,
         KIND_BRIDGE_REQUEST => {
             OsrMessage::BridgeRequest(String::from_utf8(payload).unwrap_or_default())
         }
@@ -286,6 +290,34 @@ mod tests {
 
         let error = read_message(&mut reader).expect_err("surface must be rejected");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn main_load_readiness_signals_round_trip() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+
+        use super::{
+            HEADER_LEN, KIND_MAIN_LOAD_READY, KIND_MAIN_LOAD_STARTED, MAGIC, OsrMessage,
+            read_message,
+        };
+
+        for (kind, ready) in [
+            (KIND_MAIN_LOAD_STARTED, false),
+            (KIND_MAIN_LOAD_READY, true),
+        ] {
+            let (mut reader, mut writer) = UnixStream::pair().expect("socket pair");
+            let mut header = [0_u8; HEADER_LEN];
+            header[0..4].copy_from_slice(MAGIC);
+            header[4..8].copy_from_slice(&kind.to_le_bytes());
+            writer.write_all(&header).expect("header");
+            let message = read_message(&mut reader).expect("read").expect("message");
+            assert!(matches!(
+                (message, ready),
+                (OsrMessage::MainLoadReady, true) | (OsrMessage::MainLoadStarted, false)
+            ));
+        }
     }
 
     #[test]

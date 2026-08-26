@@ -8,6 +8,7 @@ use crate::osr::transport::{IpcEndpoint, IpcListener};
 use super::types::OsrHostEvent;
 
 pub(super) fn start_socket_reader(
+    generation: u64,
     listener: IpcListener,
     endpoint: IpcEndpoint,
     authentication_token: String,
@@ -18,6 +19,8 @@ pub(super) fn start_socket_reader(
         let mut stream = loop {
             let Ok((mut candidate, _)) = listener.accept() else {
                 endpoint.unlink();
+                let _ = sender.send(OsrHostEvent::Disconnected(generation));
+                proxy.wake_up();
                 return;
             };
             match crate::osr::transport::authenticate(&mut candidate, &authentication_token) {
@@ -28,14 +31,21 @@ pub(super) fn start_socket_reader(
                 }
             }
         };
-        if let Ok(writer) = stream.try_clone() {
-            let _ = sender.send(OsrHostEvent::Connected(writer));
+        let Ok(writer) = stream.try_clone() else {
+            endpoint.unlink();
+            let _ = sender.send(OsrHostEvent::Disconnected(generation));
             proxy.wake_up();
-        }
+            return;
+        };
+        let _ = sender.send(OsrHostEvent::Connected(generation, writer));
+        proxy.wake_up();
         loop {
             match read_message(&mut stream) {
                 Ok(Some(message)) => {
-                    if sender.send(OsrHostEvent::Message(message)).is_err() {
+                    if sender
+                        .send(OsrHostEvent::Message(generation, message))
+                        .is_err()
+                    {
                         break;
                     }
                     proxy.wake_up();
@@ -56,7 +66,7 @@ pub(super) fn start_socket_reader(
             }
         }
         endpoint.unlink();
-        let _ = sender.send(OsrHostEvent::Disconnected);
+        let _ = sender.send(OsrHostEvent::Disconnected(generation));
         proxy.wake_up();
     });
 }

@@ -86,18 +86,16 @@ fn list_runtimes(json: bool) -> ExitCode {
                     sabine_runtime::RuntimeLocation::UserLocal(_) => "user",
                     sabine_runtime::RuntimeLocation::Bundled(_) => "bundled",
                 };
-                format!(
-                    "{{\"version\":\"{}\",\"location_type\":\"{}\",\"path\":\"{}\",\"verified\":{}}}",
-                    r.version,
-                    location_type,
-                    r.location.path().display(),
-                    r.verified
-                )
+                serde_json::json!({
+                    "version": r.version,
+                    "location_type": location_type,
+                    "path": r.location.path(),
+                    "verified": r.verified,
+                })
             })
-            .collect::<Vec<_>>()
-            .join(",");
+            .collect::<Vec<_>>();
 
-        println!("{{\"runtimes\":[{entries}]}}");
+        println!("{}", serde_json::json!({ "runtimes": entries }));
     } else if runtimes.is_empty() {
         println!("No CEF runtimes found.");
         println!("Run `sabine runtime install` to install the shared runtime.");
@@ -222,12 +220,19 @@ fn doctor_runtime(json: bool) -> ExitCode {
     let runtimes = detect_runtime(&config);
     let resolved = resolve_runtime(&config).ok();
     let has_compatible = resolved.is_some();
-    let host_ready = resolved
+    let host = resolved
         .as_ref()
-        .and_then(|runtime| sabine_host::available_host(runtime.location.path()))
-        .is_some();
-    let status = if has_compatible {
+        .and_then(|runtime| sabine_host::available_host(runtime.location.path()));
+    let probe_error = host.as_ref().and_then(|host| {
+        sabine_host::smoke_test_runtime(host, resolved.as_ref()?.location.path()).err()
+    });
+    let host_ready = host.is_some() && probe_error.is_none();
+    let status = if has_compatible && host_ready {
         "ok"
+    } else if has_compatible && host.is_none() {
+        "host-missing"
+    } else if has_compatible {
+        "host-unhealthy"
     } else if runtimes.iter().any(|runtime| !runtime.verified) {
         "quarantined"
     } else if runtimes.is_empty() {
@@ -238,21 +243,28 @@ fn doctor_runtime(json: bool) -> ExitCode {
 
     if json {
         println!(
-            "{{\"status\":\"{status}\",\"host_ready\":{host_ready},\"runtimes\":[{}]}}",
-            runtimes
-                .iter()
-                .map(|r| format!(
-                    "{{\"version\":\"{}\",\"location\":\"{}\",\"verified\":{}}}",
-                    r.version,
-                    r.location.path().display(),
-                    r.verified
-                ))
-                .collect::<Vec<_>>()
-                .join(",")
+            "{}",
+            serde_json::json!({
+                "status": status,
+                "host_ready": host_ready,
+                "probe_error": probe_error,
+                "runtimes": runtimes.iter().map(|runtime| serde_json::json!({
+                    "version": runtime.version,
+                    "location": runtime.location.path(),
+                    "verified": runtime.verified,
+                })).collect::<Vec<_>>(),
+            })
         );
     } else {
         match status {
             "ok" => println!("CEF runtime: ok"),
+            "host-missing" => println!("CEF runtime: present, Sabine host is missing"),
+            "host-unhealthy" => {
+                println!("CEF runtime: present, Sabine host failed its launch probe");
+                if let Some(error) = &probe_error {
+                    println!("  {error}");
+                }
+            }
             "missing" => {
                 println!("CEF runtime: not found");
                 println!("  Install with: sabine runtime install");
@@ -272,7 +284,7 @@ fn doctor_runtime(json: bool) -> ExitCode {
             }
             _ => {}
         }
-        if has_compatible {
+        if has_compatible && status != "host-unhealthy" {
             println!(
                 "Sabine host: {}",
                 if host_ready {

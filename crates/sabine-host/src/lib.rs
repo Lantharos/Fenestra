@@ -339,6 +339,9 @@ fn prebuilt_host_path() -> Option<PathBuf> {
     let current =
         serde_json::from_slice::<CurrentSystem>(&std::fs::read(bin.join("current.json")).ok()?)
             .ok()?;
+    if current.active != env!("CARGO_PKG_VERSION") {
+        return None;
+    }
     let directory = bin.join("versions").join(current.active);
     let path = installed_host_path(&directory);
     path.is_file().then_some(path)
@@ -591,11 +594,54 @@ impl Drop for HostBuildLock {
 }
 
 fn lock_is_stale(path: &Path) -> bool {
+    if let Some(pid) = lock_holder_pid(path) {
+        return !process_alive(pid);
+    }
     std::fs::metadata(path)
         .and_then(|metadata| metadata.modified())
         .ok()
         .and_then(|modified| modified.elapsed().ok())
         .is_some_and(|elapsed| elapsed >= HOST_BUILD_LOCK_STALE_AFTER)
+}
+
+fn lock_holder_pid(path: &Path) -> Option<u32> {
+    std::fs::read_to_string(path)
+        .ok()?
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("pid=")
+                .and_then(|value| value.trim().parse().ok())
+        })
+}
+
+fn process_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+    #[cfg(windows)]
+    {
+        Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .output()
+            .ok()
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .and_then(|output| output.lines().next().map(str::to_string))
+            .and_then(|line| line.split(',').nth(1).map(str::to_string))
+            .is_some_and(|value| value.trim_matches('"') == pid.to_string())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
+    }
 }
 
 fn unix_timestamp_secs() -> u64 {

@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use sabine_platform::request_window_effect;
-use winit::event_loop::ControlFlow;
 
 use crate::osr::protocol::{
     MAIN_TEXTURE_ID, OsrFrame, OsrPaintBatch, OsrSurface, POPUP_OVERLAY_ID,
@@ -83,6 +82,10 @@ impl OsrNativeHost {
         self.main_frame_size().is_some_and(|frame| frame == size)
     }
 
+    pub(super) fn main_surface_ready(&self) -> bool {
+        self.main_load_ready && self.main_frame.is_some()
+    }
+
     pub(super) fn frame_size_for_view(&self, size: (u32, u32)) -> (u32, u32) {
         let scale = self
             .window
@@ -145,6 +148,9 @@ impl OsrNativeHost {
                     y: 0,
                     bytes: Vec::new().into(),
                 });
+                if self.main_load_ready {
+                    self.loading = None;
+                }
                 self.clear_pending_resize_paint();
             }
             OsrSurface::Popup | OsrSurface::Guest(_) => {
@@ -247,6 +253,9 @@ impl OsrNativeHost {
                     y: 0,
                     bytes: Vec::new().into(),
                 });
+                if self.main_load_ready {
+                    self.loading = None;
+                }
                 if view_size == content_size {
                     self.clear_pending_resize_paint();
                 }
@@ -313,7 +322,7 @@ impl OsrNativeHost {
         true
     }
 
-    pub(super) fn present_after_first_frame(&mut self) {
+    pub(super) fn present_rendered_surface(&mut self, trace: &str) {
         if self.presented {
             return;
         }
@@ -321,7 +330,7 @@ impl OsrNativeHost {
             return;
         };
         self.presented = true;
-        super::trace_host(&self.config, "first_paint");
+        super::trace_host(&self.config, trace);
         // Drop any prior effect before binding a new one; Wayland allows only one
         // `ext_background_effect` resource per surface.
         self.effect = None;
@@ -363,20 +372,11 @@ impl OsrNativeHost {
     }
 
     pub(super) fn display_list(&self, width: f32, height: f32) -> DisplayList {
-        let ready = self.main_frame.is_some();
         let opaque_swapchain = self
             .renderer
             .as_ref()
             .is_some_and(|renderer| renderer.surface_alpha_is_opaque());
-        let background = if !ready {
-            if self.config.transparent && opaque_swapchain {
-                Color::WINDOW
-            } else if self.config.transparent {
-                Color::rgba(0.0, 0.0, 0.0, 0.0)
-            } else {
-                Color::WINDOW
-            }
-        } else if self.config.transparent && opaque_swapchain {
+        let background = if self.config.transparent && opaque_swapchain {
             Color::WINDOW
         } else if self.config.transparent {
             Color::rgba(0.0, 0.0, 0.0, 0.0)
@@ -384,9 +384,6 @@ impl OsrNativeHost {
             Color::WINDOW
         };
         let mut list = DisplayList::new(background);
-        if !ready {
-            return list;
-        }
         if !self.config.transparent || uses_sabine_chrome(self.config.chrome) {
             let radius = if self.config.chrome.uses_native_decorations() {
                 0.0
@@ -425,6 +422,13 @@ impl OsrNativeHost {
             }
         }
         self.draw_titlebar(&mut list, width);
+        if self.loading.is_some_and(|loading| loading.revealed()) {
+            self.draw_loading(&mut list, width, height);
+            return list;
+        }
+        if !self.main_surface_ready() {
+            return list;
+        }
         let y = self.titlebar_height();
         if let Some(frame) = &self.main_frame {
             list.push(ImageCommand {
@@ -460,46 +464,6 @@ impl OsrNativeHost {
             });
         }
         list
-    }
-}
-
-impl OsrNativeHost {
-    pub(super) fn drive_resize_paint(
-        &mut self,
-        event_loop: &dyn winit::event_loop::ActiveEventLoop,
-    ) -> bool {
-        let Some(pending) = self.pending_resize_paint else {
-            return false;
-        };
-        if !self.config.visible
-            || self.lifecycle_state != LifecycleState::Active
-            || self.window.is_none()
-        {
-            self.pending_resize_paint = None;
-            return false;
-        }
-        if self.main_frame_matches(pending.size) {
-            self.pending_resize_paint = None;
-            return false;
-        }
-        let now = Instant::now();
-        if now >= pending.deadline {
-            self.pending_resize_paint = None;
-            if self.presented {
-                self.render();
-            }
-            return false;
-        }
-        if now >= pending.retry_at {
-            self.retry_resize_paint();
-        }
-        if let Some(pending) = self.pending_resize_paint {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(
-                pending.retry_at.min(pending.deadline),
-            ));
-            return true;
-        }
-        false
     }
 }
 

@@ -39,11 +39,14 @@ pub(super) struct OsrNativeHost {
     pub(super) window: Option<Arc<dyn WinitWindow>>,
     pub(super) renderer: Option<GpuRenderer>,
     pub(super) effect: Option<WindowEffect>,
-    pub(super) child: Option<Child>,
+    pub(super) children: Vec<Child>,
     pub(super) socket: Option<Arc<Mutex<IpcStream>>>,
+    pub(super) connection_generation: u64,
+    pub(super) awaiting_connection: bool,
     pub(super) surface_size: winit::dpi::PhysicalSize<u32>,
     pub(super) scale_factor: f64,
     pub(super) main_frame: Option<OsrFrame>,
+    pub(super) main_load_ready: bool,
     pub(super) main_buffer: FrameBuffer,
     pub(super) overlays: BTreeMap<String, OverlayLayer>,
     pub(super) page_drag_regions: Vec<WindowRegionRect>,
@@ -69,10 +72,10 @@ pub(super) struct OsrNativeHost {
     pub(super) effect_regions_dirty: bool,
     pub(super) activity_hibernation_blockers: BTreeSet<String>,
     pub(super) presented: bool,
+    pub(super) loading: Option<super::types::NativeLoading>,
     pub(super) pending_activation_token: Option<ActivationToken>,
     pub(super) active_file_drag: Option<DataTransferId>,
     pub(super) incoming_file_drag: Option<IncomingFileDrag>,
-    pub(super) started: Instant,
     /// CEF exited with process-singleton handoff (code 24). The existing
     /// browser process owns this window's OSR endpoint; keep listening.
     pub(super) cef_handed_off: bool,
@@ -112,11 +115,14 @@ impl OsrNativeHost {
             window: None,
             renderer: None,
             effect: None,
-            child: None,
+            children: Vec::new(),
             socket: None,
+            connection_generation: 0,
+            awaiting_connection: false,
             surface_size,
             scale_factor: 1.0,
             main_frame: None,
+            main_load_ready: false,
             main_buffer: FrameBuffer::new(),
             overlays: BTreeMap::new(),
             page_drag_regions: Vec::new(),
@@ -142,17 +148,18 @@ impl OsrNativeHost {
             effect_regions_dirty: false,
             activity_hibernation_blockers: BTreeSet::new(),
             presented: false,
+            loading: visible
+                .then(|| super::types::NativeLoading::new(super::types::LoadingKind::Opening)),
             pending_activation_token: None,
             active_file_drag: None,
             incoming_file_drag: None,
-            started: Instant::now(),
             cef_handed_off: false,
             handoff_deadline: None,
         }
     }
 
     pub(super) fn launch_child(&mut self) {
-        if self.child.is_some() {
+        if self.socket.is_some() || self.awaiting_connection {
             return;
         }
         let Some(app_id) = self
@@ -179,7 +186,14 @@ impl OsrNativeHost {
                 return;
             }
         };
+        self.connection_generation = self.connection_generation.wrapping_add(1);
+        let generation = self.connection_generation;
+        self.awaiting_connection = true;
+        self.main_load_ready = false;
+        self.cef_handed_off = false;
+        self.handoff_deadline = None;
         start_socket_reader(
+            generation,
             listener,
             endpoint.clone(),
             authentication_token.clone(),
@@ -208,11 +222,12 @@ impl OsrNativeHost {
         let child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
+                self.awaiting_connection = false;
                 eprintln!("failed to launch CEF OSR child: {error}");
                 return;
             }
         };
-        self.child = Some(child);
+        self.children.push(child);
     }
 
     pub(super) fn content_size_for_cef(&self) -> (u32, u32, f64) {
@@ -311,7 +326,7 @@ impl OsrNativeHost {
         // Local CEF child owns the process — exit immediately if it is already
         // gone. Handed-off / shared-singleton windows still need the grace
         // period so CloseBrowser can finish without killing sibling windows.
-        if self.child.is_none() && !self.cef_handed_off {
+        if self.children.is_empty() && !self.cef_handed_off {
             event_loop.exit();
         }
     }
@@ -320,8 +335,7 @@ impl OsrNativeHost {
         // Do not kill the CEF child here. Multi-window apps share one CEF
         // process via profile singleton handoff; killing it would close every
         // window. CloseBrowser / socket-EOF teardown owns CEF lifetime.
-        // Hibernate is the only path that intentionally kills CEF.
-        if let Some(mut child) = self.child.take() {
+        for child in &mut self.children {
             let _ = child.try_wait();
         }
         self.socket = None;

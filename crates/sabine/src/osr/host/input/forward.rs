@@ -194,7 +194,7 @@ impl OsrNativeHost {
         event_loop: &dyn ActiveEventLoop,
         request: FileDragRequest,
     ) {
-        let FileDragRequest { paths, x: _, y: _ } = request;
+        let FileDragRequest { paths } = request;
         let Some(window) = self.window.clone() else {
             self.finish_file_drag(None);
             return;

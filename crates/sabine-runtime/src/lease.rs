@@ -5,6 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::process::process_alive;
 use crate::{RuntimeError, user_runtime_path};
 
 pub struct RuntimeLease {
@@ -69,30 +70,4 @@ pub(crate) fn runtime_is_leased(runtime_dir: &Path) -> Result<bool, RuntimeError
         let _ = std::fs::remove_dir(directory);
     }
     Ok(leased)
-}
-
-fn process_alive(pid: u32) -> bool {
-    if pid == 0 {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-    }
-    #[cfg(windows)]
-    {
-        std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .output()
-            .ok()
-            .is_some_and(|output| {
-                String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
-            })
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = pid;
-        false
-    }
 }

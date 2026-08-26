@@ -8,6 +8,7 @@ use crate::osr::protocol::encode_component;
 use super::native::OsrNativeHost;
 use super::types::{
     FALLBACK_ACTIVE_FRAME_RATE, HostActivity, LIFECYCLE_SUSPEND_DEBOUNCE, LifecycleState,
+    LoadingKind, NativeLoading,
 };
 
 impl OsrNativeHost {
@@ -113,7 +114,10 @@ impl OsrNativeHost {
         self.lifecycle_state = LifecycleState::Active;
         self.hibernate_deadline = None;
         self.hibernate_commit_deadline = None;
-        if self.child.is_none() {
+        if self.socket.is_none() {
+            if self.config.visible && self.main_frame.is_none() {
+                self.loading = Some(NativeLoading::new(LoadingKind::Resuming));
+            }
             self.launch_child();
         }
         self.send_lifecycle(LifecycleState::Active, reason);
@@ -127,9 +131,23 @@ impl OsrNativeHost {
         }
     }
 
+    pub(super) fn begin_recovery(&mut self) {
+        if self.lifecycle_state != LifecycleState::Active {
+            self.lifecycle_state = LifecycleState::Hibernated;
+            self.main_frame = None;
+            self.overlays.clear();
+            self.main_buffer.release();
+            return;
+        }
+        if self.config.visible {
+            self.loading = Some(NativeLoading::new(LoadingKind::Resuming));
+        }
+        self.launch_child();
+    }
+
     pub(super) fn begin_hibernate(&mut self, reason: &str) {
         if self.lifecycle_state != LifecycleState::Suspended
-            || self.child.is_none()
+            || self.socket.is_none()
             || self.has_hibernation_blockers()
         {
             return;
@@ -145,21 +163,21 @@ impl OsrNativeHost {
         if !matches!(self.lifecycle_state, LifecycleState::Hibernating) {
             return;
         }
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+        self.send_control("close\n");
+        if let Some(socket) = &self.socket
+            && let Ok(socket) = socket.lock()
+        {
+            let _ = socket.shutdown(std::net::Shutdown::Both);
         }
         self.socket = None;
+        self.awaiting_connection = false;
         self.main_frame = None;
         self.overlays.clear();
         self.main_buffer.release();
         self.hibernate_commit_deadline = None;
         self.lifecycle_state = LifecycleState::Hibernated;
-        if self.config.visible
-            && let Some(window) = &self.window
-        {
-            window.request_redraw();
-        }
+        self.loading = None;
+        self.presented = false;
     }
 
     pub(super) fn send_current_lifecycle(&self) {

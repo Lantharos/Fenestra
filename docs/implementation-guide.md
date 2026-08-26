@@ -247,7 +247,14 @@ Sabine distinguishes active, background, suspended, hibernating, and hibernated 
 leases allow durable Rust work or page work to block hibernation while it is genuinely active.
 Blur and occlusion suspend only lower the windowless frame rate; they do not call CEF `WasHidden`,
 so brief focus loss during interactive move does not blank the surface. Hibernation is what actually
-hides the view and tears down the renderer.
+hides the view and tears down its browser. The shared CEF process stays alive when it still owns
+other windows. Waking creates a fresh browser through the same profile-singleton handoff path, and
+connection generations prevent a late disconnect from the old browser from clearing the new one.
+
+Visible windows remain unmapped until the first browser frame when startup or wake completes
+quickly. After 120 milliseconds, Sabine presents a neutral native loading surface using the same
+GPU compositor and window chrome, then replaces it on the first valid browser frame. Live transport
+loss uses the wake path so a window recovers instead of remaining frozen.
 
 Memory saver is explicit. `SabineLifecyclePolicy::memory_saver_hidden_window()` or
 `.memory_saver(true)` enables the aggressive hidden-window policy and prevents Chromium from

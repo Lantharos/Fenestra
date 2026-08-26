@@ -5,6 +5,7 @@ mod host;
 mod install;
 mod lease;
 mod paths;
+mod process;
 mod resolve;
 mod types;
 mod version;

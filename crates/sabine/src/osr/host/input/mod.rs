@@ -256,34 +256,38 @@ impl ApplicationHandler for OsrNativeHost {
     }
 
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
-        if let Some(child) = self.child.as_mut()
-            && let Ok(Some(status)) = child.try_wait()
-        {
-            self.child = None;
-            if status.code() == Some(CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED) {
-                // Another sabine-host already holds this profile. CEF handed our
-                // launch args to that process, which creates a browser on our OSR
-                // endpoint — keep the native window and socket listener alive.
-                self.cef_handed_off = true;
-                self.handoff_deadline =
-                    Some(Instant::now() + Duration::from_secs(HANDOFF_CONNECT_TIMEOUT_SECS));
-                super::trace_host(&self.config, "cef.handed_off.waiting_for_primary");
-                if let Some(deadline) = self.handoff_deadline {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+        let mut handoff = false;
+        let mut exited = Vec::new();
+        self.children.retain_mut(|child| match child.try_wait() {
+            Ok(Some(status)) => {
+                if status.code() == Some(CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED) {
+                    handoff = true;
+                } else {
+                    exited.push(status);
                 }
-                return;
+                false
             }
-            eprintln!("Sabine OSR host: CEF child exited ({status}); shutting down host");
-            self.socket = None;
+            Ok(None) | Err(_) => true,
+        });
+        if handoff {
+            self.cef_handed_off = true;
+            self.handoff_deadline =
+                Some(Instant::now() + Duration::from_secs(HANDOFF_CONNECT_TIMEOUT_SECS));
+            super::trace_host(&self.config, "cef.handed_off.waiting_for_primary");
+        }
+        if !exited.is_empty() && self.socket.is_none() {
+            self.awaiting_connection = false;
             if matches!(
                 self.lifecycle_state,
                 LifecycleState::Hibernating | LifecycleState::Hibernated
             ) {
                 self.lifecycle_state = LifecycleState::Hibernated;
-                return;
+            } else {
+                for status in exited {
+                    eprintln!("Sabine OSR host: CEF child exited ({status}); recovering surface");
+                }
+                self.begin_recovery();
             }
-            event_loop.exit();
-            return;
         }
         if let Some(deadline) = self.closing_deadline {
             if Instant::now() >= deadline {
@@ -296,6 +300,7 @@ impl ApplicationHandler for OsrNativeHost {
         if self.drive_pending_suspend(event_loop) {
             return;
         }
+        let loading_deadline = self.drive_loading();
         if let Some(deadline) = self.hibernate_commit_deadline {
             if Instant::now() >= deadline {
                 self.commit_hibernate();
@@ -331,30 +336,17 @@ impl ApplicationHandler for OsrNativeHost {
                 return;
             }
             event_loop.set_control_flow(ControlFlow::WaitUntil(
-                Instant::now() + Duration::from_millis(250),
+                loading_deadline
+                    .unwrap_or_else(|| Instant::now() + Duration::from_millis(250))
+                    .min(deadline),
             ));
             return;
         }
         if self.cef_handed_off && self.socket.is_some() {
             self.handoff_deadline = None;
         }
-        if self.config.visible
-            && !self.presented
-            && self.window.is_some()
-            && self.socket.is_some()
-            && self.started.elapsed() >= Duration::from_secs(4)
-        {
-            self.render();
-            self.present_after_first_frame();
-            return;
-        }
-        if self.started.elapsed() > Duration::from_secs(2)
-            && self.child.is_none()
-            && !self.cef_handed_off
-            && self.lifecycle_state != LifecycleState::Hibernated
-        {
-            eprintln!("Sabine OSR host: no CEF child after 2s; shutting down host");
-            event_loop.exit();
+        if let Some(deadline) = loading_deadline {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
         }
     }
 }

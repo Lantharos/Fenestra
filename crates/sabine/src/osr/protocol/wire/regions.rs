@@ -43,7 +43,7 @@ pub(super) fn parse_draggable_regions(
     Ok((drag, exclusion))
 }
 
-pub(super) fn parse_file_drag_request(payload: &[u8], x: i32, y: i32) -> Option<FileDragRequest> {
+pub(super) fn parse_file_drag_request(payload: &[u8]) -> Option<FileDragRequest> {
     let value: Value = serde_json::from_slice(payload).ok()?;
     let paths = value
         .get("paths")?
@@ -54,7 +54,7 @@ pub(super) fn parse_file_drag_request(payload: &[u8], x: i32, y: i32) -> Option<
     if paths.is_empty() {
         return None;
     }
-    Some(FileDragRequest { paths, x, y })
+    Some(FileDragRequest { paths })
 }
 
 pub(super) fn payload_count(payload: &[u8]) -> io::Result<usize> {

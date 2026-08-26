@@ -35,6 +35,8 @@ constexpr uint32_t kGuestHidden = 20;
 constexpr uint32_t kDraggableRegionsChanged = 21;
 constexpr uint32_t kGuestCaptureRequested = 22;
 constexpr uint32_t kBridgeRequest = 23;
+constexpr uint32_t kMainLoadStarted = 29;
+constexpr uint32_t kMainLoadReady = 30;
 
 class SabineOsrHandler : public CefClient,
                        public CefContextMenuHandler,

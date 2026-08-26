@@ -20,6 +20,7 @@ pub(super) struct TextRendererState {
 struct TextBufferEntry {
     buffer: Buffer,
     command: TextCommand,
+    scale: f32,
 }
 
 impl TextRendererState {
@@ -53,12 +54,19 @@ impl TextRendererState {
         height: u32,
     ) -> Result<(), RendererError> {
         self.viewport.update(queue, Resolution { width, height });
-        self.buffers.clear();
-        for command in &display_list.commands {
+        let commands = display_list.commands.iter().filter_map(|command| {
             let DisplayCommand::Text(command) = command else {
-                continue;
+                return None;
             };
-
+            Some(command.clone())
+        });
+        for (index, command) in commands.enumerate() {
+            let unchanged = self.buffers.get(index).is_some_and(|entry| {
+                entry.command == command && (entry.scale - scale).abs() < f32::EPSILON
+            });
+            if unchanged {
+                continue;
+            }
             let mut buffer = Buffer::new(
                 &mut self.font_system,
                 Metrics::new(command.size * scale, command.line_height * scale),
@@ -72,11 +80,23 @@ impl TextRendererState {
                 Some(glyphon::cosmic_text::Align::Center),
             );
             buffer.shape_until_scroll(&mut self.font_system, false);
-            self.buffers.push(TextBufferEntry {
+            let entry = TextBufferEntry {
                 buffer,
-                command: command.clone(),
-            });
+                command,
+                scale,
+            };
+            if index < self.buffers.len() {
+                self.buffers[index] = entry;
+            } else {
+                self.buffers.push(entry);
+            }
         }
+        let text_count = display_list
+            .commands
+            .iter()
+            .filter(|command| matches!(command, DisplayCommand::Text(_)))
+            .count();
+        self.buffers.truncate(text_count);
         self.renderer
             .prepare(
                 device,

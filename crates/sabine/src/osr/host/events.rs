@@ -12,9 +12,16 @@ impl OsrNativeHost {
         let mut needs_initial_present = false;
         let mut resize_frame_ready = false;
         while let Ok(event) = self.receiver.try_recv() {
+            if event
+                .connection_generation()
+                .is_some_and(|generation| generation != self.connection_generation)
+            {
+                continue;
+            }
             match event {
-                super::types::OsrHostEvent::Connected(stream) => {
+                super::types::OsrHostEvent::Connected(_, stream) => {
                     self.socket = Some(std::sync::Arc::new(std::sync::Mutex::new(stream)));
+                    self.awaiting_connection = false;
                     let mut output = std::io::stdout();
                     use std::io::Write;
                     let _ = writeln!(output, "SABINE_OSR_READY");
@@ -28,7 +35,7 @@ impl OsrNativeHost {
                         "focus\t0\n"
                     });
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::Frame(frame)) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::Frame(frame)) => {
                     if self.accepts_paint() {
                         let was_presented = self.presented;
                         let was_resize_pending = self.pending_resize_paint.is_some();
@@ -36,10 +43,10 @@ impl OsrNativeHost {
                         needs_redraw |= updated;
                         resize_frame_ready |=
                             was_resize_pending && self.pending_resize_paint.is_none();
-                        needs_initial_present |= !was_presented && self.main_frame.is_some();
+                        needs_initial_present |= !was_presented && self.main_surface_ready();
                     }
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::PaintBatch(batch)) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::PaintBatch(batch)) => {
                     if self.accepts_paint() {
                         let was_presented = self.presented;
                         let was_resize_pending = self.pending_resize_paint.is_some();
@@ -47,10 +54,10 @@ impl OsrNativeHost {
                         needs_redraw |= updated;
                         resize_frame_ready |=
                             was_resize_pending && self.pending_resize_paint.is_none();
-                        needs_initial_present |= !was_presented && self.main_frame.is_some();
+                        needs_initial_present |= !was_presented && self.main_surface_ready();
                     }
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::AccelFrame(frame)) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::AccelFrame(frame)) => {
                     if self.accepts_paint() {
                         let was_presented = self.presented;
                         let was_resize_pending = self.pending_resize_paint.is_some();
@@ -58,35 +65,38 @@ impl OsrNativeHost {
                         needs_redraw |= updated;
                         resize_frame_ready |=
                             was_resize_pending && self.pending_resize_paint.is_none();
-                        needs_initial_present |= !was_presented && self.main_frame.is_some();
+                        needs_initial_present |= !was_presented && self.main_surface_ready();
                     }
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::PopupHidden) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::PopupHidden) => {
                     self.clear_overlay(POPUP_OVERLAY_ID);
                     needs_redraw = true;
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::GuestHidden(id)) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::GuestHidden(id)) => {
                     if !id.is_empty() {
                         self.clear_overlay(&id);
                         needs_redraw = true;
                     }
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::GuestCaptureRequested {
-                    browser_id,
-                    request_id,
-                    guest_id,
-                }) => self.capture_guest(&browser_id, &request_id, &guest_id),
-                super::types::OsrHostEvent::Message(OsrMessage::DraggableRegionsChanged {
-                    drag,
-                    exclusion,
-                }) => {
+                super::types::OsrHostEvent::Message(
+                    _,
+                    OsrMessage::GuestCaptureRequested {
+                        browser_id,
+                        request_id,
+                        guest_id,
+                    },
+                ) => self.capture_guest(&browser_id, &request_id, &guest_id),
+                super::types::OsrHostEvent::Message(
+                    _,
+                    OsrMessage::DraggableRegionsChanged { drag, exclusion },
+                ) => {
                     self.page_drag_regions = drag;
                     self.page_drag_exclusion_regions = exclusion;
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::Cursor(cursor)) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::Cursor(cursor)) => {
                     self.set_content_cursor(cursor_for_cef(&cursor));
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::CloseRequested) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::CloseRequested) => {
                     if self.config.hide_on_close {
                         self.hide_window("close");
                     } else {
@@ -94,17 +104,17 @@ impl OsrNativeHost {
                         return;
                     }
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::StartDragRequested) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::StartDragRequested) => {
                     if let Some(window) = &self.window
                         && let Err(error) = window.drag_window()
                     {
                         eprintln!("failed to begin native window drag: {error}");
                     }
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::FileDragRequested(request)) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::FileDragRequested(request)) => {
                     self.start_file_drag(event_loop, request);
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::MinimizeRequested) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::MinimizeRequested) => {
                     if self.config.lifecycle.suspend_on_minimize {
                         self.suspend("minimize");
                         if self.config.lifecycle.hibernate_after.is_some() {
@@ -115,34 +125,53 @@ impl OsrNativeHost {
                         window.set_minimized(true);
                     }
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::ToggleMaximizeRequested) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::ToggleMaximizeRequested) => {
                     if let Some(window) = &self.window {
                         window.set_maximized(!window.is_maximized());
                     }
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::FullscreenRequested(enabled)) => {
+                super::types::OsrHostEvent::Message(
+                    _,
+                    OsrMessage::FullscreenRequested(enabled),
+                ) => {
                     if let Some(window) = &self.window {
                         window.set_fullscreen(
                             enabled.then_some(winit::monitor::Fullscreen::Borderless(None)),
                         );
                     }
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::ShowRequested) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::ShowRequested) => {
                     self.ensure_window(event_loop);
                     self.show_window("show");
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::HideRequested) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::HideRequested) => {
                     self.hide_window("hide")
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::FocusRequested(token)) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::FocusRequested(token)) => {
                     self.activate_window(event_loop, token);
                 }
-                super::types::OsrHostEvent::Message(OsrMessage::BridgeRequest(line)) => {
+                super::types::OsrHostEvent::Message(_, OsrMessage::BridgeRequest(line)) => {
                     if !line.is_empty() {
                         let mut output = std::io::stdout();
                         use std::io::Write;
                         let _ = writeln!(output, "{line}");
                         let _ = output.flush();
+                    }
+                }
+                super::types::OsrHostEvent::Message(_, OsrMessage::MainLoadStarted) => {
+                    self.main_load_ready = false;
+                    if self.config.visible && self.loading.is_none() {
+                        self.loading = Some(super::types::NativeLoading::new(
+                            super::types::LoadingKind::Opening,
+                        ));
+                    }
+                }
+                super::types::OsrHostEvent::Message(_, OsrMessage::MainLoadReady) => {
+                    self.main_load_ready = true;
+                    if self.main_frame.is_some() {
+                        self.loading = None;
+                        needs_redraw = true;
+                        needs_initial_present |= !self.presented;
                     }
                 }
                 super::types::OsrHostEvent::HostControl(HostControl::Show) => {
@@ -179,19 +208,27 @@ impl OsrNativeHost {
                     }
                     self.send_control(&line);
                 }
-                super::types::OsrHostEvent::Disconnected => {
+                super::types::OsrHostEvent::Disconnected(_) => {
                     self.socket = None;
-                    // Handed-off windows have no local CEF child; a disconnect
-                    // means the shared browser process dropped this surface.
-                    if self.child.is_none() {
-                        event_loop.exit();
+                    self.awaiting_connection = false;
+                    if self.closing_deadline.is_some() {
+                        continue;
                     }
+                    if matches!(
+                        self.lifecycle_state,
+                        super::types::LifecycleState::Hibernating
+                            | super::types::LifecycleState::Hibernated
+                    ) {
+                        self.lifecycle_state = super::types::LifecycleState::Hibernated;
+                        continue;
+                    }
+                    self.begin_recovery();
                 }
             }
         }
         if needs_initial_present {
             if self.render() {
-                self.present_after_first_frame();
+                self.present_rendered_surface("first_paint");
             }
             return;
         }

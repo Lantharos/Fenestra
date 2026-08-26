@@ -53,11 +53,6 @@ pub(crate) fn download_file(
     run_download_command(url, Some(destination)).map(|_| ())
 }
 
-#[allow(dead_code)]
-pub(crate) fn verify_sha1(path: &Path, expected: &str) -> Result<(), RuntimeError> {
-    verify_sha1_with_progress(path, expected, &mut |_| {})
-}
-
 pub(crate) fn verify_sha1_with_progress(
     path: &Path,
     expected: &str,

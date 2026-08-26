@@ -18,6 +18,8 @@ pub(super) const FALLBACK_ACTIVE_FRAME_RATE: u32 = 60;
 /// Wayland briefly drops focus/occlusion around interactive move. Suspending
 /// immediately thrashes lifecycle on the secondary (handed-off) window.
 pub(super) const LIFECYCLE_SUSPEND_DEBOUNCE: Duration = Duration::from_millis(200);
+pub(super) const LOADING_REVEAL_DELAY: Duration = Duration::from_millis(120);
+pub(super) const LOADING_ANIMATION_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(super) const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;
 pub(super) const EVENTFLAG_CONTROL_DOWN: u32 = 1 << 2;
@@ -51,12 +53,54 @@ pub(super) fn uses_sabine_chrome(chrome: SabineWindowChrome) -> bool {
 }
 
 pub(super) enum OsrHostEvent {
-    Connected(IpcStream),
-    Message(OsrMessage),
+    Connected(u64, IpcStream),
+    Message(u64, OsrMessage),
     HostControl(HostControl),
     /// Forward a bridge or guest-control line to the owning CEF handler socket.
     ControlLine(String),
-    Disconnected,
+    Disconnected(u64),
+}
+
+impl OsrHostEvent {
+    pub(super) fn connection_generation(&self) -> Option<u64> {
+        match self {
+            Self::Connected(generation, _)
+            | Self::Message(generation, _)
+            | Self::Disconnected(generation) => Some(*generation),
+            Self::HostControl(_) | Self::ControlLine(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LoadingKind {
+    Opening,
+    Resuming,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct NativeLoading {
+    pub(super) kind: LoadingKind,
+    pub(super) started: Instant,
+    pub(super) reveal_at: Instant,
+    pub(super) next_frame: Instant,
+}
+
+impl NativeLoading {
+    pub(super) fn new(kind: LoadingKind) -> Self {
+        let started = Instant::now();
+        let reveal_at = started + LOADING_REVEAL_DELAY;
+        Self {
+            kind,
+            started,
+            reveal_at,
+            next_frame: reveal_at,
+        }
+    }
+
+    pub(super) fn revealed(self) -> bool {
+        Instant::now() >= self.reveal_at
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

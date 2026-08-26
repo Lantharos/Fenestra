@@ -76,6 +76,8 @@ pub(crate) enum OsrMessage {
     HideRequested,
     FocusRequested(Option<String>),
     FileDragRequested(FileDragRequest),
+    MainLoadStarted,
+    MainLoadReady,
     /// Full `SABINE_BRIDGE_REQUEST\t...` line from the owning CEF handler.
     BridgeRequest(String),
 }
@@ -83,10 +85,6 @@ pub(crate) enum OsrMessage {
 #[derive(Clone, Debug)]
 pub(crate) struct FileDragRequest {
     pub paths: Vec<String>,
-    #[allow(dead_code)]
-    pub x: i32,
-    #[allow(dead_code)]
-    pub y: i32,
 }
 
 #[derive(Clone, Debug)]

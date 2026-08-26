@@ -196,8 +196,8 @@ void SabineOsrHandler::OnLoadError(CefRefPtr<CefBrowser> browser,
   std::stringstream body;
   body << "<!doctype html><meta charset=\"utf-8\"><body style=\"margin:0;"
           "font:14px system-ui;background:#111;color:#eee;padding:24px\">"
-       << "<h2>Failed to load</h2><p>" << std::string(failedUrl) << "</p><p>"
-       << std::string(errorText) << "</p></body>";
+       << "<h2>Failed to load</h2><p>" << HtmlEscape(failedUrl.ToString())
+       << "</p><p>" << HtmlEscape(errorText.ToString()) << "</p></body>";
   frame->LoadURL(HtmlDataUri(body.str()));
 }
 
@@ -210,6 +210,7 @@ void SabineOsrHandler::OnLoadStart(CefRefPtr<CefBrowser> browser,
   }
   GuestView* guest = GuestForBrowser(browser);
   if (!guest) {
+    SendMessage(kMainLoadStarted, 0, 0, 0, 0, nullptr, 0);
     InstallTransparentBackground(frame);
   }
   if (!guest || guest->allow_bridge) {
@@ -228,6 +229,7 @@ void SabineOsrHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
   if (!guest) {
     InstallTransparentBackground(frame);
     InstallBridge(browser, frame);
+    SendMessage(kMainLoadReady, 0, 0, 0, 0, nullptr, 0);
     return;
   }
   if (guest->allow_bridge) {

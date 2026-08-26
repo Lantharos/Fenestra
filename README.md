@@ -10,17 +10,17 @@ browser engine across every Sabine app on the machine.
 
 ```toml
 [dependencies]
-sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.7" }
+sabine = { git = "https://github.com/Lantharos/Sabine", tag = "v0.1.8" }
 ```
 
 ```sh
-cargo install --git https://github.com/Lantharos/Sabine --tag v0.1.7 sabine-cli
+cargo install --git https://github.com/Lantharos/Sabine --tag v0.1.8 sabine-cli
 ```
 
 For the TypeScript helpers used by the web UI:
 
 ```sh
-bun add github:Lantharos/Sabine#v0.1.7
+bun add github:Lantharos/Sabine#v0.1.8
 ```
 
 ## Why Sabine
@@ -250,6 +250,9 @@ sabine-service ensure
 sabine-service list
 sabine-service maintain
 ```
+
+`sabine runtime doctor` validates the runtime layout and launches the matching CEF host with a
+headless smoke probe. Its JSON output includes `probe_error` when the host cannot start.
 
 ## Learn more
 

@@ -299,6 +299,7 @@ impl OsrLayerHost {
             OsrMessage::MinimizeRequested => {}
             OsrMessage::ToggleMaximizeRequested => {}
             OsrMessage::FullscreenRequested(_) => {}
+            OsrMessage::MainLoadStarted | OsrMessage::MainLoadReady => {}
             OsrMessage::ShowRequested => self.set_surface_visible(true, state),
             OsrMessage::HideRequested => self.set_surface_visible(false, state),
             OsrMessage::FocusRequested(_) => self.set_surface_visible(true, state),

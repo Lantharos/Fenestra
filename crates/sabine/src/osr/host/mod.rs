@@ -4,10 +4,12 @@ mod events;
 mod guest_preview;
 mod input;
 mod lifecycle;
+mod loading;
 mod native;
 mod paint;
 mod paint_accel;
 mod paint_upload;
+mod resize;
 mod socket;
 mod types;
 
@@ -19,7 +21,7 @@ use winit::event_loop::EventLoop;
 use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 
 pub(crate) use config::OsrHostConfig;
-#[allow(unused_imports)]
+#[cfg(target_os = "linux")]
 pub(crate) use guest_preview::guest_preview_data_url;
 
 use native::OsrNativeHost;

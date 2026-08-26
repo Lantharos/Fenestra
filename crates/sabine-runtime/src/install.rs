@@ -6,9 +6,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-#[cfg(windows)]
-use std::process::{Command, Stdio};
-
 use crate::detect::is_runtime_dir;
 use crate::download::{
     download_file, extract_archive, first_extracted_runtime_dir, latest_install_plan,
@@ -18,6 +15,7 @@ use crate::error::RuntimeError;
 use crate::host::runtime_is_valid;
 use crate::lease::runtime_is_leased;
 use crate::paths::user_runtime_path;
+use crate::process::process_alive;
 use crate::resolve::resolve_runtime;
 use crate::types::{
     RuntimeConfig, RuntimeInfo, RuntimeInstallProgress, RuntimeInstallStep, RuntimeLocation,
@@ -389,8 +387,8 @@ impl Drop for RuntimeInstallLock {
 }
 
 fn lock_is_stale(path: &Path) -> bool {
-    if !lock_holder_alive(path) {
-        return true;
+    if let Some(pid) = lock_holder_pid(path) {
+        return !process_alive(pid);
     }
     std::fs::metadata(path)
         .and_then(|metadata| metadata.modified())
@@ -399,46 +397,12 @@ fn lock_is_stale(path: &Path) -> bool {
         .is_some_and(|elapsed| elapsed >= INSTALL_LOCK_STALE_AFTER)
 }
 
-fn lock_holder_alive(path: &Path) -> bool {
-    lock_holder_pid(path).is_some_and(process_alive)
-}
-
 fn lock_holder_pid(path: &Path) -> Option<u32> {
     let contents = std::fs::read_to_string(path).ok()?;
     contents.lines().find_map(|line| {
         line.strip_prefix("pid=")
             .and_then(|value| value.trim().parse::<u32>().ok())
     })
-}
-
-fn process_alive(pid: u32) -> bool {
-    if pid == 0 {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        // signal 0 checks existence / permission without killing
-        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-    }
-    #[cfg(windows)]
-    {
-        Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()
-            .is_some_and(|output| {
-                let text = String::from_utf8_lossy(&output.stdout);
-                text.contains(&pid.to_string())
-            })
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = pid;
-        false
-    }
 }
 
 fn unix_timestamp_secs() -> u64 {

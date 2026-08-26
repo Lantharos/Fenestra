@@ -297,7 +297,6 @@ pub(super) fn register_native_messaging_host(host: &NativeMessagingHost) -> Resu
 pub(super) struct SingleInstanceGuard {
     _listener: Option<JoinHandle<()>>,
     running: Arc<AtomicBool>,
-    lock_path: PathBuf,
     socket_path: PathBuf,
 }
 
@@ -310,24 +309,17 @@ impl SingleInstanceGuard {
         let runtime = runtime_dir()?;
         fs::create_dir_all(&runtime).map_err(|error| error.to_string())?;
         let key = sanitize_id(id.unwrap_or("default-instance"));
-        let lock_path = runtime.join(format!("{key}.lock"));
         let socket_path = runtime.join(format!("{key}.sock"));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-        {
-            Ok(mut file) => {
-                let _ = writeln!(file, "{}", std::process::id());
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                notify_existing_instance(&socket_path)?;
+        let listener = match UnixListener::bind(&socket_path) {
+            Ok(listener) => listener,
+            Err(_) if notify_existing_instance(&socket_path).is_ok() => {
                 return Err(crate::desktop::INSTANCE_ALREADY_RUNNING.to_string());
             }
-            Err(error) => return Err(error.to_string()),
-        }
-        let _ = fs::remove_file(&socket_path);
-        let listener = UnixListener::bind(&socket_path).map_err(|error| error.to_string())?;
+            Err(_) => {
+                fs::remove_file(&socket_path).map_err(|error| error.to_string())?;
+                UnixListener::bind(&socket_path).map_err(|error| error.to_string())?
+            }
+        };
         let running = Arc::new(AtomicBool::new(true));
         let thread_running = Arc::clone(&running);
         let thread = thread::spawn(move || {
@@ -358,7 +350,6 @@ impl SingleInstanceGuard {
         Ok(Self {
             _listener: Some(thread),
             running,
-            lock_path,
             socket_path,
         })
     }
@@ -371,7 +362,6 @@ impl Drop for SingleInstanceGuard {
         if let Some(thread) = self._listener.take() {
             let _ = thread.join();
         }
-        let _ = fs::remove_file(&self.lock_path);
         let _ = fs::remove_file(&self.socket_path);
     }
 }

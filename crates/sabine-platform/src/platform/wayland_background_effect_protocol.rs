@@ -33,8 +33,6 @@ pub(super) const REGISTRY_BIND: u32 = 0;
 pub(super) const COMPOSITOR_CREATE_REGION: u32 = 1;
 pub(super) const SURFACE_SET_OPAQUE_REGION: u32 = 4;
 pub(super) const SURFACE_SET_INPUT_REGION: u32 = 5;
-#[allow(dead_code)] // protocol opcode; wgpu owns surface commits
-pub(super) const SURFACE_COMMIT: u32 = 6;
 pub(super) const REGION_DESTROY: u32 = 0;
 pub(super) const REGION_ADD: u32 = 1;
 pub(super) const MANAGER_DESTROY: u32 = 0;
