@@ -105,6 +105,11 @@ impl OsrNativeHost {
                     }
                 }
                 super::types::OsrHostEvent::Message(_, OsrMessage::StartDragRequested) => {
+                    let button = Some(winit::event::MouseButton::Left);
+                    if self.mouse_button_pressed(button) {
+                        self.set_mouse_button(button, false);
+                        self.forward_mouse_click(button, true, self.active_click_count);
+                    }
                     if let Some(window) = &self.window
                         && let Err(error) = window.drag_window()
                     {

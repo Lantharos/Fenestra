@@ -215,6 +215,9 @@ impl ApplicationHandler for OsrNativeHost {
                             self.forward_navigation_button(button);
                             return;
                         }
+                        if !self.mouse_button_pressed(button) {
+                            return;
+                        }
                         self.set_mouse_button(button, false);
                         self.forward_mouse_click(button, true, self.active_click_count);
                     }

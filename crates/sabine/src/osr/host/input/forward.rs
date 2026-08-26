@@ -386,6 +386,15 @@ impl OsrNativeHost {
         }
     }
 
+    pub(in crate::osr::host) fn mouse_button_pressed(&self, button: Option<MouseButton>) -> bool {
+        match button {
+            Some(MouseButton::Left) => self.mouse.left,
+            Some(MouseButton::Middle) => self.mouse.middle,
+            Some(MouseButton::Right) => self.mouse.right,
+            _ => false,
+        }
+    }
+
     pub(in crate::osr::host) fn next_click_count(&mut self, button: Option<MouseButton>) -> i32 {
         let Some(button) = button else {
             return 1;
