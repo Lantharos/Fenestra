@@ -114,9 +114,9 @@ void SabineOsrHandler::HandleControlLine(const std::string& line) {
   }
   CefRefPtr<CefBrowserHost> host = target_browser->GetHost();
   if (parts[0] == "ime_delete" && parts.size() >= 3) {
-    const int browser_id = target_browser->GetIdentifier();
+    const int target_browser_id = target_browser->GetIdentifier();
     CefRefPtr<CefFrame> frame = target_browser->GetMainFrame();
-    const auto ime_frame = ime_frames_.find(browser_id);
+    const auto ime_frame = ime_frames_.find(target_browser_id);
     if (ime_frame != ime_frames_.end() && ime_frame->second) {
       frame = ime_frame->second;
     }
