@@ -259,6 +259,13 @@ impl OsrLayerHost {
         self.presentation_full_damage = false;
     }
 
+    pub(super) fn commit_layer_state(&self, unit: &layershellev::WindowStateUnit<()>) {
+        self.ensure_layer_unit_size(unit);
+        let surface = unit.get_wlsurface();
+        surface.commit();
+        flush_surface(surface);
+    }
+
     pub(super) fn commit_pending_surface(
         &mut self,
         state: &mut WindowState<()>,

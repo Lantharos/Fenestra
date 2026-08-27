@@ -46,6 +46,7 @@ pub(super) struct OsrLayerHost {
     pub(super) lifecycle_state: LayerLifecycleState,
     pub(super) alpha_modifier: Option<LayerAlphaModifier>,
     pub(super) surface_alpha: f32,
+    pub(super) effect: Option<sabine_platform::WindowEffect>,
     pub(super) loading: Option<crate::osr::host::types::NativeLoading>,
     pub(super) text_renderer: RasterText,
     pub(super) tooltip: Option<LayerTooltip>,
@@ -139,6 +140,7 @@ impl OsrLayerHost {
             lifecycle_state,
             alpha_modifier: None,
             surface_alpha,
+            effect: None,
             loading: visible.then(|| {
                 crate::osr::host::types::NativeLoading::new(
                     crate::osr::host::types::LoadingKind::Opening,

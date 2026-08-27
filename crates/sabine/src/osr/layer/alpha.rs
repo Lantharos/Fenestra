@@ -7,10 +7,8 @@ use layershellev::WindowState;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 
 pub(super) struct LayerAlphaModifier {
-    display: *mut WlDisplay,
     manager: *mut WlProxy,
     surface_modifier: *mut WlProxy,
-    surface: *mut WlProxy,
 }
 
 impl LayerAlphaModifier {
@@ -21,7 +19,7 @@ impl LayerAlphaModifier {
     }
 
     pub(super) fn set_alpha(&self, alpha: f32) -> bool {
-        if self.display.is_null() || self.surface_modifier.is_null() || self.surface.is_null() {
+        if self.surface_modifier.is_null() {
             return false;
         }
         let factor = (alpha.clamp(0.0, 1.0) * c_uint::MAX as f32).round() as c_uint;
@@ -34,14 +32,6 @@ impl LayerAlphaModifier {
                 0,
                 factor,
             );
-            wl_proxy_marshal_flags(
-                self.surface,
-                WL_SURFACE_COMMIT,
-                ptr::null(),
-                wl_proxy_get_version(self.surface),
-                0,
-            );
-            wl_display_flush(self.display);
         }
         true
     }
@@ -168,10 +158,8 @@ unsafe fn bind_alpha_modifier(
     }
 
     Some(LayerAlphaModifier {
-        display,
         manager: manager.cast(),
         surface_modifier,
-        surface,
     })
 }
 
@@ -254,7 +242,6 @@ const ALPHA_MANAGER_DESTROY: u32 = 0;
 const ALPHA_MANAGER_GET_SURFACE: u32 = 1;
 const ALPHA_SURFACE_DESTROY: u32 = 0;
 const ALPHA_SURFACE_SET_MULTIPLIER: u32 = 1;
-const WL_SURFACE_COMMIT: u32 = 6;
 const DESTROY_FLAG: u32 = 1;
 
 static INTERFACE_TYPES: InterfaceTypes = InterfaceTypes {
@@ -315,7 +302,6 @@ unsafe extern "C" {
     static WL_REGISTRY_INTERFACE: WlInterface;
 
     fn wl_display_roundtrip(display: *mut WlDisplay) -> c_int;
-    fn wl_display_flush(display: *mut WlDisplay) -> c_int;
     fn wl_proxy_add_listener(
         proxy: *mut WlProxy,
         implementation: *mut c_void,

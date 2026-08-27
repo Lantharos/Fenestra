@@ -36,7 +36,9 @@ impl OsrLayerHost {
                 if size_changed {
                     self.clear_frames();
                 }
-                ReturnData::WlBuffer(self.install_wayland_buffer(file, shm, qh, width, height))
+                let buffer = self.install_wayland_buffer(file, shm, qh, width, height);
+                self.update_main_effect(state);
+                ReturnData::WlBuffer(buffer)
             }
             LayerShellEvent::RequestMessages(message) => self.handle_message(message, state, id),
             LayerShellEvent::UserEvent(event) => self.handle_host_event(event, state, id),
@@ -84,6 +86,7 @@ impl OsrLayerHost {
                 if size_changed {
                     self.recreate_wayland_buffer(surface_size.0, surface_size.1);
                 }
+                self.update_main_effect(state);
                 self.ensure_child();
                 self.send_resize();
                 self.drive_tooltip(state);

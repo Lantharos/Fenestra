@@ -4,6 +4,7 @@ use crate::osr::host::OsrHostConfig;
 
 mod alpha;
 mod buffer;
+mod effect;
 mod events;
 mod forward;
 mod ime;

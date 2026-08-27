@@ -136,8 +136,10 @@ impl OsrLayerHost {
             self.alpha_modifier = super::alpha::LayerAlphaModifier::bind(state);
         }
         self.surface_alpha = alpha;
-        if let Some(modifier) = &self.alpha_modifier {
-            let _ = modifier.set_alpha(alpha);
+        if let Some(modifier) = &self.alpha_modifier
+            && modifier.set_alpha(alpha)
+        {
+            self.commit_layer_state(state.main_window());
         }
     }
 
