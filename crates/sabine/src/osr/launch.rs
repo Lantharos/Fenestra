@@ -165,6 +165,7 @@ pub(crate) fn spawn_osr_host_child(
         message: error.to_string(),
     })?;
     let mut command = Command::new(exe);
+    sabine_runtime::configure_background_command(&mut command);
     command
         .arg(OSR_HOST_ARG)
         .arg(&host_config_path)
@@ -260,6 +261,7 @@ pub(crate) fn cef_osr_command(
             PathBuf::new()
         });
     let mut command = Command::new(&host_binary);
+    sabine_runtime::configure_background_command(&mut command);
     sabine_host::apply_runtime_resource_args(&mut command, runtime_dir);
     command
         .arg(format!("--url={}", config.url))

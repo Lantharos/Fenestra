@@ -153,7 +153,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             if service.apply_pending_app_update(&id, relaunch.as_deref())? {
                 println!("applied pending update for {id}");
                 if let Some(executable) = relaunch {
-                    std::process::Command::new(executable).spawn()?;
+                    let mut command = sabine_runtime::background_command(executable);
+                    command.spawn()?;
                 }
             } else {
                 println!("{id} has no pending update");

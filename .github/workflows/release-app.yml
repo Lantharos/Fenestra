@@ -116,6 +116,11 @@ jobs:
             throw "Sabine.toml app name is missing"
           }
           $appName = $Matches[1]
+          $expectedSabineVersion = "${{ inputs.sabine_version }}".TrimStart('v')
+          $sabineData = Join-Path $env:LOCALAPPDATA 'Sabine'
+          if (Test-Path $sabineData) {
+            Remove-Item $sabineData -Recurse -Force
+          }
           $log = Join-Path $env:RUNNER_TEMP "sabine-msi-install.log"
           $install = Start-Process msiexec.exe -ArgumentList @('/i', $msi[0].FullName, '/qn', '/norestart', '/l*v', $log) -Wait -PassThru
           if ($install.ExitCode -ne 0) {
@@ -132,11 +137,37 @@ jobs:
           }
           try {
             $app = Start-Process $installedExe.FullName -PassThru
-            Start-Sleep -Seconds 8
-            if ($app.HasExited) {
-              throw "installed application exited during launch with code $($app.ExitCode)"
+            $statePath = Join-Path $sabineData 'daemon-state.json'
+            $deadline = (Get-Date).AddMinutes(15)
+            $daemon = $null
+            while ((Get-Date) -lt $deadline) {
+              if ($app.HasExited) {
+                throw "installed application exited during first-run setup with code $($app.ExitCode)"
+              }
+              if (Test-Path $statePath) {
+                try {
+                  $state = Get-Content $statePath -Raw | ConvertFrom-Json
+                  if ($state.version -eq $expectedSabineVersion) {
+                    $daemon = Get-Process -Id $state.pid -ErrorAction SilentlyContinue
+                    if ($null -ne $daemon) {
+                      break
+                    }
+                  }
+                } catch {
+                }
+              }
+              Start-Sleep -Seconds 2
             }
-            Stop-Process -Id $app.Id -Force
+            if ($null -eq $daemon) {
+              throw "Sabine $expectedSabineVersion did not finish clean first-run setup with a live daemon"
+            }
+            Start-Sleep -Seconds 3
+            if ($null -eq (Get-Process -Id $daemon.Id -ErrorAction SilentlyContinue)) {
+              throw "Sabine daemon exited after first-run setup"
+            }
+            if (-not $app.HasExited) {
+              Stop-Process -Id $app.Id -Force
+            }
           } finally {
             Start-Process msiexec.exe -ArgumentList @('/x', $msi[0].FullName, '/qn', '/norestart') -Wait
           }

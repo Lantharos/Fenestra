@@ -2,7 +2,9 @@ mod ui;
 
 use crate::window::config::SabineWindowConfig;
 use crate::{SabineError, SabineResult};
-use sabine_runtime::{RuntimeConfig, RuntimeMode, resolve_runtime};
+use sabine_runtime::{
+    RuntimeConfig, RuntimeMode, background_command, configure_background_command, resolve_runtime,
+};
 use sabine_service::{AppManifest, SabineService, prepare_machine_with_progress};
 use serde_json::Value;
 use std::{
@@ -86,7 +88,8 @@ fn relaunch_managed_update(config: &SabineWindowConfig) {
     if current == desired || !desired.is_file() {
         return;
     }
-    let launched = Command::new(desired)
+    let mut command = background_command(desired);
+    let launched = command
         .args(std::env::args_os().skip(1))
         .stdin(Stdio::null())
         .spawn()
@@ -116,7 +119,8 @@ fn offer_pending_update(config: &SabineWindowConfig) {
     let Some(executable) = executable else {
         return;
     };
-    let spawned = Command::new(service_executable)
+    let mut command = background_command(service_executable);
+    let spawned = command
         .arg("apply-update")
         .arg(id)
         .arg("--wait-pid")
@@ -144,7 +148,9 @@ fn run_bootstrap_install(
     let executable = std::env::current_exe().map_err(|error| SabineError::CreationFailed {
         message: format!("failed to locate app executable: {error}"),
     })?;
-    let status = Command::new(executable)
+    let mut command = Command::new(executable);
+    configure_background_command(&mut command);
+    let status = command
         .arg(BOOTSTRAP_ARG)
         .arg(&config_path)
         .stdin(Stdio::null())

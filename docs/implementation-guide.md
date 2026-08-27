@@ -319,6 +319,9 @@ Windows builds statically link the Microsoft C runtime and select the GUI subsys
 explicitly x64, carries the configured icon into its Start menu shortcut, and is installed and
 launched by the release workflow before publication. Raster icons are encoded directly; SVG
 packaging requires ImageMagick so the CLI can generate Windows and freedesktop raster icon sizes.
+The released Sabine CLI, service, and daemon also use the static Microsoft runtime. First-launch
+downloads use the in-process HTTP client, and unavoidable helper processes are created without a
+console so only the native bootstrap progress window is visible.
 
 Source installs are development conveniences. They stage assets and a launcher under the Sabine data
 directory, register the app with the service, and create platform launch metadata.

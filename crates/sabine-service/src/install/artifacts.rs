@@ -3,13 +3,14 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
 };
 
 use crate::{
     PrepareProgress, PrepareStage, ServiceError, ServiceResult, SystemReleaseManifest,
     registry::replace_file,
 };
+use sabine_runtime::background_command;
 
 use super::SERVICE_REPO;
 
@@ -188,7 +189,7 @@ pub(super) fn verify_sha256(path: &Path, expected: &str) -> ServiceResult<()> {
 }
 
 pub(super) fn extract_system_archive(archive: &Path, destination: &Path) -> ServiceResult<()> {
-    let listing = Command::new("tar")
+    let listing = background_command("tar")
         .arg("-tf")
         .arg(archive)
         .output()
@@ -212,12 +213,14 @@ pub(super) fn extract_system_archive(archive: &Path, destination: &Path) -> Serv
             ));
         }
     }
-    let status = Command::new("tar")
+    let status = background_command("tar")
         .arg("-xf")
         .arg(archive)
         .arg("-C")
         .arg(destination)
         .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map_err(|error| {
             ServiceError::Update(format!("failed to extract system bundle: {error}"))

@@ -106,7 +106,7 @@ mod tests {
     use super::*;
 
     fn args(options: &BrowserOptions) -> Vec<String> {
-        let mut command = Command::new("sabine-host");
+        let mut command = sabine_runtime::background_command("sabine-host");
         apply_browser_launch_args(&mut command, options, false);
         command
             .get_args()

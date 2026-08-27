@@ -8,6 +8,7 @@ use std::{
 
 use crate::registry::replace_file;
 use crate::types::{AppArtifact, AppArtifactKind, PendingAppUpdate, ServiceError, ServiceResult};
+use sabine_runtime::background_command;
 
 pub(super) fn install_archive(
     root: &Path,
@@ -82,7 +83,7 @@ pub(super) fn extract_archive(archive: &Path, destination: &Path, url: &str) -> 
     } else {
         ("tar", &["-tf"], &["-xf"])
     };
-    let listing = Command::new(program)
+    let listing = background_command(program)
         .args(list_args)
         .arg(archive)
         .output()
@@ -99,7 +100,7 @@ pub(super) fn extract_archive(archive: &Path, destination: &Path, url: &str) -> 
             ));
         }
     }
-    let mut command = Command::new(program);
+    let mut command = background_command(program);
     command.args(extract_args).arg(archive);
     if zip {
         command.arg("-d").arg(destination);
@@ -107,6 +108,8 @@ pub(super) fn extract_archive(archive: &Path, destination: &Path, url: &str) -> 
         command.arg("-C").arg(destination);
     }
     let status = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map_err(|error| ServiceError::Update(format!("failed to extract archive: {error}")))?;
     status

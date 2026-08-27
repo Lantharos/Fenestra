@@ -49,6 +49,34 @@ jobs:
       - run: rustup toolchain install 1.89 --profile minimal
       - run: rustup override set 1.89
       - run: cargo build --release -p sabine-cli -p sabine-service
+      - name: Verify hidden Windows process creation
+        if: runner.os == 'Windows'
+        run: cargo test --release -p sabine-runtime process::tests::background_children_do_not_inherit_a_console -- --exact
+      - name: Verify self-contained Windows binaries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($name in @('sabine.exe', 'sabine-service.exe', 'sabine-service-daemon.exe')) {
+            $path = Join-Path 'target/release' $name
+            $headers = (& llvm-objdump --private-headers $path 2>&1 | Out-String)
+            if ($LASTEXITCODE -ne 0) {
+              throw "llvm-objdump could not inspect $name"
+            }
+            if ($headers -match '(?i)(VCRUNTIME|MSVCP|api-ms-win-crt)') {
+              throw "$name still depends on the redistributable C runtime"
+            }
+          }
+          $daemonHeaders = (& llvm-objdump --private-headers 'target/release/sabine-service-daemon.exe' 2>&1 | Out-String)
+          if ($daemonHeaders -notmatch '(?i)Subsystem\s+00000002\s+\(Windows GUI\)') {
+            throw 'sabine-service-daemon.exe is not marked as a GUI application'
+          }
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'sabine-daemon-smoke'
+          $daemon = Start-Process 'target/release/sabine-service-daemon.exe' -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+          if ($daemon.HasExited) {
+            throw "sabine-service-daemon.exe exited during startup with code $($daemon.ExitCode)"
+          }
+          Stop-Process -Id $daemon.Id -Force
       - name: Prepare stable-ABI CEF host
         shell: pwsh
         run: |

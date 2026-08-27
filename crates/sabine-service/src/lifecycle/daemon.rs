@@ -11,6 +11,7 @@ use crate::{
     SabineService, ServiceError, ServiceResult, ensure_service_executable, service_daemon_path,
     service_data_dir,
 };
+use sabine_runtime::{background_command, configure_background_command};
 
 use super::{PID_FILE, autostart::install_login_autostart_with, load_policy};
 
@@ -62,16 +63,11 @@ pub fn start_daemon() -> ServiceResult<()> {
     let service = ensure_service_executable(|_| {})?;
     let executable = service_daemon_path(&service);
     let _ = fs::create_dir_all(service_data_dir());
-    let mut command = Command::new(&executable);
+    let mut command = background_command(&executable);
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
     command.spawn().map_err(|error| {
         ServiceError::Update(format!(
             "failed to start Sabine service ({}): {error}",
@@ -171,7 +167,7 @@ fn begin_system_handoff(update: &crate::StagedSystemUpdate) -> ServiceResult<()>
                 "self-update has no running installation to perform handoff".into(),
             )
         })?;
-        let mut command = Command::new(helper);
+        let mut command = background_command(helper);
         command
             .arg("complete-system-update")
             .arg("--from-pid")
@@ -181,11 +177,6 @@ fn begin_system_handoff(update: &crate::StagedSystemUpdate) -> ServiceResult<()>
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x0800_0000);
-        }
         command.spawn().map_err(|error| {
             ServiceError::Update(format!("failed to start Sabine update handoff: {error}"))
         })?;
@@ -199,11 +190,7 @@ fn start_daemon_at(executable: &Path) -> ServiceResult<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
+    configure_background_command(&mut command);
     command.spawn().map(|_| ()).map_err(|error| {
         ServiceError::Update(format!(
             "failed to launch {}: {error}",

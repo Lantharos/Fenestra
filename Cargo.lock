@@ -2727,7 +2727,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "sabine"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "ashpd",
  "bytemuck",
@@ -2764,7 +2764,7 @@ dependencies = [
 
 [[package]]
 name = "sabine-bridge"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "serde",
  "serde_json",
@@ -2772,7 +2772,7 @@ dependencies = [
 
 [[package]]
 name = "sabine-cli"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "base64",
  "clap",
@@ -2793,11 +2793,12 @@ dependencies = [
 
 [[package]]
 name = "sabine-host"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "sabine-bridge",
  "serde",
  "serde_json",
+ "windows",
 ]
 
 [[package]]
@@ -2810,7 +2811,7 @@ dependencies = [
 
 [[package]]
 name = "sabine-platform"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
@@ -2821,18 +2822,20 @@ dependencies = [
 
 [[package]]
 name = "sabine-runtime"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "libc",
  "serde",
  "serde_json",
  "sha1",
  "thiserror 2.0.20",
+ "ureq",
+ "windows",
 ]
 
 [[package]]
 name = "sabine-service"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "base64",
  "clap",

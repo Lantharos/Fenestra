@@ -22,6 +22,7 @@ pub use lease::RuntimeLease;
 pub use paths::{
     bundled_runtime_path, runtime_version_path, system_runtime_path, user_runtime_path,
 };
+pub use process::{background_command, configure_background_command};
 pub use resolve::{ensure_runtime, resolve_runtime};
 pub use types::{
     RuntimeConfig, RuntimeInfo, RuntimeInstallPlan, RuntimeInstallProgress, RuntimeInstallStep,

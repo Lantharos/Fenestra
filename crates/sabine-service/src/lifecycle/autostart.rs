@@ -7,6 +7,10 @@ use std::{
 use crate::{
     ServiceError, ServiceResult, ensure_service_executable, service_daemon_path, service_data_dir,
 };
+use sabine_runtime::configure_background_command;
+
+#[cfg(target_os = "windows")]
+use sabine_runtime::background_command;
 
 use super::PID_FILE;
 
@@ -43,13 +47,13 @@ pub(super) fn install_login_autostart_with_mode(
              $settings=New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew;\
              Register-ScheduledTask -TaskName 'Sabine Service' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null"
         );
-        run_checked(Command::new("powershell.exe").args([
+        run_checked(background_command("powershell.exe").args([
             "-NoProfile",
             "-NonInteractive",
             "-Command",
             &script,
         ]))?;
-        let _ = Command::new("reg")
+        let _ = background_command("reg")
             .args([
                 "delete",
                 r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
@@ -69,7 +73,7 @@ pub(super) fn install_login_autostart_with_mode(
             ("UninstallString", uninstall),
         ] {
             run_checked(
-                Command::new("reg")
+                background_command("reg")
                     .args(["add", key, "/v", name, "/t", "REG_SZ", "/d", &value, "/f"]),
             )?;
         }
@@ -173,12 +177,12 @@ pub(super) fn unload_macos_daemon() {
 pub fn uninstall_login_autostart() -> ServiceResult<()> {
     #[cfg(target_os = "windows")]
     {
-        let _ = Command::new("schtasks")
+        let _ = background_command("schtasks")
             .args(["/Delete", "/TN", "Sabine Service", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
-        let _ = Command::new("reg")
+        let _ = background_command("reg")
             .args([
                 "delete",
                 r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
@@ -187,7 +191,7 @@ pub fn uninstall_login_autostart() -> ServiceResult<()> {
                 "/f",
             ])
             .status();
-        let _ = Command::new("reg")
+        let _ = background_command("reg")
             .args([
                 "delete",
                 r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Sabine",
@@ -220,6 +224,7 @@ pub fn uninstall_login_autostart() -> ServiceResult<()> {
 pub(super) fn run_checked(command: &mut Command) -> ServiceResult<()> {
     // Windows `reg.exe` prints "The operation completed successfully." to stdout
     // on every successful write; keep that noise out of the setup UI.
+    configure_background_command(command);
     let status = command
         .stdout(Stdio::null())
         .stderr(Stdio::null())

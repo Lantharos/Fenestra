@@ -152,6 +152,7 @@ pub fn smoke_test_runtime(host: &Path, runtime_dir: &Path) -> Result<(), String>
         .map_err(|error| format!("could not create CEF runtime probe cache: {error}"))?;
     let _cache = TemporaryDirectory(cache_dir.clone());
     let mut command = Command::new(&host);
+    configure_background_command(&mut command);
     command
         .arg("--sabine-runtime-smoke-test")
         .arg(format!("--root-cache-path={}", cache_dir.display()))
@@ -221,6 +222,16 @@ pub fn smoke_test_runtime(host: &Path, runtime_dir: &Path) -> Result<(), String>
         };
         Err(format!("CEF runtime probe exited with {status}{details}"))
     }
+}
+
+pub(crate) fn configure_background_command(command: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = command;
 }
 
 pub fn runtime_binary_directory(runtime_dir: &Path) -> PathBuf {
@@ -416,6 +427,7 @@ pub fn runtime_probe_fingerprint() -> String {
 }
 
 fn run_checked(command: &mut Command) -> Result<(), String> {
+    configure_background_command(command);
     let output = command.output().map_err(|error| error.to_string())?;
     if output.status.success() {
         return Ok(());

@@ -2,13 +2,12 @@ use std::{
     fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
-    process::Command,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
-use std::process::Stdio;
+use std::process::{Command, Stdio};
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const LOCK_STALE_AFTER: Duration = Duration::from_secs(30 * 60);
@@ -86,14 +85,23 @@ fn process_alive(pid: u32) -> bool {
         .status()
         .is_ok_and(|status| status.success());
     #[cfg(windows)]
-    return Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
-        .output()
-        .ok()
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .and_then(|output| output.lines().next().map(str::to_string))
-        .and_then(|line| line.split(',').nth(1).map(str::to_string))
-        .is_some_and(|value| value.trim_matches('"') == pid.to_string());
+    {
+        use windows::Win32::{
+            Foundation::{CloseHandle, STILL_ACTIVE},
+            System::Threading::{
+                GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            },
+        };
+        let Ok(process) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) })
+        else {
+            return false;
+        };
+        let mut exit_code = 0;
+        let active = unsafe { GetExitCodeProcess(process, &mut exit_code) }.is_ok()
+            && exit_code == STILL_ACTIVE.0 as u32;
+        let _ = unsafe { CloseHandle(process) };
+        return active;
+    }
     #[cfg(not(any(unix, windows)))]
     false
 }

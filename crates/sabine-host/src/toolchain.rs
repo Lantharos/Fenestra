@@ -50,7 +50,9 @@ fn vswhere_installation_version() -> Option<String> {
     if !vswhere.is_file() {
         return None;
     }
-    let output = Command::new(vswhere)
+    let mut command = Command::new(vswhere);
+    crate::configure_background_command(&mut command);
+    let output = command
         .args([
             "-latest",
             "-products",
@@ -70,7 +72,9 @@ fn vswhere_installation_version() -> Option<String> {
 }
 
 fn cmake_generator_available(generator: &str) -> bool {
-    Command::new("cmake")
+    let mut command = Command::new("cmake");
+    crate::configure_background_command(&mut command);
+    command
         .args(["-G", generator, "-A", "x64", "--help"])
         .output()
         .ok()
