@@ -10,10 +10,7 @@ use winit::{
     cursor::CursorIcon,
     dpi::LogicalSize,
     event_loop::ActiveEventLoop,
-    window::{
-        ImeCapabilities, ImeEnableRequest, ImeRequest, ImeRequestData, Window as WinitWindow,
-        WindowAttributes, WindowLevel,
-    },
+    window::{Window as WinitWindow, WindowAttributes, WindowLevel},
 };
 
 use crate::osr::protocol::MAIN_TEXTURE_ID;
@@ -112,10 +109,7 @@ impl OsrNativeHost {
             };
         self.renderer = Some(renderer);
         self.window = Some(window.clone());
-        let ime_caps = ImeCapabilities::new().with_hint_and_purpose();
-        if let Some(enable) = ImeEnableRequest::new(ime_caps, ImeRequestData::default()) {
-            let _ = window.request_ime_update(ImeRequest::Enable(enable));
-        }
+        self.restore_ime_state();
         self.send_screen_origin();
         self.launch_child();
         self.upload_cached_textures();
@@ -165,6 +159,7 @@ impl OsrNativeHost {
         self.pressed_control = None;
         self.cursor = CursorIcon::Default;
         self.native_cursor_override = false;
+        self.forward_ime(winit::event::Ime::Disabled);
     }
 
     pub(in crate::osr::host) fn upload_cached_textures(&mut self) {

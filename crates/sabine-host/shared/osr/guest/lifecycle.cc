@@ -306,6 +306,7 @@ void SabineOsrHandler::DestroyGuest(const std::string& id) {
   }
   const GuestView removed = *guest;
   guests_.Erase(id);
+  const bool restore_primary_focus = focused_guest_id_ == id;
   if (focused_guest_id_ == id) {
     focused_guest_id_.clear();
   }
@@ -322,6 +323,10 @@ void SabineOsrHandler::DestroyGuest(const std::string& id) {
   SendGuestHidden(removed);
   if (removed.browser) {
     removed.browser->GetHost()->CloseBrowser(true);
+  }
+  if (restore_primary_focus && browser_) {
+    browser_->GetHost()->SetFocus(true);
+    SendFocusedImeState();
   }
   EmitPrimaryEvent("guest.destroyed", GuestIdJson(id));
   if (id == kSabinePopupGuestId) {
@@ -346,6 +351,7 @@ void SabineOsrHandler::FocusGuest(const std::string& id) {
     if (browser_) {
       browser_->GetHost()->SetFocus(true);
     }
+    SendFocusedImeState();
     return;
   }
   guests_.Raise(id);
@@ -356,6 +362,7 @@ void SabineOsrHandler::FocusGuest(const std::string& id) {
   if (guest && guest->browser) {
     guest->browser->GetHost()->SetFocus(true);
   }
+  SendFocusedImeState();
 }
 
 void SabineOsrHandler::DismissPopupGuest() {
@@ -434,22 +441,6 @@ void SabineOsrHandler::SendGuestHidden(const GuestView& guest) {
   }
 }
 
-void SabineOsrHandler::EmitPrimaryEvent(const std::string& name,
-                                          const std::string& payload) {
-  CEF_REQUIRE_UI_THREAD();
-  if (!browser_) {
-    return;
-  }
-  CefRefPtr<CefFrame> frame = browser_->GetMainFrame();
-  if (!frame) {
-    return;
-  }
-  frame->ExecuteJavaScript(
-      "window.__sabineBridgeEmit&&window.__sabineBridgeEmit(" +
-          JsString(name) + "," + (payload.empty() ? "null" : payload) + ");",
-      frame->GetURL(), 0);
-}
-
 bool SabineOsrHandler::OnBeforePopup(CefRefPtr<CefBrowser> browser,
                                        CefRefPtr<CefFrame> frame,
                                        SABINE_CEF_POPUP_ID
@@ -506,4 +497,3 @@ bool SabineOsrHandler::OnBeforePopup(CefRefPtr<CefBrowser> browser,
       return true;
   }
 }
-

@@ -230,3 +230,19 @@ void SabineOsrHandler::EmitBridgeEvent(const std::string& name_json,
         script, browser->GetMainFrame()->GetURL(), 0);
   }
 }
+
+void SabineOsrHandler::EmitPrimaryEvent(const std::string& name,
+                                        const std::string& payload) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser_) {
+    return;
+  }
+  CefRefPtr<CefFrame> frame = browser_->GetMainFrame();
+  if (!frame) {
+    return;
+  }
+  frame->ExecuteJavaScript(
+      "window.__sabineBridgeEmit&&window.__sabineBridgeEmit(" +
+          JsString(name) + "," + (payload.empty() ? "null" : payload) + ");",
+      frame->GetURL(), 0);
+}

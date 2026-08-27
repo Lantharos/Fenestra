@@ -179,6 +179,18 @@ impl OsrNativeHost {
                         needs_initial_present |= !self.presented;
                     }
                 }
+                super::types::OsrHostEvent::Message(_, OsrMessage::ImeStateChanged(mode)) => {
+                    self.update_ime_state(mode);
+                }
+                super::types::OsrHostEvent::Message(
+                    _,
+                    OsrMessage::ImeCursorAreaChanged {
+                        x,
+                        y,
+                        width,
+                        height,
+                    },
+                ) => self.update_ime_cursor_area(x, y, width, height),
                 super::types::OsrHostEvent::HostControl(HostControl::Show) => {
                     self.ensure_window(event_loop);
                     self.show_window("show");

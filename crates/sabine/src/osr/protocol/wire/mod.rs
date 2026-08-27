@@ -48,6 +48,8 @@ pub(super) const KIND_FULLSCREEN_REQUESTED: u32 = 27;
 pub(super) const KIND_EXIT_FULLSCREEN_REQUESTED: u32 = 28;
 pub(super) const KIND_MAIN_LOAD_STARTED: u32 = 29;
 pub(super) const KIND_MAIN_LOAD_READY: u32 = 30;
+pub(super) const KIND_IME_STATE_CHANGED: u32 = 31;
+pub(super) const KIND_IME_CURSOR_AREA_CHANGED: u32 = 32;
 pub(super) const BATCH_ENTRY_LEN: usize = 28;
 
 pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessage>> {
@@ -186,6 +188,13 @@ pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessa
         },
         KIND_MAIN_LOAD_STARTED => OsrMessage::MainLoadStarted,
         KIND_MAIN_LOAD_READY => OsrMessage::MainLoadReady,
+        KIND_IME_STATE_CHANGED => OsrMessage::ImeStateChanged(width),
+        KIND_IME_CURSOR_AREA_CHANGED => OsrMessage::ImeCursorAreaChanged {
+            x,
+            y,
+            width,
+            height,
+        },
         KIND_BRIDGE_REQUEST => {
             OsrMessage::BridgeRequest(String::from_utf8(payload).unwrap_or_default())
         }
@@ -316,6 +325,47 @@ mod tests {
             assert!(matches!(
                 (message, ready),
                 (OsrMessage::MainLoadReady, true) | (OsrMessage::MainLoadStarted, false)
+            ));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ime_state_and_cursor_area_round_trip() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+
+        use super::{
+            HEADER_LEN, KIND_IME_CURSOR_AREA_CHANGED, KIND_IME_STATE_CHANGED, MAGIC, OsrMessage,
+            read_message,
+        };
+
+        for (kind, width, height, x, y) in [
+            (KIND_IME_STATE_CHANGED, 5_u32, 0_u32, 0_i32, 0_i32),
+            (KIND_IME_CURSOR_AREA_CHANGED, 2, 24, 120, 64),
+        ] {
+            let (mut reader, mut writer) = UnixStream::pair().expect("socket pair");
+            let mut header = [0_u8; HEADER_LEN];
+            header[0..4].copy_from_slice(MAGIC);
+            header[4..8].copy_from_slice(&kind.to_le_bytes());
+            header[8..12].copy_from_slice(&width.to_le_bytes());
+            header[12..16].copy_from_slice(&height.to_le_bytes());
+            header[16..20].copy_from_slice(&x.to_le_bytes());
+            header[20..24].copy_from_slice(&y.to_le_bytes());
+            writer.write_all(&header).expect("header");
+            let message = read_message(&mut reader).expect("read").expect("message");
+            assert!(matches!(
+                (message, kind),
+                (OsrMessage::ImeStateChanged(5), KIND_IME_STATE_CHANGED)
+                    | (
+                        OsrMessage::ImeCursorAreaChanged {
+                            x: 120,
+                            y: 64,
+                            width: 2,
+                            height: 24,
+                        },
+                        KIND_IME_CURSOR_AREA_CHANGED
+                    )
             ));
         }
     }

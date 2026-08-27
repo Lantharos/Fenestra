@@ -126,6 +126,7 @@ void SabineOsrHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     return;
   }
   StartCommandReader();
+  SendFocusedImeState();
   host->WasResized();
   host->Invalidate(PET_VIEW);
 }
@@ -140,6 +141,8 @@ bool SabineOsrHandler::DoClose(CefRefPtr<CefBrowser> browser) {
 
 void SabineOsrHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
+  text_input_modes_.erase(browser->GetIdentifier());
+  ime_cursor_rects_.erase(browser->GetIdentifier());
   if (GuestView* guest = guests_.FindByBrowser(browser)) {
     const std::string id = guest->id;
     guest->browser = nullptr;

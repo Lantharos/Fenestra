@@ -3,8 +3,9 @@ use std::time::Instant;
 use crate::render::{DisplayList, RectCommand, RoundedRectCommand, TextCommand};
 use crate::window::style::Color;
 
+use super::loading_messages::loading_message;
 use super::native::OsrNativeHost;
-use super::types::{LOADING_ANIMATION_INTERVAL, LoadingKind};
+use super::types::{LOADING_ANIMATION_INTERVAL, LOADING_MESSAGE_INTERVAL};
 
 impl OsrNativeHost {
     pub(super) fn draw_loading(&self, list: &mut DisplayList, width: f32, height: f32) {
@@ -22,10 +23,12 @@ impl OsrNativeHost {
         });
         let center_y = content_y + content_height * 0.5;
         list.push(TextCommand {
-            text: match loading.kind {
-                LoadingKind::Opening => "Opening…",
-                LoadingKind::Resuming => "Just a moment…",
-            }
+            text: loading_message(
+                loading.kind,
+                loading.message_seed,
+                (loading.started.elapsed().as_millis() / LOADING_MESSAGE_INTERVAL.as_millis())
+                    as u64,
+            )
             .to_string(),
             x: 24.0,
             y: center_y - 30.0,
@@ -35,7 +38,7 @@ impl OsrNativeHost {
             line_height: 20.0,
             color: Color::TEXT.opacity(0.78),
         });
-        let track_width = width.clamp(48.0, 112.0);
+        let track_width = (width - 48.0).clamp(1.0, 112.0).min(width.max(1.0));
         let track_x = (width - track_width) * 0.5;
         let phase = (loading.started.elapsed().as_millis() / 100) as usize % 9;
         for index in 0..3 {

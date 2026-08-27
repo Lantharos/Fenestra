@@ -37,6 +37,8 @@ constexpr uint32_t kGuestCaptureRequested = 22;
 constexpr uint32_t kBridgeRequest = 23;
 constexpr uint32_t kMainLoadStarted = 29;
 constexpr uint32_t kMainLoadReady = 30;
+constexpr uint32_t kImeStateChanged = 31;
+constexpr uint32_t kImeCursorAreaChanged = 32;
 
 class SabineOsrHandler : public CefClient,
                        public CefContextMenuHandler,
@@ -150,6 +152,12 @@ class SabineOsrHandler : public CefClient,
                           PaintElementType type,
                           const RectList& dirtyRects,
                           const CefAcceleratedPaintInfo& info) override;
+  void OnImeCompositionRangeChanged(
+      CefRefPtr<CefBrowser> browser,
+      const CefRange& selected_range,
+      const RectList& character_bounds) override;
+  void OnVirtualKeyboardRequested(CefRefPtr<CefBrowser> browser,
+                                  TextInputMode input_mode) override;
   bool GetScreenPoint(CefRefPtr<CefBrowser> browser,
                       int viewX,
                       int viewY,
@@ -258,6 +266,7 @@ class SabineOsrHandler : public CefClient,
                       const RectList& dirty_rects);
   void SendGuestHidden(const GuestView& guest);
   void EmitPrimaryEvent(const std::string& name, const std::string& payload);
+  void SendFocusedImeState();
   bool RunGuestDownloadAction(const std::string& payload, std::string* error);
   CefRefPtr<CefRequestContext> CreateGuestRequestContext(
       const std::string& partition);
@@ -284,6 +293,8 @@ class SabineOsrHandler : public CefClient,
   int screen_origin_y_ = 0;
   GuestRegistry guests_;
   std::string focused_guest_id_;
+  std::map<int, cef_text_input_mode_t> text_input_modes_;
+  std::map<int, CefRect> ime_cursor_rects_;
   std::string pending_guest_id_;
   std::map<std::string, CefRefPtr<CefRequestContext>> guest_contexts_;
   std::set<std::string> initialized_guest_contexts_;

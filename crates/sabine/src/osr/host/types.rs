@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use winit::event::MouseButton;
 
@@ -20,6 +23,7 @@ pub(super) const FALLBACK_ACTIVE_FRAME_RATE: u32 = 60;
 pub(super) const LIFECYCLE_SUSPEND_DEBOUNCE: Duration = Duration::from_millis(200);
 pub(super) const LOADING_REVEAL_DELAY: Duration = Duration::from_millis(120);
 pub(super) const LOADING_ANIMATION_INTERVAL: Duration = Duration::from_millis(100);
+pub(super) const LOADING_MESSAGE_INTERVAL: Duration = Duration::from_millis(3_200);
 
 pub(super) const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;
 pub(super) const EVENTFLAG_CONTROL_DOWN: u32 = 1 << 2;
@@ -84,6 +88,7 @@ pub(super) struct NativeLoading {
     pub(super) started: Instant,
     pub(super) reveal_at: Instant,
     pub(super) next_frame: Instant,
+    pub(super) message_seed: u64,
 }
 
 impl NativeLoading {
@@ -95,12 +100,21 @@ impl NativeLoading {
             started,
             reveal_at,
             next_frame: reveal_at,
+            message_seed: next_loading_seed(),
         }
     }
 
     pub(super) fn revealed(self) -> bool {
         Instant::now() >= self.reveal_at
     }
+}
+
+fn next_loading_seed() -> u64 {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos() as u64);
+    time ^ u64::from(std::process::id()) ^ SEQUENCE.fetch_add(1, Ordering::Relaxed)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

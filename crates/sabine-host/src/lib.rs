@@ -402,6 +402,9 @@ fn prebuilt_host_path() -> Option<PathBuf> {
             return Some(path);
         }
     }
+    if cfg!(debug_assertions) {
+        return None;
+    }
     let root = if cfg!(target_os = "windows") {
         PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Sabine")
     } else if cfg!(target_os = "macos") {

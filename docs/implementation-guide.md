@@ -224,6 +224,11 @@ While a guest is focused, matching `interceptedShortcuts` are consumed by the ho
 `interceptHorizontalWheel`, predominantly horizontal wheel samples emit `guest.wheel` and are not
 forwarded to the guest. Favicon URL changes emit `guest.favicon`.
 
+Editable primary and guest content drives the platform input method on demand. CEF reports the
+focused editor's input mode and composition caret bounds; the native host maps those to the system
+IME, positions its candidate window, and forwards preedit selection and committed text back to the
+focused browser. Ordinary page focus does not keep the input method enabled.
+
 HTML file drags from the primary page are promoted to native OS drags. Incoming URI-list drags,
 including self-drops, are accepted by the native host and emitted to the primary page as
 `window.fileDrag`. Each event carries its phase, absolute file paths, content coordinates, the
@@ -255,8 +260,10 @@ Visible windows remain unmapped until the first browser frame when startup or wa
 quickly. After 120 milliseconds, Sabine presents a neutral native loading surface using the same
 GPU compositor, window chrome, and app background configured with
 `.background_color(SabineColor::rgb8(r, g, b))`. The default is `#111113`. The same color seeds CEF
-before the document paints, avoiding a surface-color jump when the native loader disappears. Live
-transport loss uses the wake path so a window recovers instead of remaining frozen.
+before the document paints, avoiding a surface-color jump when the native loader disappears. Its
+loading copy rotates every 3.2 seconds from a 70% practical, 20% whimsical, and 10% strange pool
+without repeating consecutively. Live transport loss uses the wake path so a window recovers
+instead of remaining frozen.
 
 Memory saver is explicit. `SabineLifecyclePolicy::memory_saver_hidden_window()` or
 `.memory_saver(true)` enables the aggressive hidden-window policy and prevents Chromium from

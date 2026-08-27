@@ -78,6 +78,13 @@ pub(crate) enum OsrMessage {
     FileDragRequested(FileDragRequest),
     MainLoadStarted,
     MainLoadReady,
+    ImeStateChanged(u32),
+    ImeCursorAreaChanged {
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    },
     /// Full `SABINE_BRIDGE_REQUEST\t...` line from the owning CEF handler.
     BridgeRequest(String),
 }

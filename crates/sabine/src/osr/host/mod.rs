@@ -5,6 +5,7 @@ mod guest_preview;
 mod input;
 mod lifecycle;
 mod loading;
+mod loading_messages;
 mod native;
 mod paint;
 mod paint_accel;
