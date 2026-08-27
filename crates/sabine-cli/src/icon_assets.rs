@@ -7,6 +7,8 @@ use std::{
 
 use image::{DynamicImage, ImageFormat, ImageReader, RgbaImage, imageops};
 
+use crate::commands::command_exists;
+
 const ICON_SIZES: &[u32] = &[16, 24, 32, 48, 64, 128, 256, 512, 1024];
 
 pub fn install_user_icon(app_id: &str, icon: Option<&Path>) -> Result<Option<String>, String> {
@@ -178,15 +180,6 @@ fn extension(path: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("icon path has no extension: {}", path.display()))
 }
 
-fn command_exists(name: &str) -> bool {
-    env::var_os("PATH").is_some_and(|paths| {
-        env::split_paths(&paths).any(|path| {
-            let candidate = path.join(name);
-            candidate.is_file() && is_executable(&candidate)
-        })
-    })
-}
-
 fn refresh_icon_cache(root: &Path) {
     if !root.exists() {
         return;
@@ -205,20 +198,4 @@ fn data_home() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .map(|home| home.join(".local/share"))
         .ok_or_else(|| "HOME is not set".to_string())
-}
-
-fn is_executable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path)
-            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        true
-    }
 }

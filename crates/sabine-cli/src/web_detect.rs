@@ -5,6 +5,8 @@ use std::{
 
 use serde::Deserialize;
 
+use crate::commands::command_exists;
+
 #[derive(Debug, Clone)]
 pub struct DevProject {
     pub cargo_manifest: PathBuf,
@@ -157,11 +159,6 @@ pub fn package_manager(root: &Path, package: &serde_json::Value) -> &'static str
         return "bun";
     }
     if command_exists("bun") { "bun" } else { "npm" }
-}
-
-pub fn command_exists(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|path| path.join(name).is_file()))
 }
 
 fn detect_dev_script(package: &serde_json::Value) -> Option<String> {

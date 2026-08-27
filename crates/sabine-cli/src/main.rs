@@ -1,4 +1,5 @@
 mod bundle;
+mod commands;
 mod dev;
 mod icon_assets;
 mod process_tree;

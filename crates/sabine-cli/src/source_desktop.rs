@@ -4,6 +4,8 @@ use std::process::Command;
 #[cfg(target_os = "linux")]
 use std::process::Stdio;
 
+#[cfg(target_os = "linux")]
+use crate::commands::command_exists;
 use crate::source_install::SourceApp;
 
 #[cfg(target_os = "linux")]
@@ -169,16 +171,6 @@ fn desktop_value(value: &str) -> String {
 #[cfg(target_os = "linux")]
 fn desktop_exec(path: &Path) -> String {
     path.display().to_string().replace(' ', "\\ ")
-}
-
-#[cfg(target_os = "linux")]
-fn command_exists(name: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|path| {
-            let candidate = path.join(name);
-            candidate.is_file()
-        })
-    })
 }
 
 #[cfg(target_os = "windows")]

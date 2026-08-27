@@ -10,6 +10,7 @@ use super::{
     metadata::{deb_control, nsis_script, rpm_spec, shell_script, wix_source},
     stage::StagedBundle,
 };
+use crate::commands::command_exists;
 
 #[derive(Default)]
 pub(super) struct PackageResult {
@@ -411,15 +412,6 @@ fn run(command: &mut Command) -> Result<(), String> {
     } else {
         Err("packaging tool failed".to_string())
     }
-}
-
-fn command_exists(name: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|path| {
-            path.join(name).is_file()
-                || (cfg!(windows) && path.join(format!("{name}.exe")).is_file())
-        })
-    })
 }
 
 fn make_executable(path: &Path) -> io::Result<()> {
