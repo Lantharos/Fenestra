@@ -17,6 +17,9 @@ use super::{PID_FILE, autostart::install_login_autostart_with, load_policy};
 #[cfg(target_os = "linux")]
 use super::autostart::{install_login_autostart_with_mode, run_checked};
 
+#[cfg(target_os = "macos")]
+use super::autostart::unload_macos_daemon;
+
 const DAEMON_STATE_FILE: &str = "daemon-state.json";
 
 pub fn ensure_daemon_running() -> ServiceResult<bool> {

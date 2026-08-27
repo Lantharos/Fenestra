@@ -77,6 +77,11 @@ jobs:
         run: |
           dotnet tool install --global wix --version 6.0.2
           choco install imagemagick --yes --no-progress
+          $magick = Get-ChildItem "$env:ProgramFiles\ImageMagick-*\magick.exe" | Select-Object -First 1
+          if ($null -eq $magick) {
+            throw "ImageMagick installation did not provide magick.exe"
+          }
+          $magick.DirectoryName >> $env:GITHUB_PATH
       - name: Install matching Sabine CLI
         run: cargo install --git https://github.com/Lantharos/Sabine --tag "${{ inputs.sabine_version }}" sabine-cli
       - name: Bundle application
