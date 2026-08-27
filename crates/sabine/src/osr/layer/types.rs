@@ -6,6 +6,7 @@ use wayland_client::QueueHandle;
 
 use crate::osr::host::OsrHostConfig;
 use crate::osr::protocol::OsrFrame;
+use crate::render::RasterText;
 
 use super::alpha::LayerAlphaModifier;
 use super::socket::{ControlWriter, LayerHostEvent};
@@ -25,8 +26,11 @@ pub(super) struct OsrLayerHost {
     pub(super) scale: f64,
     pub(super) main_frame: Option<OsrFrame>,
     pub(super) main_frame_surface_size: Option<(u32, u32)>,
+    pub(super) main_load_ready: bool,
     pub(super) popup: Option<PopupSurface>,
     pub(super) main_buffer: Vec<u8>,
+    pub(super) presentation_buffer: Vec<u8>,
+    pub(super) presentation_full_damage: bool,
     pub(super) scratch: Vec<u8>,
     pub(super) surface_mapped: bool,
     pub(super) visible: bool,
@@ -42,6 +46,9 @@ pub(super) struct OsrLayerHost {
     pub(super) lifecycle_state: LayerLifecycleState,
     pub(super) alpha_modifier: Option<LayerAlphaModifier>,
     pub(super) surface_alpha: f32,
+    pub(super) loading: Option<crate::osr::host::types::NativeLoading>,
+    pub(super) text_renderer: RasterText,
+    pub(super) tooltip: Option<LayerTooltip>,
 }
 
 pub(super) struct PopupSurface {
@@ -112,8 +119,11 @@ impl OsrLayerHost {
             scale: 1.0,
             main_frame: None,
             main_frame_surface_size: None,
+            main_load_ready: false,
             popup: None,
             main_buffer: Vec::new(),
+            presentation_buffer: Vec::new(),
+            presentation_full_damage: false,
             scratch: Vec::new(),
             surface_mapped: false,
             visible,
@@ -129,8 +139,23 @@ impl OsrLayerHost {
             lifecycle_state,
             alpha_modifier: None,
             surface_alpha,
+            loading: visible.then(|| {
+                crate::osr::host::types::NativeLoading::new(
+                    crate::osr::host::types::LoadingKind::Opening,
+                )
+            }),
+            text_renderer: RasterText::new(),
+            tooltip: None,
         }
     }
+}
+
+pub(super) struct LayerTooltip {
+    pub(super) text: String,
+    pub(super) x: f32,
+    pub(super) y: f32,
+    pub(super) reveal_at: Instant,
+    pub(super) shown: bool,
 }
 
 impl Drop for OsrLayerHost {

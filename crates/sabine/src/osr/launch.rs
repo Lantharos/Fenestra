@@ -294,6 +294,9 @@ pub(crate) fn cef_osr_command(
             cache_dir.join("browser").display()
         ));
     crate::apply_browser_launch_args(&mut command, &config.browser_options(), config.dev_mode);
+    if config.dev_mode {
+        command.arg("--sabine-dev-mode");
+    }
     if config.url.starts_with("file://") {
         command.arg("--allow-file-access-from-files");
     }

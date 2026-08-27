@@ -124,6 +124,12 @@ void SabineOsrHandler::SendFocusedImeState() {
   if (input_mode == CEF_TEXT_INPUT_MODE_NONE) {
     return;
   }
+  const auto surrounding = ime_surrounding_state_.find(browser_id);
+  if (surrounding != ime_surrounding_state_.end()) {
+    const std::string& payload = surrounding->second;
+    SendMessage(kImeSurroundingChanged, 0, 0, 0, 0, payload.data(),
+                static_cast<uint32_t>(payload.size()));
+  }
   const auto cursor = ime_cursor_rects_.find(browser_id);
   if (cursor == ime_cursor_rects_.end()) {
     return;

@@ -61,6 +61,7 @@ impl OsrLayerHost {
     ) -> WlBuffer {
         if self.buffer_size != (width, height) {
             self.main_buffer.clear();
+            self.presentation_buffer.clear();
             self.scratch.clear();
         }
         self.buffer_size = (width, height);
@@ -103,6 +104,7 @@ impl OsrLayerHost {
         self.buffer_size = (width, height);
         self.surface_mapped = false;
         self.main_buffer.clear();
+        self.presentation_buffer.clear();
         self.scratch.clear();
         self.reset_main_pool(&shm, buffer_len(width, height));
     }
@@ -115,12 +117,16 @@ impl OsrLayerHost {
         if !self.visible || !self.main_frame_ready() {
             return;
         }
-        let damage = compose_frames_buffer(
+        let mut damage = compose_frames_buffer(
             self.buffer_size.0,
             self.buffer_size.1,
             self.main_frame.as_slice(),
             &mut self.main_buffer,
         );
+        self.prepare_tooltip_buffer();
+        if self.presentation_full_damage {
+            damage = DamageRect::full(self.buffer_size.0, self.buffer_size.1);
+        }
         if let Some(id) = id
             && let Some(unit) = state.get_unit_with_id(id)
         {
@@ -146,7 +152,7 @@ impl OsrLayerHost {
         if matches!(batch.surface, OsrSurface::Popup | OsrSurface::Guest(_)) {
             return self.update_popup_batch(batch, state, id);
         }
-        let damage = compose_frames_buffer(
+        let mut damage = compose_frames_buffer(
             self.buffer_size.0,
             self.buffer_size.1,
             &batch.frames,
@@ -158,6 +164,16 @@ impl OsrLayerHost {
                 self.main_frame_surface_size = Some((batch.width, batch.height));
             }
             OsrSurface::Popup | OsrSurface::Guest(_) => {}
+        }
+        if self.main_frame_ready() && self.loading.is_some() {
+            self.finish_loading(state);
+        }
+        if self.loading.is_some() && self.refresh_loading(state, id) {
+            return None;
+        }
+        self.prepare_tooltip_buffer();
+        if self.presentation_full_damage {
+            damage = DamageRect::full(self.buffer_size.0, self.buffer_size.1);
         }
         if !self.main_frame_ready() {
             return None;
@@ -190,7 +206,9 @@ impl OsrLayerHost {
     }
 
     pub(super) fn main_frame_ready(&self) -> bool {
-        self.main_frame.is_some() && self.main_frame_surface_size == Some(self.surface_size)
+        self.main_load_ready
+            && self.main_frame.is_some()
+            && self.main_frame_surface_size == Some(self.surface_size)
     }
 
     pub(super) fn clear_frames(&mut self) {
@@ -202,6 +220,7 @@ impl OsrLayerHost {
     pub(super) fn release_hidden_frame_memory(&mut self) {
         self.clear_frames();
         self.main_buffer = Vec::new();
+        self.presentation_buffer = Vec::new();
         self.scratch = Vec::new();
     }
 
@@ -235,6 +254,7 @@ impl OsrLayerHost {
         flush_surface(surface);
         self.pending_surface_refresh = false;
         self.surface_mapped = true;
+        self.presentation_full_damage = false;
     }
 
     pub(super) fn commit_pending_surface(
@@ -263,7 +283,11 @@ impl OsrLayerHost {
 
     fn prepare_main_buffer(&mut self) -> Option<usize> {
         let pool = self.main_pool.as_mut()?;
-        let pixels = self.main_buffer.as_slice();
+        let pixels = if self.presentation_buffer.is_empty() {
+            self.main_buffer.as_slice()
+        } else {
+            self.presentation_buffer.as_slice()
+        };
         if pixels.len() != buffer_len(self.buffer_size.0, self.buffer_size.1) {
             return None;
         }

@@ -22,8 +22,9 @@ pub(super) const FALLBACK_ACTIVE_FRAME_RATE: u32 = 60;
 /// immediately thrashes lifecycle on the secondary (handed-off) window.
 pub(super) const LIFECYCLE_SUSPEND_DEBOUNCE: Duration = Duration::from_millis(200);
 pub(super) const LOADING_REVEAL_DELAY: Duration = Duration::from_millis(120);
-pub(super) const LOADING_ANIMATION_INTERVAL: Duration = Duration::from_millis(100);
-pub(super) const LOADING_MESSAGE_INTERVAL: Duration = Duration::from_millis(3_200);
+pub(in crate::osr) const LOADING_ANIMATION_INTERVAL: Duration = Duration::from_millis(100);
+pub(in crate::osr) const LOADING_MESSAGE_INTERVAL: Duration = Duration::from_millis(3_200);
+pub(super) const TOOLTIP_REVEAL_DELAY: Duration = Duration::from_millis(500);
 
 pub(super) const EVENTFLAG_SHIFT_DOWN: u32 = 1 << 1;
 pub(super) const EVENTFLAG_CONTROL_DOWN: u32 = 1 << 2;
@@ -77,22 +78,57 @@ impl OsrHostEvent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum LoadingKind {
+pub(in crate::osr) enum LoadingKind {
     Opening,
     Resuming,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct NativeLoading {
-    pub(super) kind: LoadingKind,
-    pub(super) started: Instant,
+pub(in crate::osr) struct NativeLoading {
+    pub(in crate::osr) kind: LoadingKind,
+    pub(in crate::osr) started: Instant,
+    pub(in crate::osr) reveal_at: Instant,
+    pub(in crate::osr) next_frame: Instant,
+    pub(in crate::osr) message_seed: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct NativeTooltip {
+    pub(super) text: String,
+    pub(super) x: f32,
+    pub(super) y: f32,
     pub(super) reveal_at: Instant,
-    pub(super) next_frame: Instant,
-    pub(super) message_seed: u64,
+    pub(super) shown: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct ImeSurrounding {
+    pub(super) text: String,
+    pub(super) cursor: usize,
+    pub(super) anchor: usize,
+    pub(super) base_utf16: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ImePreedit {
+    pub(super) text: String,
+    pub(super) selection: Option<(usize, usize)>,
+}
+
+impl NativeTooltip {
+    pub(super) fn new(text: String, x: f32, y: f32) -> Self {
+        Self {
+            text,
+            x,
+            y,
+            reveal_at: Instant::now() + TOOLTIP_REVEAL_DELAY,
+            shown: false,
+        }
+    }
 }
 
 impl NativeLoading {
-    pub(super) fn new(kind: LoadingKind) -> Self {
+    pub(in crate::osr) fn new(kind: LoadingKind) -> Self {
         let started = Instant::now();
         let reveal_at = started + LOADING_REVEAL_DELAY;
         Self {

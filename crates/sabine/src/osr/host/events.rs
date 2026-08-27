@@ -191,6 +191,18 @@ impl OsrNativeHost {
                         height,
                     },
                 ) => self.update_ime_cursor_area(x, y, width, height),
+                super::types::OsrHostEvent::Message(_, OsrMessage::TooltipChanged(text)) => {
+                    needs_redraw |= self.update_tooltip(text);
+                }
+                super::types::OsrHostEvent::Message(
+                    _,
+                    OsrMessage::ImeSurroundingChanged {
+                        text,
+                        cursor_utf16,
+                        anchor_utf16,
+                        base_utf16,
+                    },
+                ) => self.update_ime_surrounding(text, cursor_utf16, anchor_utf16, base_utf16),
                 super::types::OsrHostEvent::HostControl(HostControl::Show) => {
                     self.ensure_window(event_loop);
                     self.show_window("show");

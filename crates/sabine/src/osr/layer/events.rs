@@ -41,6 +41,8 @@ impl OsrLayerHost {
             LayerShellEvent::RequestMessages(message) => self.handle_message(message, state, id),
             LayerShellEvent::UserEvent(event) => self.handle_host_event(event, state, id),
             LayerShellEvent::NormalDispatch => {
+                self.refresh_loading(state, id);
+                self.drive_tooltip(state);
                 self.commit_pending_surface(state, id);
                 self.commit_pending_popup_surface(state);
                 ReturnData::None
@@ -84,7 +86,13 @@ impl OsrLayerHost {
                 }
                 self.ensure_child();
                 self.send_resize();
-                if self.visible && self.main_frame_ready() {
+                self.drive_tooltip(state);
+                if self.visible && self.main_frame_ready() && self.loading.is_some() {
+                    self.finish_loading(state);
+                }
+                if self.visible && self.loading.is_some() {
+                    self.refresh_loading(state, id);
+                } else if self.visible && self.main_frame_ready() {
                     self.refresh_surface(state, id);
                 } else if self.visible {
                     self.hide_surface(state);
@@ -153,6 +161,29 @@ impl OsrLayerHost {
             } if self.visible => {
                 self.forward_mouse_wheel(axis_delta(horizontal), axis_delta(vertical))
             }
+            DispatchMessage::TouchDown {
+                id: touch_id, x, y, ..
+            } if self.visible => {
+                let (x, y) = self.pointer_position_for_unit(id, *x, *y);
+                self.forward_touch(*touch_id, x, y, "pressed");
+            }
+            DispatchMessage::TouchMotion {
+                id: touch_id, x, y, ..
+            } if self.visible => {
+                let (x, y) = self.pointer_position_for_unit(id, *x, *y);
+                self.forward_touch(*touch_id, x, y, "moved");
+            }
+            DispatchMessage::TouchUp {
+                id: touch_id, x, y, ..
+            } if self.visible => {
+                let (x, y) = self.pointer_position_for_unit(id, *x, *y);
+                self.forward_touch(*touch_id, x, y, "released");
+            }
+            DispatchMessage::TouchCancel { id: touch_id, x, y } if self.visible => {
+                let (x, y) = self.pointer_position_for_unit(id, *x, *y);
+                self.forward_touch(*touch_id, x, y, "cancelled");
+            }
+            DispatchMessage::Ime(ime) if self.visible => self.forward_ime(ime),
             DispatchMessage::Closed => {
                 if self
                     .popup
@@ -237,7 +268,12 @@ impl OsrLayerHost {
                             }
                         }
                     }
-                    if self.main_frame_ready() {
+                    if self.main_frame_ready() && self.loading.is_some() {
+                        self.finish_loading(state);
+                    }
+                    if self.loading.is_some() {
+                        self.refresh_loading(state, id);
+                    } else if self.main_frame_ready() {
                         self.restore_keyboard(state);
                         self.force_resume("first-paint");
                         self.refresh_surface(state, id);
@@ -295,12 +331,35 @@ impl OsrLayerHost {
                 return Some(ReturnData::RequestExit);
             }
             OsrMessage::StartDragRequested => {}
-            OsrMessage::FileDragRequested(_) => {}
+            OsrMessage::FileDragRequested(_) => {
+                self.send_control(&format!(
+                    "file_drag_ended\t{:.0}\t{:.0}\tnone\n",
+                    self.cursor_x, self.cursor_y
+                ));
+            }
             OsrMessage::MinimizeRequested => {}
             OsrMessage::ToggleMaximizeRequested => {}
             OsrMessage::FullscreenRequested(_) => {}
-            OsrMessage::MainLoadStarted | OsrMessage::MainLoadReady => {}
-            OsrMessage::ImeStateChanged(_) | OsrMessage::ImeCursorAreaChanged { .. } => {}
+            OsrMessage::MainLoadStarted => {
+                self.main_load_ready = false;
+                self.begin_loading(crate::osr::host::types::LoadingKind::Opening, state);
+            }
+            OsrMessage::MainLoadReady => {
+                self.main_load_ready = true;
+                if self.main_frame.is_some() {
+                    self.finish_loading(state);
+                    self.refresh_surface(state, id);
+                }
+            }
+            OsrMessage::ImeStateChanged(mode) => self.update_ime_state(mode, state),
+            OsrMessage::ImeCursorAreaChanged {
+                x,
+                y,
+                width,
+                height,
+            } => self.update_ime_cursor_area(state, id, x, y, width, height),
+            OsrMessage::TooltipChanged(text) => self.update_tooltip(text, state),
+            OsrMessage::ImeSurroundingChanged { .. } => {}
             OsrMessage::ShowRequested => self.set_surface_visible(true, state),
             OsrMessage::HideRequested => self.set_surface_visible(false, state),
             OsrMessage::FocusRequested(_) => self.set_surface_visible(true, state),

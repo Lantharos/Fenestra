@@ -61,6 +61,9 @@ void SabineOsrHandler::OnBeforeContextMenu(
     CefRefPtr<CefMenuModel> model) {
   CEF_REQUIRE_UI_THREAD();
   model->Clear();
+  if (dev_mode_) {
+    model->AddItem(kInspectElementCommand, "Inspect element");
+  }
 }
 
 void SabineOsrHandler::OnDraggableRegionsChanged(
@@ -94,6 +97,22 @@ bool SabineOsrHandler::OnContextMenuCommand(
     int command_id,
     EventFlags event_flags) {
   CEF_REQUIRE_UI_THREAD();
+  if (dev_mode_ && command_id == kInspectElementCommand) {
+    CefWindowInfo window_info;
+    CefBrowserSettings settings;
+    browser->GetHost()->ShowDevTools(
+        window_info, nullptr, settings,
+        CefPoint(params->GetXCoord(), params->GetYCoord()));
+  }
+  return true;
+}
+
+bool SabineOsrHandler::OnTooltip(CefRefPtr<CefBrowser> browser,
+                                 CefString& text) {
+  CEF_REQUIRE_UI_THREAD();
+  const std::string value = text;
+  SendMessage(kTooltipChanged, 0, 0, 0, 0, value.data(),
+              static_cast<uint32_t>(value.size()));
   return true;
 }
 

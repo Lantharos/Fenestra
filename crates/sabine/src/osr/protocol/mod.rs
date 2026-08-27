@@ -85,6 +85,13 @@ pub(crate) enum OsrMessage {
         width: u32,
         height: u32,
     },
+    TooltipChanged(String),
+    ImeSurroundingChanged {
+        text: String,
+        cursor_utf16: usize,
+        anchor_utf16: usize,
+        base_utf16: usize,
+    },
     /// Full `SABINE_BRIDGE_REQUEST\t...` line from the owning CEF handler.
     BridgeRequest(String),
 }

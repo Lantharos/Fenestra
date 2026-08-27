@@ -50,6 +50,8 @@ pub(super) const KIND_MAIN_LOAD_STARTED: u32 = 29;
 pub(super) const KIND_MAIN_LOAD_READY: u32 = 30;
 pub(super) const KIND_IME_STATE_CHANGED: u32 = 31;
 pub(super) const KIND_IME_CURSOR_AREA_CHANGED: u32 = 32;
+pub(super) const KIND_TOOLTIP_CHANGED: u32 = 33;
+pub(super) const KIND_IME_SURROUNDING_CHANGED: u32 = 34;
 pub(super) const BATCH_ENTRY_LEN: usize = 28;
 
 pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessage>> {
@@ -195,6 +197,10 @@ pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessa
             width,
             height,
         },
+        KIND_TOOLTIP_CHANGED => {
+            OsrMessage::TooltipChanged(String::from_utf8(payload).unwrap_or_default())
+        }
+        KIND_IME_SURROUNDING_CHANGED => parse_ime_surrounding(&payload)?,
         KIND_BRIDGE_REQUEST => {
             OsrMessage::BridgeRequest(String::from_utf8(payload).unwrap_or_default())
         }
@@ -209,6 +215,29 @@ pub(crate) fn read_message(reader: &mut IpcStream) -> io::Result<Option<OsrMessa
         }
     };
     Ok(Some(message))
+}
+
+fn parse_ime_surrounding(payload: &[u8]) -> io::Result<OsrMessage> {
+    let value: serde_json::Value = serde_json::from_slice(payload)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let text = value
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let number = |name: &str| {
+        value
+            .get(name)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(0)
+    };
+    Ok(OsrMessage::ImeSurroundingChanged {
+        text,
+        cursor_utf16: number("cursor"),
+        anchor_utf16: number("anchor"),
+        base_utf16: number("base"),
+    })
 }
 
 fn is_paint_kind(kind: u32) -> bool {
@@ -367,6 +396,50 @@ mod tests {
                         KIND_IME_CURSOR_AREA_CHANGED
                     )
             ));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tooltip_and_ime_surrounding_payloads_round_trip() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+
+        use super::{
+            HEADER_LEN, KIND_IME_SURROUNDING_CHANGED, KIND_TOOLTIP_CHANGED, MAGIC, OsrMessage,
+            read_message,
+        };
+
+        for (kind, payload) in [
+            (KIND_TOOLTIP_CHANGED, b"Save".as_slice()),
+            (
+                KIND_IME_SURROUNDING_CHANGED,
+                br#"{"text":"a duck","cursor":6,"anchor":2,"base":11}"#.as_slice(),
+            ),
+        ] {
+            let (mut reader, mut writer) = UnixStream::pair().expect("socket pair");
+            let mut header = [0_u8; HEADER_LEN];
+            header[0..4].copy_from_slice(MAGIC);
+            header[4..8].copy_from_slice(&kind.to_le_bytes());
+            header[24..28].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+            writer.write_all(&header).expect("header");
+            writer.write_all(payload).expect("payload");
+            let message = read_message(&mut reader).expect("read").expect("message");
+            match (message, kind) {
+                (OsrMessage::TooltipChanged(text), KIND_TOOLTIP_CHANGED) => {
+                    assert_eq!(text, "Save");
+                }
+                (
+                    OsrMessage::ImeSurroundingChanged {
+                        text,
+                        cursor_utf16: 6,
+                        anchor_utf16: 2,
+                        base_utf16: 11,
+                    },
+                    KIND_IME_SURROUNDING_CHANGED,
+                ) => assert_eq!(text, "a duck"),
+                other => panic!("unexpected protocol message: {other:?}"),
+            }
         }
     }
 

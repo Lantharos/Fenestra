@@ -51,8 +51,7 @@ bool SabineOsrHandler::OnProcessMessageReceived(
     CefProcessId source_process,
     CefRefPtr<CefProcessMessage> message) {
   CEF_REQUIRE_UI_THREAD();
-  if (source_process != PID_RENDERER || !message ||
-      message->GetName() != "sabine.native") {
+  if (source_process != PID_RENDERER || !message) {
     return false;
   }
   CefRefPtr<CefListValue> arguments = message->GetArgumentList();
@@ -61,6 +60,16 @@ bool SabineOsrHandler::OnProcessMessageReceived(
     return true;
   }
   const std::string payload = arguments->GetString(0);
+  if (message->GetName() == "sabine.ime_state") {
+    const int browser_id = browser->GetIdentifier();
+    ime_surrounding_state_[browser_id] = payload;
+    ime_frames_[browser_id] = frame;
+    SendFocusedImeState();
+    return true;
+  }
+  if (message->GetName() != "sabine.native") {
+    return false;
+  }
   return HandleWindowCommand(browser, payload) ||
          HandleBridgeCommand(browser, frame, payload);
 }

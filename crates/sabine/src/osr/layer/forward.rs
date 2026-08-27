@@ -15,6 +15,13 @@ use super::types::{ClickMemory, OsrLayerHost};
 use crate::osr::protocol::encode_component;
 
 impl OsrLayerHost {
+    pub(super) fn forward_touch(&self, id: i32, x: f32, y: f32, phase: &str) {
+        self.send_control(&format!(
+            "touch\t{x:.2}\t{y:.2}\t{id}\t{phase}\t0.0000\ttouch\t{}\n",
+            self.input_modifiers()
+        ));
+    }
+
     pub(super) fn forward_mouse_move(&self, leave: bool) {
         self.send_mouse_motion(format!(
             "mouse_move\t{:.2}\t{:.2}\t{}\t{}\n",

@@ -59,7 +59,7 @@ const UNHINGED: &[&str] = &[
     "Inventing the relevant department…",
 ];
 
-pub(super) fn loading_message(kind: LoadingKind, seed: u64, rotation: u64) -> &'static str {
+pub(crate) fn loading_message(kind: LoadingKind, seed: u64, rotation: u64) -> &'static str {
     let kind_salt = match kind {
         LoadingKind::Opening => 0xA076_1D64_78BD_642F,
         LoadingKind::Resuming => 0xE703_7ED1_A0B4_28DB,

@@ -1,5 +1,6 @@
 mod forward;
 mod ime;
+mod touch;
 
 use std::time::{Duration, Instant};
 
@@ -109,6 +110,20 @@ impl ApplicationHandler for OsrNativeHost {
             }
             WindowEvent::RedrawRequested => {}
             WindowEvent::PointerMoved {
+                position, source, ..
+            } if !matches!(
+                source,
+                winit::event::PointerSource::Mouse | winit::event::PointerSource::Unknown
+            ) =>
+            {
+                let scale = window.scale_factor() as f32;
+                let x = position.x as f32 / scale.max(1.0);
+                let y = position.y as f32 / scale.max(1.0);
+                self.cursor_x = x;
+                self.cursor_y = y;
+                self.forward_pointer_source(&source, "moved", x, y);
+            }
+            WindowEvent::PointerMoved {
                 position, primary, ..
             } if primary => {
                 let scale = window.scale_factor() as f32;
@@ -140,6 +155,38 @@ impl ApplicationHandler for OsrNativeHost {
                     window.request_redraw();
                 }
             }
+            WindowEvent::PointerLeft { position, kind, .. }
+                if matches!(
+                    kind,
+                    winit::event::PointerKind::Touch(_) | winit::event::PointerKind::TabletTool(_)
+                ) =>
+            {
+                let (x, y) = position
+                    .map(|position| {
+                        let scale = window.scale_factor() as f32;
+                        (
+                            position.x as f32 / scale.max(1.0),
+                            position.y as f32 / scale.max(1.0),
+                        )
+                    })
+                    .unwrap_or((self.cursor_x, self.cursor_y));
+                let source = match kind {
+                    winit::event::PointerKind::Touch(finger_id) => {
+                        winit::event::PointerSource::Touch {
+                            finger_id,
+                            force: None,
+                        }
+                    }
+                    winit::event::PointerKind::TabletTool(kind) => {
+                        winit::event::PointerSource::TabletTool {
+                            kind,
+                            data: Default::default(),
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                self.forward_pointer_source(&source, "cancelled", x, y);
+            }
             WindowEvent::PointerLeft {
                 position, primary, ..
             } if primary => {
@@ -154,6 +201,28 @@ impl ApplicationHandler for OsrNativeHost {
                 if titlebar_changed {
                     window.request_redraw();
                 }
+            }
+            WindowEvent::PointerButton {
+                state,
+                position,
+                button,
+                ..
+            } if !matches!(
+                button,
+                winit::event::ButtonSource::Mouse(_) | winit::event::ButtonSource::Unknown(_)
+            ) =>
+            {
+                let scale = window.scale_factor() as f32;
+                let x = position.x as f32 / scale.max(1.0);
+                let y = position.y as f32 / scale.max(1.0);
+                self.cursor_x = x;
+                self.cursor_y = y;
+                let phase = if state == ElementState::Pressed {
+                    "pressed"
+                } else {
+                    "released"
+                };
+                self.forward_pointer_button(&button, phase, x, y);
             }
             WindowEvent::PointerButton {
                 state,
@@ -304,6 +373,7 @@ impl ApplicationHandler for OsrNativeHost {
             return;
         }
         let loading_deadline = self.drive_loading();
+        let tooltip_deadline = self.drive_tooltip();
         if let Some(deadline) = self.hibernate_commit_deadline {
             if Instant::now() >= deadline {
                 self.commit_hibernate();
@@ -348,7 +418,7 @@ impl ApplicationHandler for OsrNativeHost {
         if self.cef_handed_off && self.socket.is_some() {
             self.handoff_deadline = None;
         }
-        if let Some(deadline) = loading_deadline {
+        if let Some(deadline) = loading_deadline.into_iter().chain(tooltip_deadline).min() {
             event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
         }
     }

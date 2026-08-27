@@ -90,7 +90,8 @@ void SabineOsrHandler::HandleControlLine(const std::string& line) {
   int pointer_y = parts.size() >= 3 ? std::atoi(parts[2].c_str()) : 0;
   const bool pointer_event =
       parts[0] == "mouse_move" || parts[0] == "mouse_click" ||
-      parts[0] == "mouse_wheel" || parts[0] == "mouse_navigation";
+      parts[0] == "mouse_wheel" || parts[0] == "mouse_navigation" ||
+      parts[0] == "touch";
   if (pointer_event) {
     pointer_guest = guests_.TopmostAt(pointer_x, pointer_y);
     if (pointer_guest && pointer_guest->browser) {
@@ -112,6 +113,25 @@ void SabineOsrHandler::HandleControlLine(const std::string& line) {
     }
   }
   CefRefPtr<CefBrowserHost> host = target_browser->GetHost();
+  if (parts[0] == "ime_delete" && parts.size() >= 3) {
+    const int browser_id = target_browser->GetIdentifier();
+    CefRefPtr<CefFrame> frame = target_browser->GetMainFrame();
+    const auto ime_frame = ime_frames_.find(browser_id);
+    if (ime_frame != ime_frames_.end() && ime_frame->second) {
+      frame = ime_frame->second;
+    }
+    const uint32_t start =
+        static_cast<uint32_t>(std::strtoul(parts[1].c_str(), nullptr, 10));
+    const uint32_t end =
+        static_cast<uint32_t>(std::strtoul(parts[2].c_str(), nullptr, 10));
+    if (start <= end) {
+      const std::string script = "window.__sabineImeDelete&&window.__sabineImeDelete(" +
+                                 std::to_string(start) + "," +
+                                 std::to_string(end) + ");";
+      frame->ExecuteJavaScript(script, frame->GetURL(), 0);
+    }
+    return;
+  }
   if (TryHandleImeControl(host, parts)) {
     return;
   }
@@ -207,6 +227,25 @@ void SabineOsrHandler::HandleControlLine(const std::string& line) {
     event.modifiers = modifiers;
     host->SendMouseWheelEvent(event, static_cast<int>(dx),
                               static_cast<int>(dy));
+  } else if (parts[0] == "touch" && parts.size() >= 8) {
+    CefTouchEvent event;
+    event.x = pointer_x;
+    event.y = pointer_y;
+    event.id = std::atoi(parts[3].c_str());
+    const std::string& phase = parts[4];
+    event.type = phase == "pressed"    ? CEF_TET_PRESSED
+                 : phase == "moved"    ? CEF_TET_MOVED
+                 : phase == "released" ? CEF_TET_RELEASED
+                                         : CEF_TET_CANCELLED;
+    event.pressure = std::clamp(
+        static_cast<float>(std::atof(parts[5].c_str())), 0.0f, 1.0f);
+    const std::string& pointer_type = parts[6];
+    event.pointer_type = pointer_type == "pen"       ? CEF_POINTER_TYPE_PEN
+                         : pointer_type == "eraser"  ? CEF_POINTER_TYPE_ERASER
+                         : pointer_type == "unknown" ? CEF_POINTER_TYPE_UNKNOWN
+                                                     : CEF_POINTER_TYPE_TOUCH;
+    event.modifiers = std::strtoul(parts[7].c_str(), nullptr, 10);
+    host->SendTouchEvent(event);
   } else if (parts[0] == "key" && parts.size() >= 6) {
     const bool pressed = std::atoi(parts[1].c_str()) != 0;
     const std::string key = DecodeUriComponent(parts[2]);

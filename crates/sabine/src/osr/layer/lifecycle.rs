@@ -99,7 +99,12 @@ impl OsrLayerHost {
         if self.pointer_inside {
             self.forward_mouse_move(false);
         }
-        if self.main_frame_ready() {
+        if self.main_frame_ready() && self.loading.is_some() {
+            self.finish_loading(state);
+        }
+        if self.loading.is_some() {
+            self.refresh_loading(state, None);
+        } else if self.main_frame_ready() {
             self.refresh_surface(state, None);
         } else {
             self.hide_surface(state);

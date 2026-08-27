@@ -461,6 +461,7 @@ impl OsrNativeHost {
                 opacity: 1.0,
             });
         }
+        self.draw_tooltip(&mut list, width, height);
         list
     }
 }

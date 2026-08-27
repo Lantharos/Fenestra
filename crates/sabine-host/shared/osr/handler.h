@@ -39,6 +39,10 @@ constexpr uint32_t kMainLoadStarted = 29;
 constexpr uint32_t kMainLoadReady = 30;
 constexpr uint32_t kImeStateChanged = 31;
 constexpr uint32_t kImeCursorAreaChanged = 32;
+constexpr uint32_t kTooltipChanged = 33;
+constexpr uint32_t kImeSurroundingChanged = 34;
+
+constexpr int kInspectElementCommand = MENU_ID_USER_FIRST;
 
 class SabineOsrHandler : public CefClient,
                        public CefContextMenuHandler,
@@ -87,6 +91,7 @@ class SabineOsrHandler : public CefClient,
                       CefCursorHandle cursor,
                       cef_cursor_type_t type,
                       const CefCursorInfo& custom_cursor_info) override;
+  bool OnTooltip(CefRefPtr<CefBrowser> browser, CefString& text) override;
   void OnTitleChange(CefRefPtr<CefBrowser> browser,
                      const CefString& title) override;
   void OnAddressChange(CefRefPtr<CefBrowser> browser,
@@ -295,6 +300,8 @@ class SabineOsrHandler : public CefClient,
   std::string focused_guest_id_;
   std::map<int, cef_text_input_mode_t> text_input_modes_;
   std::map<int, CefRect> ime_cursor_rects_;
+  std::map<int, std::string> ime_surrounding_state_;
+  std::map<int, CefRefPtr<CefFrame>> ime_frames_;
   std::string pending_guest_id_;
   std::map<std::string, CefRefPtr<CefRequestContext>> guest_contexts_;
   std::set<std::string> initialized_guest_contexts_;
@@ -314,6 +321,7 @@ class SabineOsrHandler : public CefClient,
 	  bool closing_ = false;
 	  bool close_requested_ = false;
   CefRefPtr<CefBrowser> drag_source_browser_;
+  bool dev_mode_ = false;
 
   IMPLEMENT_REFCOUNTING(SabineOsrHandler);
 };

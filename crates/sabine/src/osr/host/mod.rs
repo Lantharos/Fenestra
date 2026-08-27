@@ -5,14 +5,15 @@ mod guest_preview;
 mod input;
 mod lifecycle;
 mod loading;
-mod loading_messages;
+pub(in crate::osr) mod loading_messages;
 mod native;
 mod paint;
 mod paint_accel;
 mod paint_upload;
 mod resize;
 mod socket;
-mod types;
+mod tooltip;
+pub(in crate::osr) mod types;
 
 use std::path::PathBuf;
 use std::sync::mpsc;

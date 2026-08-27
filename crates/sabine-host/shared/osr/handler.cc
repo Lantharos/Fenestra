@@ -64,6 +64,7 @@ SabineOsrHandler::SabineOsrHandler(std::string endpoint,
 	      transparent_background_(transparent_background),
 	      active_frame_rate_(std::max(1, active_frame_rate)),
 	      background_frame_rate_(std::max(1, background_frame_rate)) {
+  dev_mode_ = CefCommandLine::GetGlobalCommandLine()->HasSwitch("sabine-dev-mode");
   if (!g_instance) {
     g_instance = this;
   }

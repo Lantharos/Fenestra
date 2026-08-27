@@ -6,12 +6,15 @@ mod alpha;
 mod buffer;
 mod events;
 mod forward;
+mod ime;
 mod input;
 mod lifecycle;
+mod loading;
 mod popup;
 mod shell;
 mod socket;
 mod surface;
+mod tooltip;
 mod types;
 
 use shell::{anchor_for_shell, keyboard_for_shell, layer_for_shell};
