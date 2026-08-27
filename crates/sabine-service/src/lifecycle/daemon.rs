@@ -19,7 +19,7 @@ use sabine_runtime::background_command;
 use super::{PID_FILE, autostart::install_login_autostart_with, load_policy};
 
 #[cfg(target_os = "linux")]
-use super::autostart::{install_login_autostart_with_mode, run_checked};
+use super::autostart::{install_login_autostart_with_mode, run_checked, systemd_daemon_matches};
 
 #[cfg(target_os = "macos")]
 use super::autostart::unload_macos_daemon;
@@ -34,16 +34,35 @@ pub fn ensure_daemon_running() -> ServiceResult<bool> {
             service.display()
         ))
     })?;
-    if load_policy().login_autostart {
-        let _ = install_login_autostart_with(&service);
-    }
-    if daemon_state()
-        .is_some_and(|state| state.version == expected_version && process_alive(state.pid as i32))
-    {
+    let daemon = service_daemon_path(&service);
+    let login_autostart = load_policy().login_autostart;
+    let matching_daemon = daemon_state()
+        .is_some_and(|state| state.version == expected_version && process_alive(state.pid as i32));
+    if matching_daemon {
+        #[cfg(target_os = "linux")]
+        if login_autostart && !systemd_daemon_matches(&daemon) {
+            stop_stale_daemon()?;
+            let _ = install_login_autostart_with(&service);
+            if wait_for_daemon_version(&expected_version, Duration::from_secs(2)) {
+                return Ok(true);
+            }
+        } else {
+            return Ok(true);
+        }
+        #[cfg(not(target_os = "linux"))]
         return Ok(true);
     }
+    if login_autostart {
+        let installed = install_login_autostart_with(&service).is_ok();
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if installed && wait_for_daemon_version(&expected_version, Duration::from_secs(2)) {
+            return Ok(true);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let _ = installed;
+    }
     stop_stale_daemon()?;
-    start_daemon_at(&service_daemon_path(&service))?;
+    start_daemon_at(&daemon)?;
     if wait_for_daemon_version(&expected_version, Duration::from_secs(2)) {
         Ok(true)
     } else {

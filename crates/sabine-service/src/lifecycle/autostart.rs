@@ -92,6 +92,9 @@ pub(super) fn install_login_autostart_with_mode(
             ),
         )?;
         run_checked(Command::new("systemctl").args(["--user", "daemon-reload"]))?;
+        let _ = Command::new("systemctl")
+            .args(["--user", "reset-failed", "sabine.service"])
+            .status();
         run_checked(Command::new("systemctl").args([
             "--user",
             "enable",
@@ -140,7 +143,7 @@ pub(super) fn install_login_autostart_with_mode(
 }
 
 #[cfg(target_os = "linux")]
-fn systemd_daemon_matches(expected: &Path) -> bool {
+pub(super) fn systemd_daemon_matches(expected: &Path) -> bool {
     let Ok(output) = Command::new("systemctl")
         .args([
             "--user",
