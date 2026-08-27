@@ -8,7 +8,9 @@ use wayland_client::{Proxy, QueueHandle, protocol::wl_buffer::WlBuffer};
 use crate::osr::frame_buffer::buffer_len;
 use crate::osr::protocol::{OsrPaintBatch, OsrSurface};
 
-use super::buffer::{DamageRect, compose_frames_buffer, paint_buffer_file};
+use super::buffer::{
+    DamageRect, compose_frames_buffer, copy_pixels_to_canvas, paint_buffer_file, pixel_stride,
+};
 use super::shell::keyboard_for_shell;
 use super::types::OsrLayerHost;
 
@@ -85,7 +87,7 @@ impl OsrLayerHost {
             0,
             width as i32,
             height as i32,
-            (width * 4) as i32,
+            pixel_stride(width) as i32,
             wl_shm::Format::Argb8888,
             qh,
             (),
@@ -291,11 +293,18 @@ impl OsrLayerHost {
         if pixels.len() != buffer_len(self.buffer_size.0, self.buffer_size.1) {
             return None;
         }
+        let stride = pixel_stride(self.buffer_size.0);
 
         for (index, buffer) in self.main_buffers.iter().enumerate() {
             if let Some(canvas) = buffer.canvas(pool) {
-                canvas.copy_from_slice(pixels);
-                return Some(index);
+                return copy_pixels_to_canvas(
+                    canvas,
+                    pixels,
+                    self.buffer_size.0,
+                    self.buffer_size.1,
+                    stride,
+                )
+                .then_some(index);
             }
         }
 
@@ -306,11 +315,19 @@ impl OsrLayerHost {
             .create_buffer(
                 self.buffer_size.0 as i32,
                 self.buffer_size.1 as i32,
-                (self.buffer_size.0 * 4) as i32,
+                stride as i32,
                 wl_shm::Format::Argb8888,
             )
             .ok()?;
-        canvas.copy_from_slice(pixels);
+        if !copy_pixels_to_canvas(
+            canvas,
+            pixels,
+            self.buffer_size.0,
+            self.buffer_size.1,
+            stride,
+        ) {
+            return None;
+        }
         self.main_buffers.push(buffer);
         Some(self.main_buffers.len() - 1)
     }
@@ -354,7 +371,7 @@ pub(super) fn create_buffer(
         0,
         width as i32,
         height as i32,
-        (width * 4) as i32,
+        pixel_stride(width) as i32,
         wl_shm::Format::Argb8888,
         qh,
         (),

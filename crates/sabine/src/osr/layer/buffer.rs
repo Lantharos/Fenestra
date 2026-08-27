@@ -6,6 +6,37 @@ use std::{
 use crate::osr::frame_buffer::{buffer_len, compose_frame, ensure_buffer};
 use crate::osr::protocol::OsrFrame;
 
+pub(super) fn pixel_stride(width: u32) -> usize {
+    width as usize * 4
+}
+
+pub(super) fn copy_pixels_to_canvas(
+    canvas: &mut [u8],
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+) -> bool {
+    let row_bytes = pixel_stride(width);
+    let Some(source_len) = row_bytes.checked_mul(height as usize) else {
+        return false;
+    };
+    let Some(canvas_len) = stride.checked_mul(height as usize) else {
+        return false;
+    };
+    if stride < row_bytes || pixels.len() != source_len || canvas.len() < canvas_len {
+        return false;
+    }
+    for row in 0..height as usize {
+        let source_start = row * row_bytes;
+        let destination_start = row * stride;
+        let destination = &mut canvas[destination_start..destination_start + stride];
+        destination[..row_bytes].copy_from_slice(&pixels[source_start..source_start + row_bytes]);
+        destination[row_bytes..].fill(0);
+    }
+    true
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct DamageRect {
     pub x: u32,
@@ -172,4 +203,22 @@ fn write_rect(
         file.write_all(bytes)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_pixels_to_canvas;
+
+    #[test]
+    fn canvas_copy_honors_stride_and_leaves_slot_padding_alone() {
+        let pixels = (0_u8..16).collect::<Vec<_>>();
+        let mut canvas = vec![0xff; 32];
+
+        assert!(copy_pixels_to_canvas(&mut canvas, &pixels, 2, 2, 12));
+        assert_eq!(&canvas[..8], &pixels[..8]);
+        assert_eq!(&canvas[8..12], &[0; 4]);
+        assert_eq!(&canvas[12..20], &pixels[8..]);
+        assert_eq!(&canvas[20..24], &[0; 4]);
+        assert_eq!(&canvas[24..], &[0xff; 8]);
+    }
 }

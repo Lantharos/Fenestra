@@ -20,27 +20,14 @@ mod types;
 use shell::{anchor_for_shell, keyboard_for_shell, layer_for_shell};
 use types::OsrLayerHost;
 
-pub(crate) fn run(config: OsrHostConfig) -> Result<(), String> {
-    let mut shell_surface = config
+pub(crate) fn run(mut config: OsrHostConfig) -> Result<(), String> {
+    let shell_surface = config
         .shell_surface
         .clone()
         .ok_or_else(|| "missing Sabine shell surface options".to_string())?;
-    if shell_surface.size.is_none_or(|(width, height)| {
-        height == 0 || (width == 0 && (!shell_surface.anchor.left || !shell_surface.anchor.right))
-    }) {
-        let (width, height) = shell_surface.size.unwrap_or((0, 0));
-        shell_surface.size = Some((
-            if width == 0 && shell_surface.anchor.left && shell_surface.anchor.right {
-                0
-            } else {
-                config.width.max(1)
-            },
-            height.max(config.height.max(1)),
-        ));
-    }
-    let layer_size = shell_surface
-        .size
-        .unwrap_or((config.width.max(1), config.height.max(1)));
+    let shell_surface = normalized_shell_surface(shell_surface, (config.width, config.height));
+    config.shell_surface = Some(shell_surface.clone());
+    let layer_size = shell_surface.size.expect("normalized shell surface size");
     let mut window_state = WindowState::new(&shell_surface.namespace)
         .with_size(layer_size)
         .with_layer(layer_for_shell(shell_surface.layer))
@@ -65,4 +52,42 @@ pub(crate) fn run(config: OsrHostConfig) -> Result<(), String> {
             host.handle(event, state, id)
         })
         .map_err(|error| error.to_string())
+}
+
+fn normalized_shell_surface(
+    mut shell_surface: sabine_platform::ShellSurfaceOptions,
+    fallback_size: (u32, u32),
+) -> sabine_platform::ShellSurfaceOptions {
+    if shell_surface.size.is_none_or(|(width, height)| {
+        height == 0 || (width == 0 && (!shell_surface.anchor.left || !shell_surface.anchor.right))
+    }) {
+        let (width, height) = shell_surface.size.unwrap_or((0, 0));
+        shell_surface.size = Some((
+            if width == 0 && shell_surface.anchor.left && shell_surface.anchor.right {
+                0
+            } else {
+                fallback_size.0.max(1)
+            },
+            height.max(fallback_size.1.max(1)),
+        ));
+    }
+    shell_surface
+}
+
+#[cfg(test)]
+mod tests {
+    use sabine_platform::{ShellSurfaceAnchor, ShellSurfaceOptions};
+
+    use super::normalized_shell_surface;
+
+    #[test]
+    fn normalized_surface_keeps_stretch_anchors_and_commit_size() {
+        let options = ShellSurfaceOptions::new("shell")
+            .size(0, 0)
+            .anchor(ShellSurfaceAnchor::ALL);
+        let normalized = normalized_shell_surface(options, (1280, 720));
+
+        assert_eq!(normalized.anchor, ShellSurfaceAnchor::ALL);
+        assert_eq!(normalized.size, Some((0, 720)));
+    }
 }

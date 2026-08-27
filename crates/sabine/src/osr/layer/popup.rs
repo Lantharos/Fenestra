@@ -10,7 +10,8 @@ use crate::osr::frame_buffer::buffer_len;
 use crate::osr::protocol::{OsrFrame, OsrPaintBatch, OsrSurface};
 
 use super::buffer::{
-    DamageRect, compose_frames_buffer, paint_buffer_file, paint_frames_buffer_file,
+    DamageRect, compose_frames_buffer, copy_pixels_to_canvas, paint_buffer_file,
+    paint_frames_buffer_file, pixel_stride,
 };
 use super::surface::create_buffer;
 use super::types::{OsrLayerHost, PopupSurface};
@@ -295,11 +296,12 @@ fn prepare_popup_buffer(popup: &mut PopupSurface) -> Option<usize> {
     if pixels.len() != buffer_len(popup.size.0, popup.size.1) {
         return None;
     }
+    let stride = pixel_stride(popup.size.0);
 
     for (index, buffer) in popup.buffers.iter().enumerate() {
         if let Some(canvas) = buffer.canvas(pool) {
-            canvas.copy_from_slice(pixels);
-            return Some(index);
+            return copy_pixels_to_canvas(canvas, pixels, popup.size.0, popup.size.1, stride)
+                .then_some(index);
         }
     }
 
@@ -310,11 +312,13 @@ fn prepare_popup_buffer(popup: &mut PopupSurface) -> Option<usize> {
         .create_buffer(
             popup.size.0 as i32,
             popup.size.1 as i32,
-            (popup.size.0 * 4) as i32,
+            stride as i32,
             wayland_client::protocol::wl_shm::Format::Argb8888,
         )
         .ok()?;
-    canvas.copy_from_slice(pixels);
+    if !copy_pixels_to_canvas(canvas, pixels, popup.size.0, popup.size.1, stride) {
+        return None;
+    }
     popup.buffers.push(buffer);
     Some(popup.buffers.len() - 1)
 }
