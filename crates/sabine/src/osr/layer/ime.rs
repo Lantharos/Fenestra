@@ -12,7 +12,7 @@ impl OsrLayerHost {
             Ime::Commit(text) => {
                 self.send_control(&format!("ime_commit\t{}\n", encode_component(text)));
             }
-            Ime::Preedit(text, selection) if text.is_empty() => {
+            Ime::Preedit(text, _) if text.is_empty() => {
                 self.send_control("ime_cancel\n");
             }
             Ime::Preedit(text, selection) => {
