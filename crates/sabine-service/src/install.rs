@@ -37,11 +37,11 @@ pub struct StagedSystemUpdate {
 pub fn cached_service_path() -> PathBuf {
     current_installation()
         .map(|(_, path)| path.join(service_binary_name()))
-        .unwrap_or_else(|| {
-            versions_dir()
-                .join(env!("CARGO_PKG_VERSION"))
-                .join(service_binary_name())
-        })
+        .unwrap_or_else(|| service_path_for_version(env!("CARGO_PKG_VERSION")))
+}
+
+pub(crate) fn service_path_for_version(version: &str) -> PathBuf {
+    versions_dir().join(version).join(service_binary_name())
 }
 
 pub fn service_daemon_path(service: &Path) -> PathBuf {
@@ -80,8 +80,23 @@ pub fn ensure_service_executable(
     if let Some(path) = configured_service() {
         return Ok(path);
     }
-    if let Some((_, directory)) = current_installation() {
-        return Ok(directory.join(service_binary_name()));
+    if let Some((version, directory)) = current_installation() {
+        let current = directory.join(service_binary_name());
+        if !managed_system_is_older(&version) {
+            return Ok(current);
+        }
+        on_progress(PrepareProgress {
+            stage: PrepareStage::Service,
+            message: "Updating Sabine service".to_string(),
+            fraction: Some(0.02),
+        });
+        if let Some(path) = adjacent_service() {
+            return seed_managed_install(&path);
+        }
+        if let Some(update) = install_latest_system(true, &mut on_progress)? {
+            return Ok(update.service);
+        }
+        return Ok(current);
     }
     if let Some(path) = adjacent_service() {
         return seed_managed_install(&path);
@@ -109,6 +124,10 @@ pub fn ensure_service_executable(
         fraction: Some(0.08),
     });
     Ok(destination)
+}
+
+fn managed_system_is_older(installed: &str) -> bool {
+    crate::types::version_is_newer(env!("CARGO_PKG_VERSION"), installed)
 }
 
 fn configured_service() -> Option<PathBuf> {
@@ -407,4 +426,16 @@ fn make_executable(path: &Path) -> ServiceResult<()> {
     #[cfg(not(unix))]
     let _ = path;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::managed_system_is_older;
+
+    #[test]
+    fn managed_system_upgrade_only_replaces_older_versions() {
+        assert!(managed_system_is_older("0.0.1"));
+        assert!(!managed_system_is_older(env!("CARGO_PKG_VERSION")));
+        assert!(!managed_system_is_older("999.0.0"));
+    }
 }

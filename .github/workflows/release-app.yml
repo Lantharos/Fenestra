@@ -7,6 +7,11 @@ on:
         description: Exact Sabine tag used to build the app
         required: true
         type: string
+      upgrade_from_sabine_version:
+        description: Optional older Sabine tag to seed before the Windows launch test
+        required: false
+        type: string
+        default: ""
     secrets:
       SABINE_UPDATE_SIGNING_KEY:
         description: Base64 Ed25519 seed used to sign app update metadata
@@ -120,6 +125,18 @@ jobs:
           $sabineData = Join-Path $env:LOCALAPPDATA 'Sabine'
           if (Test-Path $sabineData) {
             Remove-Item $sabineData -Recurse -Force
+          }
+          $upgradeFrom = "${{ inputs.upgrade_from_sabine_version }}".TrimStart('v')
+          if ($upgradeFrom) {
+            $oldVersionDir = Join-Path $sabineData "bin/versions/$upgradeFrom"
+            New-Item $oldVersionDir -ItemType Directory -Force | Out-Null
+            $oldArchive = Join-Path $env:RUNNER_TEMP "sabine-system-$upgradeFrom.zip"
+            $oldRelease = "https://github.com/Lantharos/Sabine/releases/download/v$upgradeFrom/sabine-system-windows-x86_64.zip"
+            Invoke-WebRequest $oldRelease -OutFile $oldArchive
+            Expand-Archive $oldArchive -DestinationPath $oldVersionDir
+            $state = @{ schema = 1; active = $upgradeFrom; previous = $null } | ConvertTo-Json
+            $statePath = Join-Path $sabineData 'bin/current.json'
+            [IO.File]::WriteAllText($statePath, $state, [Text.UTF8Encoding]::new($false))
           }
           $log = Join-Path $env:RUNNER_TEMP "sabine-msi-install.log"
           $install = Start-Process msiexec.exe -ArgumentList @('/i', $msi[0].FullName, '/qn', '/norestart', '/l*v', $log) -Wait -PassThru

@@ -8,10 +8,13 @@ use std::{
 };
 
 use crate::{
-    SabineService, ServiceError, ServiceResult, ensure_service_executable, service_daemon_path,
-    service_data_dir,
+    SabineService, ServiceError, ServiceResult, ensure_service_executable,
+    install::service_path_for_version, service_daemon_path, service_data_dir,
 };
-use sabine_runtime::{background_command, configure_background_command};
+use sabine_runtime::configure_background_command;
+
+#[cfg(not(target_os = "linux"))]
+use sabine_runtime::background_command;
 
 use super::{PID_FILE, autostart::install_login_autostart_with, load_policy};
 
@@ -24,65 +27,38 @@ use super::autostart::unload_macos_daemon;
 const DAEMON_STATE_FILE: &str = "daemon-state.json";
 
 pub fn ensure_daemon_running() -> ServiceResult<bool> {
-    if is_daemon_running() {
+    let service = ensure_service_executable(|_| {})?;
+    let expected_version = service_version(&service).ok_or_else(|| {
+        ServiceError::Update(format!(
+            "Sabine service has no version directory: {}",
+            service.display()
+        ))
+    })?;
+    if load_policy().login_autostart {
+        let _ = install_login_autostart_with(&service);
+    }
+    if daemon_state()
+        .is_some_and(|state| state.version == expected_version && process_alive(state.pid as i32))
+    {
         return Ok(true);
     }
-    start_daemon()?;
-    Ok(is_daemon_running())
+    stop_stale_daemon()?;
+    start_daemon_at(&service_daemon_path(&service))?;
+    if wait_for_daemon_version(&expected_version, Duration::from_secs(2)) {
+        Ok(true)
+    } else {
+        Err(ServiceError::Update(
+            "Sabine service did not become ready".to_string(),
+        ))
+    }
 }
 
 pub fn is_daemon_running() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        if Command::new("systemctl")
-            .args(["--user", "is-active", "--quiet", "sabine.service"])
-            .status()
-            .is_ok_and(|status| status.success())
-        {
-            return true;
-        }
-    }
-
-    let pid_path = service_data_dir().join(PID_FILE);
-    let Ok(text) = fs::read_to_string(&pid_path) else {
-        return false;
-    };
-    let Ok(pid) = text.trim().parse::<i32>() else {
-        let _ = fs::remove_file(pid_path);
-        return false;
-    };
-    if process_alive(pid) {
-        true
-    } else {
-        let _ = fs::remove_file(pid_path);
-        false
-    }
+    daemon_state().is_some_and(|state| process_alive(state.pid as i32))
 }
 
 pub fn start_daemon() -> ServiceResult<()> {
-    let service = ensure_service_executable(|_| {})?;
-    let executable = service_daemon_path(&service);
-    let _ = fs::create_dir_all(service_data_dir());
-    let mut command = background_command(&executable);
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    command.spawn().map_err(|error| {
-        ServiceError::Update(format!(
-            "failed to start Sabine service ({}): {error}",
-            executable.display()
-        ))
-    })?;
-    for _ in 0..40 {
-        if is_daemon_running() {
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    Err(ServiceError::Update(
-        "Sabine service did not become ready".to_string(),
-    ))
+    ensure_daemon_running().map(|_| ())
 }
 
 pub fn run_daemon() -> ServiceResult<()> {
@@ -185,6 +161,7 @@ fn begin_system_handoff(update: &crate::StagedSystemUpdate) -> ServiceResult<()>
 }
 
 fn start_daemon_at(executable: &Path) -> ServiceResult<()> {
+    let _ = fs::create_dir_all(service_data_dir());
     let mut command = Command::new(executable);
     command
         .stdin(Stdio::null())
@@ -197,6 +174,140 @@ fn start_daemon_at(executable: &Path) -> ServiceResult<()> {
             executable.display()
         ))
     })
+}
+
+fn service_version(service: &Path) -> Option<String> {
+    let parent = service.parent()?;
+    if parent.parent()?.file_name()?.to_str()? == "versions" {
+        return parent.file_name()?.to_str().map(ToString::to_string);
+    }
+    Some(env!("CARGO_PKG_VERSION").to_string())
+}
+
+fn stop_stale_daemon() -> ServiceResult<()> {
+    let Some(state) = daemon_state().filter(|state| process_alive(state.pid as i32)) else {
+        return Ok(());
+    };
+    let expected = service_daemon_path(&service_path_for_version(&state.version));
+    let Some(actual) = process_executable(state.pid) else {
+        return Err(ServiceError::Update(format!(
+            "could not verify stale Sabine service {} before stopping it",
+            state.pid
+        )));
+    };
+    if !same_executable(&actual, &expected) {
+        let _ = fs::remove_file(service_data_dir().join(PID_FILE));
+        let _ = fs::remove_file(service_data_dir().join(DAEMON_STATE_FILE));
+        return Ok(());
+    }
+    terminate_process(state.pid)?;
+    for _ in 0..40 {
+        if !process_alive(state.pid as i32) {
+            let _ = fs::remove_file(service_data_dir().join(PID_FILE));
+            let _ = fs::remove_file(service_data_dir().join(DAEMON_STATE_FILE));
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Err(ServiceError::Update(format!(
+        "stale Sabine service {} did not stop",
+        state.pid
+    )))
+}
+
+fn same_executable(left: &Path, right: &Path) -> bool {
+    let left = fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
+    let right = fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
+    #[cfg(windows)]
+    {
+        return left
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy());
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn process_executable(pid: u32) -> Option<PathBuf> {
+    fs::read_link(format!("/proc/{pid}/exe")).ok()
+}
+
+#[cfg(target_os = "macos")]
+fn process_executable(pid: u32) -> Option<PathBuf> {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .ok()?;
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!path.is_empty()).then(|| PathBuf::from(path))
+}
+
+#[cfg(windows)]
+fn process_executable(pid: u32) -> Option<PathBuf> {
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+    use windows::{
+        Win32::{
+            Foundation::CloseHandle,
+            System::Threading::{
+                OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+                QueryFullProcessImageNameW,
+            },
+        },
+        core::PWSTR,
+    };
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let mut buffer = vec![0_u16; 32_768];
+    let mut length = buffer.len() as u32;
+    let result = unsafe {
+        QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(buffer.as_mut_ptr()),
+            &mut length,
+        )
+    };
+    let _ = unsafe { CloseHandle(process) };
+    result
+        .ok()
+        .map(|_| PathBuf::from(OsString::from_wide(&buffer[..length as usize])))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn process_executable(_pid: u32) -> Option<PathBuf> {
+    None
+}
+
+#[cfg(unix)]
+fn terminate_process(pid: u32) -> ServiceResult<()> {
+    let result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error().into())
+    }
+}
+
+#[cfg(windows)]
+fn terminate_process(pid: u32) -> ServiceResult<()> {
+    use windows::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess},
+    };
+    let process = unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) }
+        .map_err(|error| ServiceError::Update(error.to_string()))?;
+    let result = unsafe { TerminateProcess(process, 0) };
+    let _ = unsafe { CloseHandle(process) };
+    result.map_err(|error| ServiceError::Update(error.to_string()))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn terminate_process(_pid: u32) -> ServiceResult<()> {
+    Err(ServiceError::Update(
+        "stopping a stale Sabine service is unsupported on this platform".to_string(),
+    ))
 }
 
 fn wait_for_daemon_version(version: &str, timeout: Duration) -> bool {
@@ -332,5 +443,23 @@ fn process_alive(pid: i32) -> bool {
     {
         let _ = pid;
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::service_version;
+    use std::path::Path;
+
+    #[test]
+    fn service_version_distinguishes_managed_and_adjacent_binaries() {
+        assert_eq!(
+            service_version(Path::new("Sabine/bin/versions/0.1.14/sabine-service")),
+            Some("0.1.14".to_string())
+        );
+        assert_eq!(
+            service_version(Path::new("target/debug/sabine-service")),
+            Some(env!("CARGO_PKG_VERSION").to_string())
+        );
     }
 }

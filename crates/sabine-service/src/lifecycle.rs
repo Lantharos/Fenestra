@@ -83,10 +83,6 @@ pub fn ensure_ready_with_runtime(
     let policy = load_policy();
     let _ = save_policy(&policy);
 
-    if policy.login_autostart {
-        let _ = install_login_autostart();
-    }
-
     let daemon_running = ensure_daemon_running().unwrap_or(false);
     let service = SabineService::default().with_runtime(runtime);
     let report = service.maintain()?;
@@ -180,9 +176,6 @@ pub fn prepare_machine_with_progress(
         });
     })?;
 
-    if policy.login_autostart {
-        let _ = install_login_autostart();
-    }
     let daemon_running = ensure_daemon_running().unwrap_or(false);
 
     let registered_app = if let Some(manifest) = register {
