@@ -24,7 +24,9 @@ fn notes_sabine_toml(name: &str) -> String {
 }
 
 fn notes_main_rs() -> &'static str {
-    r#"use sabine::prelude::*;
+    r#"#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
+use sabine::prelude::*;
 
 fn main() {
     SabineWindow::main(|window| {

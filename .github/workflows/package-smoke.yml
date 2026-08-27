@@ -55,7 +55,9 @@ jobs:
           fi
       - name: Install Windows packaging dependencies
         if: runner.os == 'Windows'
-        run: dotnet tool install --global wix --version 6.0.2
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          choco install imagemagick --yes --no-progress
       - name: Generate real app and signing key
         shell: pwsh
         run: |
@@ -85,6 +87,50 @@ jobs:
           $manifest = Get-Content dist/sabine-update.json -Raw | ConvertFrom-Json
           if ([string]::IsNullOrWhiteSpace($manifest.signature)) {
             throw "release manifest signature is missing"
+          }
+      - name: Install and launch Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msi = @(Get-ChildItem dist/artifacts -Filter *.msi -File)
+          $stagedExe = @(Get-ChildItem dist/msi -Filter *.exe -File -Recurse)
+          if ($msi.Count -ne 1 -or $stagedExe.Count -ne 1) {
+            throw "expected one MSI and one staged executable"
+          }
+          $headers = (& llvm-objdump --private-headers $stagedExe[0].FullName 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0) {
+            throw "llvm-objdump could not inspect the staged executable"
+          }
+          if ($headers -match '(?i)(VCRUNTIME|MSVCP|api-ms-win-crt)') {
+            throw "Windows executable still depends on the redistributable C runtime"
+          }
+          if ($headers -notmatch '(?i)Subsystem\s+00000002\s+\(Windows GUI\)') {
+            throw "Windows executable is not marked as a GUI application"
+          }
+          $wixSource = Get-Content (Get-ChildItem dist/msi -Filter installer.wxs -File -Recurse | Select-Object -First 1) -Raw
+          if ($wixSource -notmatch '<Icon Id="AppIcon.ico"' -or $wixSource -notmatch 'Icon="AppIcon.ico"') {
+            throw "MSI shortcut icon metadata is missing"
+          }
+          $log = Join-Path $env:RUNNER_TEMP "sabine-msi-install.log"
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', $msi[0].FullName, '/qn', '/norestart', '/l*v', $log) -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            Get-Content $log -Tail 100
+            throw "MSI installation failed with exit code $($install.ExitCode)"
+          }
+          $appDir = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'release-probe'
+          $installedExe = Get-ChildItem $appDir -Filter *.exe -File | Select-Object -First 1
+          if ($null -eq $installedExe -or -not (Test-Path (Join-Path $appDir 'resources/windows-app.ico'))) {
+            throw "MSI did not install the x64 application and icon under Program Files"
+          }
+          try {
+            $app = Start-Process $installedExe.FullName -PassThru
+            Start-Sleep -Seconds 8
+            if ($app.HasExited) {
+              throw "installed application exited during launch with code $($app.ExitCode)"
+            }
+            Stop-Process -Id $app.Id -Force
+          } finally {
+            Start-Process msiexec.exe -ArgumentList @('/x', $msi[0].FullName, '/qn', '/norestart') -Wait
           }
       - uses: actions/upload-artifact@v7
         with:

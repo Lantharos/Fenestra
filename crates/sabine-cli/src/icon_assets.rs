@@ -1,8 +1,11 @@
 use std::{
     env, fs,
+    io::{Cursor, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
+
+use image::{DynamicImage, ImageFormat, ImageReader, RgbaImage, imageops};
 
 const ICON_SIZES: &[u32] = &[16, 24, 32, 48, 64, 128, 256, 512, 1024];
 
@@ -21,6 +24,54 @@ pub fn stage_icon_set(app_id: &str, icon: &Path, destination: &Path) -> Result<(
         return Ok(());
     }
     install_icon_set(app_id, icon, destination)
+}
+
+pub fn stage_windows_icon(
+    app_id: &str,
+    icon: &Path,
+    icon_set: &Path,
+    destination: &Path,
+) -> Result<(), String> {
+    if icon
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ico"))
+    {
+        return copy_file(icon, destination);
+    }
+    let rendered = icon_set.join("256x256/apps").join(format!("{app_id}.png"));
+    let source = if rendered.is_file() { &rendered } else { icon };
+    let image = ImageReader::open(source)
+        .map_err(|error| format!("failed to open Windows icon {}: {error}", source.display()))?
+        .with_guessed_format()
+        .map_err(|error| format!("failed to identify Windows icon {}: {error}", source.display()))?
+        .decode()
+        .map_err(|error| {
+            format!(
+                "failed to decode Windows icon {}: {error}; install ImageMagick when using SVG icons",
+                source.display()
+            )
+        })?;
+    let image = image.thumbnail(256, 256).into_rgba8();
+    let mut canvas = RgbaImage::new(256, 256);
+    imageops::overlay(
+        &mut canvas,
+        &image,
+        i64::from((256 - image.width()) / 2),
+        i64::from((256 - image.height()) / 2),
+    );
+    let mut png = Cursor::new(Vec::new());
+    DynamicImage::ImageRgba8(canvas)
+        .write_to(&mut png, ImageFormat::Png)
+        .map_err(|error| format!("failed to encode Windows icon: {error}"))?;
+    let png = png.into_inner();
+    let mut ico = Vec::with_capacity(22 + png.len());
+    ico.extend_from_slice(&[0, 0, 1, 0, 1, 0]);
+    ico.extend_from_slice(&[0, 0, 0, 0, 1, 0, 32, 0]);
+    ico.extend_from_slice(&(png.len() as u32).to_le_bytes());
+    ico.extend_from_slice(&22_u32.to_le_bytes());
+    ico.write_all(&png)
+        .map_err(|error| format!("failed to assemble Windows icon: {error}"))?;
+    copy_bytes(&ico, destination)
 }
 
 fn install_icon_set(app_id: &str, icon: &Path, root: &Path) -> Result<(), String> {
@@ -111,6 +162,13 @@ fn copy_file(source: &Path, destination: &Path) -> Result<(), String> {
     }
     fs::copy(source, destination).map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn copy_bytes(bytes: &[u8], destination: &Path) -> Result<(), String> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(destination, bytes).map_err(|error| error.to_string())
 }
 
 fn extension(path: &Path) -> Result<String, String> {

@@ -191,8 +191,22 @@ cp -a "%{{sabine_source}}/." "%{{buildroot}}/"
     )
 }
 
-pub(super) fn wix_source(app: &BundleApp, staged_app_dir: &str, executable: &str) -> String {
+pub(super) fn wix_source(
+    app: &BundleApp,
+    staged_app_dir: &str,
+    executable: &str,
+    icon: Option<&str>,
+) -> String {
     let upgrade_code = deterministic_guid(&app.id);
+    let icon_element = icon
+        .map(|icon| {
+            format!(
+                "    <Icon Id=\"AppIcon.ico\" SourceFile=\"{}\"/>\n",
+                xml(icon)
+            )
+        })
+        .unwrap_or_default();
+    let shortcut_icon = icon.map(|_| r#" Icon="AppIcon.ico""#).unwrap_or_default();
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
@@ -204,12 +218,13 @@ pub(super) fn wix_source(app: &BundleApp, staged_app_dir: &str, executable: &str
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder"/>
+{}
     <Files Include="{}\**" Directory="INSTALLFOLDER">
       <Exclude Files="{}\{}"/>
     </Files>
     <Component Id="MainExecutable" Directory="INSTALLFOLDER" Guid="*">
       <File Id="MainExecutableFile" Source="{}\{}" KeyPath="yes">
-        <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="{}" Description="{}" Advertise="yes" WorkingDirectory="INSTALLFOLDER"/>
+        <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="{}" Description="{}" Advertise="yes" WorkingDirectory="INSTALLFOLDER"{}/>
       </File>
     </Component>
   </Package>
@@ -219,13 +234,15 @@ pub(super) fn wix_source(app: &BundleApp, staged_app_dir: &str, executable: &str
         xml(&app.version),
         upgrade_code,
         xml(&app.name),
+        icon_element,
         xml(staged_app_dir),
         xml(staged_app_dir),
         xml(executable),
         xml(staged_app_dir),
         xml(executable),
         xml(&app.name),
-        xml(&app.name)
+        xml(&app.name),
+        shortcut_icon
     )
 }
 
@@ -262,10 +279,24 @@ pub(super) fn nsis_script(
     staged_app_dir: &str,
     executable: &str,
     output: &str,
+    icon: Option<&str>,
 ) -> String {
+    let installer_icon = icon
+        .map(|icon| format!("Icon \"{icon}\"\n"))
+        .unwrap_or_default();
+    let shortcut_icon = icon
+        .map(|_| " \"\" \"$INSTDIR\\resources\\windows-app.ico\"")
+        .unwrap_or_default();
     format!(
-        "Name \"{}\"\nOutFile \"{}\"\nInstallDir \"$PROGRAMFILES64\\{}\"\nSection\nSetOutPath \"$INSTDIR\"\nFile /r \"{}/*\"\nCreateShortcut \"$DESKTOP\\{}.lnk\" \"$INSTDIR\\{}\"\nSectionEnd\n",
-        app.name, output, app.name, staged_app_dir, app.name, executable
+        "Name \"{}\"\nOutFile \"{}\"\n{}InstallDir \"$PROGRAMFILES64\\{}\"\nSection\nSetOutPath \"$INSTDIR\"\nFile /r \"{}/*\"\nCreateShortcut \"$DESKTOP\\{}.lnk\" \"$INSTDIR\\{}\"{}\nSectionEnd\n",
+        app.name,
+        output,
+        installer_icon,
+        app.name,
+        staged_app_dir,
+        app.name,
+        executable,
+        shortcut_icon
     )
 }
 

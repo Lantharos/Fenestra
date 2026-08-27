@@ -46,6 +46,8 @@ sabine dev
 Generated apps look like this:
 
 ```rust
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 use sabine::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -196,6 +198,10 @@ downloads updates in the background. Sabine-managed archives activate side by si
 bootstrap forwards to the current release on the next launch. Native packages are staged silently,
 then offer Install or Later when the app next opens. Accepting closes the app, requests elevation
 when needed, installs, and relaunches it. Store installs remain owned by the store.
+
+Windows bundles statically link the Microsoft C runtime. MSI packages are x64, install under
+`Program Files`, and use the configured app icon for their Start menu shortcut. The release workflow
+installs and launches the MSI before publishing it.
 
 Pass `--offline` to `sabine bundle` to include a working CEF runtime and Sabine system bootstrap.
 The embedded system is adopted into the same versioned installation on first launch, then resumes

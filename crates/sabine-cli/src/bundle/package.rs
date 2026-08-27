@@ -230,9 +230,16 @@ fn package_msi(
     let wxs = staged.root.join("installer.wxs");
     let artifact = artifact_path(app, staged, BundleFormat::Msi, "msi");
     let source_dir = fs::canonicalize(&staged.app_dir).map_err(|error| error.to_string())?;
+    let icon = source_dir.join("resources/windows-app.ico");
+    let icon = icon.is_file().then(|| icon.display().to_string());
     fs::write(
         &wxs,
-        wix_source(app, &source_dir.display().to_string(), &staged.executable),
+        wix_source(
+            app,
+            &source_dir.display().to_string(),
+            &staged.executable,
+            icon.as_deref(),
+        ),
     )
     .map_err(|error| error.to_string())?;
     if command_exists("wix") {
@@ -240,6 +247,7 @@ fn package_msi(
         let _ = fs::remove_file(artifact.with_extension("wixpdb"));
         run(Command::new("wix")
             .arg("build")
+            .args(["-arch", "x64"])
             .arg("-wx")
             .args(["-pdbtype", "none"])
             .arg(&wxs)
@@ -251,7 +259,11 @@ fn package_msi(
             &staged.root.join("build-msi.sh"),
             &shell_script(&[
                 &mkdir_parent_line(&artifact),
-                &format!("wix build '{}' -o '{}'", wxs.display(), artifact.display()),
+                &format!(
+                    "wix build -arch x64 '{}' -o '{}'",
+                    wxs.display(),
+                    artifact.display()
+                ),
             ]),
         )?;
         result
@@ -268,6 +280,8 @@ fn package_exe(
 ) -> Result<(), String> {
     let script = staged.root.join("installer.nsi");
     let artifact = artifact_path(app, staged, BundleFormat::Exe, "exe");
+    let icon = staged.app_dir.join("resources/windows-app.ico");
+    let icon = icon.is_file().then(|| icon.display().to_string());
     fs::write(
         &script,
         nsis_script(
@@ -275,6 +289,7 @@ fn package_exe(
             &staged.app_dir.display().to_string(),
             &staged.executable,
             &artifact.display().to_string(),
+            icon.as_deref(),
         ),
     )
     .map_err(|error| error.to_string())?;

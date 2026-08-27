@@ -74,13 +74,67 @@ jobs:
           fi
       - name: Install Windows packaging dependencies
         if: runner.os == 'Windows'
-        run: dotnet tool install --global wix --version 6.0.2
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          choco install imagemagick --yes --no-progress
       - name: Install matching Sabine CLI
         run: cargo install --git https://github.com/Lantharos/Sabine --tag "${{ inputs.sabine_version }}" sabine-cli
       - name: Bundle application
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: sabine bundle . --target "${{ matrix.target }}" --release
+      - name: Verify installed Windows application
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msi = @(Get-ChildItem dist/artifacts -Filter *.msi -File)
+          $stagedExe = @(Get-ChildItem dist/msi -Filter *.exe -File -Recurse)
+          if ($msi.Count -ne 1 -or $stagedExe.Count -ne 1) {
+            throw "expected one MSI and one staged executable"
+          }
+          $headers = (& llvm-objdump --private-headers $stagedExe[0].FullName 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0) {
+            throw "llvm-objdump could not inspect the staged executable"
+          }
+          if ($headers -match '(?i)(VCRUNTIME|MSVCP|api-ms-win-crt)') {
+            throw "Windows executable still depends on the redistributable C runtime"
+          }
+          if ($headers -notmatch '(?i)Subsystem\s+00000002\s+\(Windows GUI\)') {
+            throw "Windows executable is not marked as a GUI application"
+          }
+          $wixSource = Get-Content (Get-ChildItem dist/msi -Filter installer.wxs -File -Recurse | Select-Object -First 1) -Raw
+          $config = Get-Content Sabine.toml -Raw
+          if ($config -match '(?m)^icon\s*=\s*"' -and ($wixSource -notmatch '<Icon Id="AppIcon.ico"' -or $wixSource -notmatch 'Icon="AppIcon.ico"')) {
+            throw "MSI shortcut icon metadata is missing"
+          }
+          if ($config -notmatch '(?ms)\[app\].*?^name\s*=\s*"([^"]+)"') {
+            throw "Sabine.toml app name is missing"
+          }
+          $appName = $Matches[1]
+          $log = Join-Path $env:RUNNER_TEMP "sabine-msi-install.log"
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', $msi[0].FullName, '/qn', '/norestart', '/l*v', $log) -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            Get-Content $log -Tail 100
+            throw "MSI installation failed with exit code $($install.ExitCode)"
+          }
+          $appDir = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) $appName
+          $installedExe = Get-ChildItem $appDir -Filter *.exe -File | Select-Object -First 1
+          if ($null -eq $installedExe) {
+            throw "MSI did not install the x64 application under Program Files"
+          }
+          if ($config -match '(?m)^icon\s*=\s*"' -and -not (Test-Path (Join-Path $appDir 'resources/windows-app.ico'))) {
+            throw "MSI did not install the application icon"
+          }
+          try {
+            $app = Start-Process $installedExe.FullName -PassThru
+            Start-Sleep -Seconds 8
+            if ($app.HasExited) {
+              throw "installed application exited during launch with code $($app.ExitCode)"
+            }
+            Stop-Process -Id $app.Id -Force
+          } finally {
+            Start-Process msiexec.exe -ArgumentList @('/x', $msi[0].FullName, '/qn', '/norestart') -Wait
+          }
       - name: Name release asset
         shell: pwsh
         run: |

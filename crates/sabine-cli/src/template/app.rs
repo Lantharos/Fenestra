@@ -121,7 +121,9 @@ fn app_tsconfig() -> &'static str {
 }
 
 fn app_main_rs() -> &'static str {
-    r#"use sabine::prelude::*;
+    r#"#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
+use sabine::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]

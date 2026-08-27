@@ -2778,6 +2778,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "getrandom 0.4.3",
+ "image",
  "libc",
  "sabine-host",
  "sabine-runtime",

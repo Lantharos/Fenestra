@@ -204,6 +204,14 @@ fn stage_windows(
         _ => None,
     };
     stage_resources(app, &resources, install_mode, package_kind)?;
+    if let Some(icon) = app.icon.as_ref().filter(|icon| icon.is_file()) {
+        icon_assets::stage_windows_icon(
+            &app.id,
+            icon,
+            &resources.join("icons"),
+            &resources.join("windows-app.ico"),
+        )?;
+    }
     Ok(app_dir)
 }
 

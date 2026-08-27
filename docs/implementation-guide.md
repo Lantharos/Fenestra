@@ -315,6 +315,10 @@ metadata, and invokes a local package tool when available. Apps do not locate or
 
 Supported targets are portable, Linux directory, deb, rpm, AppImage, Windows directory, exe, msi,
 macOS app, and dmg. Cross-host staging is allowed; signing and notarization remain deployment policy.
+Windows builds statically link the Microsoft C runtime. MSI output is explicitly x64, carries the
+configured icon into its Start menu shortcut, and is installed and launched by the release workflow
+before publication. Raster icons are encoded directly; SVG packaging requires ImageMagick so the
+CLI can generate Windows and freedesktop raster icon sizes.
 
 Source installs are development conveniences. They stage assets and a launcher under the Sabine data
 directory, register the app with the service, and create platform launch metadata.

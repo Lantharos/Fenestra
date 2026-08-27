@@ -215,6 +215,9 @@ fn build_rust(app: &BundleApp, format: BundleFormat, release: bool) -> Result<()
     if let Some(rust_target) = target.and_then(BuildTarget::rust_target) {
         command.arg("--target").arg(rust_target);
     }
+    if target == Some(BuildTarget::Windows) {
+        enable_static_windows_crt(&mut command);
+    }
     command.env(
         "SABINE_BUILD_TARGET",
         target.map(BuildTarget::as_str).unwrap_or("native"),
@@ -230,6 +233,24 @@ fn build_rust(app: &BundleApp, format: BundleFormat, release: bool) -> Result<()
             target.map(BuildTarget::as_str).unwrap_or("native")
         ))
     }
+}
+
+fn enable_static_windows_crt(command: &mut Command) {
+    const STATIC_CRT_FLAGS: &str = "-C\x1ftarget-feature=+crt-static";
+    if let Some(mut flags) = std::env::var_os("CARGO_ENCODED_RUSTFLAGS") {
+        if !flags.is_empty() {
+            flags.push("\x1f");
+        }
+        flags.push(STATIC_CRT_FLAGS);
+        command.env("CARGO_ENCODED_RUSTFLAGS", flags);
+        return;
+    }
+    let mut flags = std::env::var("RUSTFLAGS").unwrap_or_default();
+    if !flags.is_empty() {
+        flags.push(' ');
+    }
+    flags.push_str("-C target-feature=+crt-static");
+    command.env("RUSTFLAGS", flags);
 }
 
 fn shell_command(command: &str) -> Command {
