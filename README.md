@@ -201,7 +201,8 @@ when needed, installs, and relaunches it. Store installs remain owned by the sto
 
 Windows bundles statically link the Microsoft C runtime. MSI packages are x64, install under
 `Program Files`, and use the configured app icon for their Start menu shortcut. The release workflow
-installs and launches the MSI before publishing it.
+installs and launches the MSI before publishing it. Windows bundle targets are linked as GUI apps,
+so existing apps do not need source-level linker configuration to avoid a console window.
 
 Pass `--offline` to `sabine bundle` to include a working CEF runtime and Sabine system bootstrap.
 The embedded system is adopted into the same versioned installation on first launch, then resumes

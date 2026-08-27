@@ -216,7 +216,7 @@ fn build_rust(app: &BundleApp, format: BundleFormat, release: bool) -> Result<()
         command.arg("--target").arg(rust_target);
     }
     if target == Some(BuildTarget::Windows) {
-        enable_static_windows_crt(&mut command);
+        configure_windows_linking(&mut command);
     }
     command.env(
         "SABINE_BUILD_TARGET",
@@ -235,13 +235,14 @@ fn build_rust(app: &BundleApp, format: BundleFormat, release: bool) -> Result<()
     }
 }
 
-fn enable_static_windows_crt(command: &mut Command) {
-    const STATIC_CRT_FLAGS: &str = "-C\x1ftarget-feature=+crt-static";
+fn configure_windows_linking(command: &mut Command) {
+    const WINDOWS_FLAGS: &str =
+        "-C\x1ftarget-feature=+crt-static\x1f-C\x1flink-arg=/SUBSYSTEM:WINDOWS";
     if let Some(mut flags) = std::env::var_os("CARGO_ENCODED_RUSTFLAGS") {
         if !flags.is_empty() {
             flags.push("\x1f");
         }
-        flags.push(STATIC_CRT_FLAGS);
+        flags.push(WINDOWS_FLAGS);
         command.env("CARGO_ENCODED_RUSTFLAGS", flags);
         return;
     }
@@ -249,7 +250,7 @@ fn enable_static_windows_crt(command: &mut Command) {
     if !flags.is_empty() {
         flags.push(' ');
     }
-    flags.push_str("-C target-feature=+crt-static");
+    flags.push_str("-C target-feature=+crt-static -C link-arg=/SUBSYSTEM:WINDOWS");
     command.env("RUSTFLAGS", flags);
 }
 
