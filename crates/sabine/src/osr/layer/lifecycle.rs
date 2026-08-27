@@ -1,4 +1,3 @@
-use super::shell::keyboard_for_shell;
 use super::types::{LayerLifecycleState, OsrLayerHost};
 use layershellev::WindowState;
 
@@ -93,7 +92,6 @@ impl OsrLayerHost {
     }
 
     pub(super) fn show_surface(&mut self, state: &mut WindowState<()>) {
-        self.restore_keyboard(state);
         self.force_resume("visible");
         self.send_resize();
         if self.pointer_inside {
@@ -103,9 +101,9 @@ impl OsrLayerHost {
             self.finish_loading(state);
         }
         if self.loading.is_some() {
-            self.refresh_loading(state, None);
+            self.refresh_loading(state);
         } else if self.main_frame_ready() {
-            self.refresh_surface(state, None);
+            self.refresh_surface(state);
         } else {
             self.hide_surface(state);
         }
@@ -120,7 +118,6 @@ impl OsrLayerHost {
         self.send_control("focus\t0\n");
         self.force_suspend("hidden");
         self.send_resize();
-        self.set_surface_alpha(0.0, state);
         self.hide_surface(state);
         if !self.config.lifecycle.retain_hidden_frame {
             self.release_hidden_frame_memory();
@@ -129,17 +126,12 @@ impl OsrLayerHost {
 
     pub(super) fn set_surface_alpha(&mut self, alpha: f32, state: &WindowState<()>) {
         let alpha = alpha.clamp(0.0, 1.0);
-        if self.alpha_modifier.is_some() && (self.surface_alpha - alpha).abs() <= 0.001 {
+        if (self.surface_alpha - alpha).abs() <= 0.001 {
             return;
         }
-        if self.alpha_modifier.is_none() {
-            self.alpha_modifier = super::alpha::LayerAlphaModifier::bind(state);
-        }
         self.surface_alpha = alpha;
-        if let Some(modifier) = &self.alpha_modifier
-            && modifier.set_alpha(alpha)
-        {
-            self.commit_layer_state(state.main_window());
+        if self.surface_mapped {
+            self.commit_layer_state(state);
         }
     }
 
@@ -155,18 +147,9 @@ impl OsrLayerHost {
             return;
         }
         shell_surface.margin = margin;
-        state
-            .main_window()
-            .set_margin((margin.top, margin.right, margin.bottom, margin.left));
-    }
-
-    pub(super) fn restore_keyboard(&self, state: &mut WindowState<()>) {
-        let Some(shell_surface) = self.config.shell_surface.as_ref() else {
-            return;
-        };
-        state
-            .main_window()
-            .set_keyboard_interactivity(keyboard_for_shell(shell_surface.keyboard_interactivity));
+        if self.surface_mapped {
+            self.commit_layer_state(state);
+        }
     }
 
     pub(super) fn begin_close(&mut self) {

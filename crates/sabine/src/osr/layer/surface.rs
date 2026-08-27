@@ -1,7 +1,6 @@
 use std::{fs::File, os::fd::AsFd};
 
 use layershellev::{WindowState, reexport::wl_shm};
-use sabine_platform::ShellSurfaceKeyboardInteractivity;
 use smithay_client_toolkit::shm::{Shm, slot::SlotPool};
 use wayland_client::{Proxy, QueueHandle, protocol::wl_buffer::WlBuffer};
 
@@ -11,12 +10,18 @@ use crate::osr::protocol::{OsrPaintBatch, OsrSurface};
 use super::buffer::{
     DamageRect, compose_frames_buffer, copy_pixels_to_canvas, paint_buffer_file, pixel_stride,
 };
-use super::shell::keyboard_for_shell;
+use super::shell::{anchor_for_shell, keyboard_for_shell, layer_for_shell};
 use super::types::OsrLayerHost;
 
 const MAX_MAIN_BUFFERS: usize = 4;
 
 impl OsrLayerHost {
+    pub(super) fn install_shm(&mut self, shm: wl_shm::WlShm, qh: QueueHandle<WindowState<()>>) {
+        self.reset_main_pool(&shm, buffer_len(self.buffer_size.0, self.buffer_size.1));
+        self.shm = Some(shm);
+        self.queue_handle = Some(qh);
+    }
+
     pub(super) fn cache_hidden_main_frame(&mut self, frame: crate::osr::protocol::OsrFrame) {
         if frame.surface != OsrSurface::Main {
             return;
@@ -111,11 +116,7 @@ impl OsrLayerHost {
         self.reset_main_pool(&shm, buffer_len(width, height));
     }
 
-    pub(super) fn refresh_surface(
-        &mut self,
-        state: &mut WindowState<()>,
-        id: Option<layershellev::id::Id>,
-    ) {
+    pub(super) fn refresh_surface(&mut self, state: &mut WindowState<()>) {
         if !self.visible || !self.main_frame_ready() {
             return;
         }
@@ -129,13 +130,7 @@ impl OsrLayerHost {
         if self.presentation_full_damage {
             damage = DamageRect::full(self.buffer_size.0, self.buffer_size.1);
         }
-        if let Some(id) = id
-            && let Some(unit) = state.get_unit_with_id(id)
-        {
-            self.commit_surface(unit, damage);
-            return;
-        }
-        self.commit_surface(state.main_window(), damage);
+        self.commit_surface(state, damage);
     }
 
     pub(super) fn refresh_batch_surface(
@@ -170,7 +165,7 @@ impl OsrLayerHost {
         if self.main_frame_ready() && self.loading.is_some() {
             self.finish_loading(state);
         }
-        if self.loading.is_some() && self.refresh_loading(state, id) {
+        if self.loading.is_some() && self.refresh_loading(state) {
             return None;
         }
         self.prepare_tooltip_buffer();
@@ -180,15 +175,8 @@ impl OsrLayerHost {
         if !self.main_frame_ready() {
             return None;
         }
-        self.restore_keyboard(state);
         self.force_resume("first-paint");
-        if let Some(id) = id
-            && let Some(unit) = state.get_unit_with_id(id)
-        {
-            self.commit_surface(unit, damage);
-            return None;
-        }
-        self.commit_surface(state.main_window(), damage);
+        self.commit_surface(state, damage);
         None
     }
 
@@ -197,13 +185,11 @@ impl OsrLayerHost {
             return;
         }
         let unit = state.main_window();
-        self.ensure_layer_unit_size(unit);
-        unit.set_keyboard_interactivity(keyboard_for_shell(
-            ShellSurfaceKeyboardInteractivity::None,
-        ));
         unit.get_wlsurface().attach(None, 0, 0);
         unit.get_wlsurface().commit();
-        flush_surface(unit.get_wlsurface());
+        if !flush_surface(unit.get_wlsurface()) {
+            self.wayland_failed = true;
+        }
         self.surface_mapped = false;
     }
 
@@ -226,12 +212,11 @@ impl OsrLayerHost {
         self.scratch = Vec::new();
     }
 
-    pub(super) fn commit_surface(
-        &mut self,
-        unit: &layershellev::WindowStateUnit<()>,
-        damage: DamageRect,
-    ) {
-        self.ensure_layer_unit_size(unit);
+    pub(super) fn commit_surface(&mut self, state: &WindowState<()>, damage: DamageRect) {
+        if !self.surface_mapped {
+            self.restore_layer_state(state);
+        }
+        let unit = state.main_window();
         let damage = if self.surface_mapped && !self.pending_surface_refresh {
             damage
         } else {
@@ -253,35 +238,29 @@ impl OsrLayerHost {
             damage.height as i32,
         );
         surface.commit();
-        flush_surface(surface);
+        if !flush_surface(surface) {
+            self.wayland_failed = true;
+        }
         self.pending_surface_refresh = false;
         self.surface_mapped = true;
         self.presentation_full_damage = false;
     }
 
-    pub(super) fn commit_layer_state(&self, unit: &layershellev::WindowStateUnit<()>) {
-        self.ensure_layer_unit_size(unit);
-        let surface = unit.get_wlsurface();
+    pub(super) fn commit_layer_state(&mut self, state: &WindowState<()>) {
+        self.restore_layer_state(state);
+        let surface = state.main_window().get_wlsurface();
         surface.commit();
-        flush_surface(surface);
+        if !flush_surface(surface) {
+            self.wayland_failed = true;
+        }
     }
 
-    pub(super) fn commit_pending_surface(
-        &mut self,
-        state: &mut WindowState<()>,
-        id: Option<layershellev::id::Id>,
-    ) {
+    pub(super) fn commit_pending_surface(&mut self, state: &mut WindowState<()>) {
         if !self.pending_surface_refresh || !self.visible || !self.main_frame_ready() {
             return;
         }
         let damage = DamageRect::full(self.buffer_size.0, self.buffer_size.1);
-        if let Some(id) = id
-            && let Some(unit) = state.get_unit_with_id(id)
-        {
-            self.commit_surface(unit, damage);
-            return;
-        }
-        self.commit_surface(state.main_window(), damage);
+        self.commit_surface(state, damage);
     }
 
     fn reset_main_pool(&mut self, shm: &wl_shm::WlShm, byte_len: usize) {
@@ -339,9 +318,29 @@ impl OsrLayerHost {
         Some(self.main_buffers.len() - 1)
     }
 
-    fn ensure_layer_unit_size(&self, unit: &layershellev::WindowStateUnit<()>) {
+    fn restore_layer_state(&mut self, state: &WindowState<()>) {
+        let Some(shell_surface) = self.config.shell_surface.clone() else {
+            return;
+        };
+        let unit = state.main_window();
         let (width, height) = self.layer_commit_size();
-        unit.set_size((width, height));
+        unit.set_anchor_with_size(anchor_for_shell(shell_surface.anchor), (width, height));
+        unit.set_margin((
+            shell_surface.margin.top,
+            shell_surface.margin.right,
+            shell_surface.margin.bottom,
+            shell_surface.margin.left,
+        ));
+        unit.set_layer(layer_for_shell(shell_surface.layer));
+        unit.set_exclusive_zone(shell_surface.exclusive_zone.unwrap_or_default());
+        unit.set_keyboard_interactivity(keyboard_for_shell(shell_surface.keyboard_interactivity));
+        if self.alpha_modifier.is_none() {
+            self.alpha_modifier = super::alpha::LayerAlphaModifier::bind(state);
+        }
+        if let Some(modifier) = &self.alpha_modifier {
+            let _ = modifier.set_alpha(self.surface_alpha);
+        }
+        self.update_main_effect(state);
     }
 
     fn layer_commit_size(&self) -> (u32, u32) {
@@ -359,10 +358,11 @@ impl OsrLayerHost {
     }
 }
 
-pub(super) fn flush_surface(surface: &wayland_client::protocol::wl_surface::WlSurface) {
+pub(super) fn flush_surface(surface: &wayland_client::protocol::wl_surface::WlSurface) -> bool {
     if let Some(backend) = surface.backend().upgrade() {
-        let _ = backend.flush();
+        return backend.flush().is_ok();
     }
+    false
 }
 
 pub(super) fn create_buffer(

@@ -171,6 +171,7 @@ impl OsrLayerHost {
     }
 
     pub(super) fn refresh_popup_surface(&mut self, state: &mut WindowState<()>) {
+        self.ensure_popup_pool();
         let Some(popup) = self.popup.as_mut() else {
             return;
         };
@@ -215,7 +216,9 @@ impl OsrLayerHost {
             damage.height as i32,
         );
         surface.commit();
-        super::surface::flush_surface(surface);
+        if !super::surface::flush_surface(surface) {
+            self.wayland_failed = true;
+        }
         popup.pending_refresh = false;
         popup.mapped = true;
     }
@@ -235,13 +238,14 @@ impl OsrLayerHost {
         let Some(popup) = self.popup.as_mut() else {
             return;
         };
-        if popup.effect.is_some() {
+        let options = popup_effect_options(popup.size);
+        if let Some(effect) = &popup.effect {
+            let _ = effect.update(&options, popup.size.0 as i32, popup.size.1 as i32);
             return;
         }
         let Some(unit) = state.get_unit_with_id(popup.id) else {
             return;
         };
-        let options = popup_effect_options(popup.size);
         popup.effect = sabine_platform::request_surface_effect(
             unit,
             &options,
@@ -254,6 +258,23 @@ impl OsrLayerHost {
         if let Some(popup) = self.popup.take() {
             state.request_close(popup.id);
         }
+    }
+
+    fn ensure_popup_pool(&mut self) {
+        let Some(shm) = self.shm.as_ref() else {
+            return;
+        };
+        let Some(popup) = self.popup.as_mut() else {
+            return;
+        };
+        if popup.pool.is_some() {
+            return;
+        }
+        popup.pool = SlotPool::new(
+            buffer_len(popup.size.0, popup.size.1).max(1),
+            &Shm::from(shm.clone()),
+        )
+        .ok();
     }
 
     pub(super) fn pointer_position_for_unit(

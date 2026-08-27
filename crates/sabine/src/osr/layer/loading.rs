@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use layershellev::{RefreshRequest, WindowState, id};
+use layershellev::{RefreshRequest, WindowState};
 
 use crate::osr::host::loading_messages::loading_message;
 use crate::osr::host::types::{
@@ -24,11 +24,7 @@ impl OsrLayerHost {
         state.request_refresh_all(RefreshRequest::NextFrame);
     }
 
-    pub(super) fn refresh_loading(
-        &mut self,
-        state: &mut WindowState<()>,
-        id: Option<id::Id>,
-    ) -> bool {
+    pub(super) fn refresh_loading(&mut self, state: &mut WindowState<()>) -> bool {
         let Some(mut loading) = self.loading else {
             return false;
         };
@@ -72,11 +68,7 @@ impl OsrLayerHost {
             );
         }
         let damage = DamageRect::full(width, height);
-        if let Some(unit) = id.and_then(|id| state.get_unit_with_id(id)) {
-            self.commit_surface(unit, damage);
-        } else {
-            self.commit_surface(state.main_window(), damage);
-        }
+        self.commit_surface(state, damage);
         loading.next_frame = now + LOADING_ANIMATION_INTERVAL;
         self.loading = Some(loading);
         state.request_refresh_all(RefreshRequest::At(loading.next_frame));

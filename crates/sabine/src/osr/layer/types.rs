@@ -33,6 +33,7 @@ pub(super) struct OsrLayerHost {
     pub(super) presentation_full_damage: bool,
     pub(super) scratch: Vec<u8>,
     pub(super) surface_mapped: bool,
+    pub(super) wayland_failed: bool,
     pub(super) visible: bool,
     pub(super) cursor_shape: String,
     pub(super) cursor_x: f32,
@@ -94,11 +95,7 @@ impl OsrLayerHost {
         super::socket::start_layer_parent_bridge_reader(sender.clone());
         let surface_size = (config.width.max(1), config.height.max(1));
         let visible = config.visible;
-        let surface_alpha = if visible {
-            config.shell_surface_alpha.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
+        let surface_alpha = config.shell_surface_alpha.clamp(0.0, 1.0);
         let focused = config.active;
         let lifecycle_state = if visible {
             LayerLifecycleState::Active
@@ -127,6 +124,7 @@ impl OsrLayerHost {
             presentation_full_damage: false,
             scratch: Vec::new(),
             surface_mapped: false,
+            wayland_failed: false,
             visible,
             cursor_shape: "default".to_string(),
             cursor_x: 0.0,

@@ -40,6 +40,7 @@ pub(crate) fn run(mut config: OsrHostConfig) -> Result<(), String> {
             shell_surface.margin.left,
         ))
         .with_keyboard_interacivity(keyboard_for_shell(shell_surface.keyboard_interactivity))
+        .with_use_display_handle(true)
         .with_events_transparent(shell_surface.events_transparent);
     if let Some(exclusive_zone) = shell_surface.exclusive_zone {
         window_state = window_state.with_exclusive_zone(exclusive_zone);

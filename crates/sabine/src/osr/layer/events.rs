@@ -15,7 +15,21 @@ impl OsrLayerHost {
         state: &mut WindowState<()>,
         id: Option<layershellev::id::Id>,
     ) -> ReturnData<()> {
+        if self.wayland_failed {
+            return ReturnData::RequestExit;
+        }
         match event {
+            LayerShellEvent::InitRequest => ReturnData::RequestBind,
+            LayerShellEvent::BindProvide(globals, qh) => {
+                let Ok(shm) =
+                    globals.bind::<layershellev::reexport::wl_shm::WlShm, _, _>(qh, 1..=1, ())
+                else {
+                    self.wayland_failed = true;
+                    return ReturnData::RequestExit;
+                };
+                self.install_shm(shm, qh.clone());
+                ReturnData::None
+            }
             LayerShellEvent::RequestBuffer(file, shm, qh, width, height) => {
                 let width = width.max(1);
                 let height = height.max(1);
@@ -37,15 +51,17 @@ impl OsrLayerHost {
                     self.clear_frames();
                 }
                 let buffer = self.install_wayland_buffer(file, shm, qh, width, height);
-                self.update_main_effect(state);
+                if self.visible {
+                    self.update_main_effect(state);
+                }
                 ReturnData::WlBuffer(buffer)
             }
             LayerShellEvent::RequestMessages(message) => self.handle_message(message, state, id),
             LayerShellEvent::UserEvent(event) => self.handle_host_event(event, state, id),
             LayerShellEvent::NormalDispatch => {
-                self.refresh_loading(state, id);
+                self.refresh_loading(state);
                 self.drive_tooltip(state);
-                self.commit_pending_surface(state, id);
+                self.commit_pending_surface(state);
                 self.commit_pending_popup_surface(state);
                 ReturnData::None
             }
@@ -72,7 +88,13 @@ impl OsrLayerHost {
                     .is_some_and(|popup| Some(popup.id) == id)
                 {
                     if let Some(popup) = self.popup.as_mut() {
-                        popup.size = ((*width).max(1), (*height).max(1));
+                        let size = ((*width).max(1), (*height).max(1));
+                        if popup.size != size {
+                            popup.size = size;
+                            popup.pool = None;
+                            popup.buffers.clear();
+                            popup.pending_refresh = false;
+                        }
                         popup.mapped = false;
                     }
                     self.ensure_popup_effect(state);
@@ -86,7 +108,9 @@ impl OsrLayerHost {
                 if size_changed {
                     self.recreate_wayland_buffer(surface_size.0, surface_size.1);
                 }
-                self.update_main_effect(state);
+                if self.visible {
+                    self.update_main_effect(state);
+                }
                 self.ensure_child();
                 self.send_resize();
                 self.drive_tooltip(state);
@@ -94,9 +118,9 @@ impl OsrLayerHost {
                     self.finish_loading(state);
                 }
                 if self.visible && self.loading.is_some() {
-                    self.refresh_loading(state, id);
+                    self.refresh_loading(state);
                 } else if self.visible && self.main_frame_ready() {
-                    self.refresh_surface(state, id);
+                    self.refresh_surface(state);
                 } else if self.visible {
                     self.hide_surface(state);
                 }
@@ -213,9 +237,7 @@ impl OsrLayerHost {
         match event {
             LayerHostEvent::Connected(stream) => {
                 self.control_writer = Some(super::socket::ControlWriter::start(stream));
-                if self.visible {
-                    self.set_surface_alpha(self.surface_alpha, state);
-                } else {
+                if !self.visible {
                     self.force_suspend("hidden");
                 }
                 self.send_resize();
@@ -275,11 +297,10 @@ impl OsrLayerHost {
                         self.finish_loading(state);
                     }
                     if self.loading.is_some() {
-                        self.refresh_loading(state, id);
+                        self.refresh_loading(state);
                     } else if self.main_frame_ready() {
-                        self.restore_keyboard(state);
                         self.force_resume("first-paint");
-                        self.refresh_surface(state, id);
+                        self.refresh_surface(state);
                     } else {
                         self.hide_surface(state);
                     }
@@ -351,7 +372,7 @@ impl OsrLayerHost {
                 self.main_load_ready = true;
                 if self.main_frame.is_some() {
                     self.finish_loading(state);
-                    self.refresh_surface(state, id);
+                    self.refresh_surface(state);
                 }
             }
             OsrMessage::ImeStateChanged(mode) => self.update_ime_state(mode, state),
