@@ -55,8 +55,16 @@ pub fn ensure_daemon_running() -> ServiceResult<bool> {
     if login_autostart {
         let installed = install_login_autostart_with(&service).is_ok();
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        if installed && wait_for_daemon_version(&expected_version, Duration::from_secs(2)) {
-            return Ok(true);
+        {
+            if installed && wait_for_daemon_version(&expected_version, Duration::from_secs(2)) {
+                return Ok(true);
+            }
+            stop_stale_daemon()?;
+            if install_login_autostart_with(&service).is_ok()
+                && wait_for_daemon_version(&expected_version, Duration::from_secs(2))
+            {
+                return Ok(true);
+            }
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let _ = installed;
