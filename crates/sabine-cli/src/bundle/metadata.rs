@@ -213,7 +213,7 @@ pub(super) fn wix_source(
     <Package Name="{}" Manufacturer="Lantharos" Version="{}" UpgradeCode="{}">
       <MediaTemplate EmbedCab="yes"/>
       <MajorUpgrade DowngradeErrorMessage="A newer version of this application is already installed."/>
-    <StandardDirectory Id="ProgramFilesFolder">
+    <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="{}">
       </Directory>
     </StandardDirectory>
