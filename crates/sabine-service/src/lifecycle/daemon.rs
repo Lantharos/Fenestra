@@ -12,11 +12,10 @@ use crate::{
     service_data_dir,
 };
 
-use super::{
-    PID_FILE,
-    autostart::{install_login_autostart_with, install_login_autostart_with_mode, run_checked},
-    load_policy,
-};
+use super::{PID_FILE, autostart::install_login_autostart_with, load_policy};
+
+#[cfg(target_os = "linux")]
+use super::autostart::{install_login_autostart_with_mode, run_checked};
 
 const DAEMON_STATE_FILE: &str = "daemon-state.json";
 

@@ -2,10 +2,13 @@ use std::{
     fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(unix)]
+use std::process::Stdio;
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const LOCK_STALE_AFTER: Duration = Duration::from_secs(30 * 60);
