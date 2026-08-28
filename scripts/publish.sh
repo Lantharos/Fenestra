@@ -9,8 +9,9 @@ fi
 
 tag="v${version#v}"
 workspace_version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
-if [[ "$tag" != "v$workspace_version" ]]; then
-  echo "tag $tag does not match workspace version $workspace_version" >&2
+public_version="${workspace_version%.0}"
+if [[ "$tag" != "v$public_version" ]]; then
+  echo "tag $tag does not match public workspace version $public_version" >&2
   exit 1
 fi
 if [[ "$(git branch --show-current)" != "main" ]]; then
@@ -50,5 +51,5 @@ if git rev-parse "$tag" >/dev/null 2>&1; then
   exit 1
 fi
 
-git tag -s "$tag" -m "Sabine $workspace_version"
+git tag -s "$tag" -m "Sabine $public_version"
 git push origin "$tag"

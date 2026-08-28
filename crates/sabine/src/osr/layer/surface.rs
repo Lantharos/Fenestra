@@ -1,6 +1,10 @@
-use std::{fs::File, os::fd::AsFd};
+use std::{
+    fs::File,
+    os::fd::AsFd,
+    time::{Duration, Instant},
+};
 
-use layershellev::{WindowState, reexport::wl_shm};
+use layershellev::{RefreshRequest, WindowState, reexport::wl_shm};
 use smithay_client_toolkit::shm::{Shm, slot::SlotPool};
 use wayland_client::{Proxy, QueueHandle, protocol::wl_buffer::WlBuffer};
 
@@ -182,6 +186,7 @@ impl OsrLayerHost {
 
     pub(super) fn hide_surface(&mut self, state: &mut WindowState<()>) {
         if !self.surface_mapped {
+            self.acknowledge_visibility(false);
             return;
         }
         let unit = state.main_window();
@@ -189,14 +194,23 @@ impl OsrLayerHost {
         unit.get_wlsurface().commit();
         if !flush_surface(unit.get_wlsurface()) {
             self.wayland_failed = true;
+            return;
         }
         self.surface_mapped = false;
+        self.acknowledge_visibility(false);
     }
 
     pub(super) fn main_frame_ready(&self) -> bool {
         self.main_load_ready
             && self.main_frame.is_some()
             && self.main_frame_surface_size == Some(self.surface_size)
+    }
+
+    pub(super) fn retained_frame_ready(&self) -> bool {
+        self.config.lifecycle.retain_hidden_frame
+            && self.main_frame.is_some()
+            && self.main_frame_surface_size == Some(self.surface_size)
+            && self.main_buffer.len() == buffer_len(self.buffer_size.0, self.buffer_size.1)
     }
 
     pub(super) fn clear_frames(&mut self) {
@@ -212,7 +226,7 @@ impl OsrLayerHost {
         self.scratch = Vec::new();
     }
 
-    pub(super) fn commit_surface(&mut self, state: &WindowState<()>, damage: DamageRect) {
+    pub(super) fn commit_surface(&mut self, state: &mut WindowState<()>, damage: DamageRect) {
         if !self.surface_mapped {
             self.restore_layer_state(state);
         }
@@ -224,11 +238,17 @@ impl OsrLayerHost {
         };
         let Some(buffer_index) = self.prepare_main_buffer() else {
             self.pending_surface_refresh = true;
+            state.request_refresh_all(RefreshRequest::At(
+                Instant::now() + Duration::from_millis(8),
+            ));
             return;
         };
         let surface = unit.get_wlsurface();
         if self.main_buffers[buffer_index].attach_to(surface).is_err() {
             self.pending_surface_refresh = true;
+            state.request_refresh_all(RefreshRequest::At(
+                Instant::now() + Duration::from_millis(8),
+            ));
             return;
         }
         surface.damage_buffer(
@@ -240,27 +260,34 @@ impl OsrLayerHost {
         surface.commit();
         if !flush_surface(surface) {
             self.wayland_failed = true;
+            return;
         }
         self.pending_surface_refresh = false;
         self.surface_mapped = true;
         self.presentation_full_damage = false;
+        self.acknowledge_visibility(true);
     }
 
-    pub(super) fn commit_layer_state(&mut self, state: &WindowState<()>) {
+    pub(super) fn commit_current_layer_state(&mut self, state: &mut WindowState<()>) {
         self.restore_layer_state(state);
-        let surface = state.main_window().get_wlsurface();
-        surface.commit();
-        if !flush_surface(surface) {
-            self.wayland_failed = true;
-        }
+        self.presentation_full_damage = true;
+        self.commit_surface(
+            state,
+            DamageRect::full(self.buffer_size.0, self.buffer_size.1),
+        );
     }
 
     pub(super) fn commit_pending_surface(&mut self, state: &mut WindowState<()>) {
-        if !self.pending_surface_refresh || !self.visible || !self.main_frame_ready() {
+        if !self.pending_surface_refresh || !self.visible || !self.current_buffer_ready() {
             return;
         }
         let damage = DamageRect::full(self.buffer_size.0, self.buffer_size.1);
         self.commit_surface(state, damage);
+    }
+
+    fn current_buffer_ready(&self) -> bool {
+        let expected = buffer_len(self.buffer_size.0, self.buffer_size.1);
+        self.presentation_buffer.len() == expected || self.main_buffer.len() == expected
     }
 
     fn reset_main_pool(&mut self, shm: &wl_shm::WlShm, byte_len: usize) {

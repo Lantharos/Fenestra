@@ -82,7 +82,7 @@ jobs:
     secrets:
       SABINE_UPDATE_SIGNING_KEY: ${{{{ secrets.SABINE_UPDATE_SIGNING_KEY }}}}
 "#,
-            version = env!("CARGO_PKG_VERSION")
+            version = sabine_service::SABINE_VERSION
         ),
     )
 }
@@ -115,7 +115,7 @@ pub(crate) fn cargo_toml(name: &str) -> String {
         .unwrap_or_else(|| {
             format!(
                 "{{ git = \"https://github.com/Lantharos/Sabine\", tag = \"v{}\", package = \"sabine\" }}",
-                env!("CARGO_PKG_VERSION")
+                sabine_service::SABINE_VERSION
             )
         });
     format!(

@@ -24,10 +24,26 @@ pub(crate) fn confirm_update(app_name: &str, version: &str) -> Result<bool, Stri
         decision: Decision::default(),
         title: format!("Update {app_name}"),
         message: format!("Version {version} is ready to install."),
+        notice: false,
     };
     let decision = app.decision.clone();
     event_loop.run_app(app).map_err(|error| error.to_string())?;
     Ok(decision.load())
+}
+
+pub(crate) fn show_notice(title: &str, message: &str) -> Result<(), String> {
+    let event_loop = EventLoop::new().map_err(|error| error.to_string())?;
+    let app = ConfirmApp {
+        window: None,
+        context: None,
+        surface: None,
+        cursor: PhysicalPosition::new(0.0, 0.0),
+        decision: Decision::default(),
+        title: title.to_string(),
+        message: message.to_string(),
+        notice: true,
+    };
+    event_loop.run_app(app).map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Default)]
@@ -51,6 +67,7 @@ struct ConfirmApp {
     decision: Decision,
     title: String,
     message: String,
+    notice: bool,
 }
 
 impl ApplicationHandler for ConfirmApp {
@@ -109,6 +126,12 @@ impl ApplicationHandler for ConfirmApp {
                 };
                 let size = window.surface_size();
                 let install = button_rect(size.width, true);
+                if self.notice {
+                    if contains(install, self.cursor) {
+                        event_loop.exit();
+                    }
+                    return;
+                }
                 let later = button_rect(size.width, false);
                 if contains(install, self.cursor) {
                     self.decision.set(true);
@@ -151,36 +174,63 @@ impl ConfirmApp {
             TEXT,
             2.0,
         );
-        draw_text(
-            &mut buffer,
-            (width, height),
-            (24, 72),
-            &self.message,
-            MUTED,
-            1.0,
-        );
-        let later = button_rect(width, false);
+        for (index, line) in wrap_message(&self.message, 48)
+            .into_iter()
+            .take(3)
+            .enumerate()
+        {
+            draw_text(
+                &mut buffer,
+                (width, height),
+                (24, 72 + index as i32 * 16),
+                &line,
+                MUTED,
+                1.0,
+            );
+        }
         let install = button_rect(width, true);
-        fill_rect(&mut buffer, (width, height), later, 0xFF_2A_2A_2E);
+        if !self.notice {
+            let later = button_rect(width, false);
+            fill_rect(&mut buffer, (width, height), later, 0xFF_2A_2A_2E);
+            draw_text(
+                &mut buffer,
+                (width, height),
+                (later.0 + 24, later.1 + 15),
+                "Later",
+                TEXT,
+                1.0,
+            );
+        }
         fill_rect(&mut buffer, (width, height), install, FILL);
         draw_text(
             &mut buffer,
             (width, height),
-            (later.0 + 24, later.1 + 15),
-            "Later",
-            TEXT,
-            1.0,
-        );
-        draw_text(
-            &mut buffer,
-            (width, height),
             (install.0 + 20, install.1 + 15),
-            "Install",
+            if self.notice { "Close" } else { "Install" },
             0xFF_16_16_18,
             1.0,
         );
         let _ = buffer.present();
     }
+}
+
+fn wrap_message(message: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in message.split_whitespace() {
+        let needed = usize::from(!line.is_empty()) + word.len();
+        if !line.is_empty() && line.len() + needed > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
 }
 
 fn button_rect(width: u32, primary: bool) -> (i32, i32, i32, i32) {

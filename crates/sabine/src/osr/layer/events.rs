@@ -250,7 +250,10 @@ impl OsrLayerHost {
                     }
                 }
             }
-            LayerHostEvent::Visible(visible) => self.set_surface_visible(visible, state),
+            LayerHostEvent::Visible {
+                visible,
+                request_id,
+            } => self.set_surface_visible(visible, request_id, state),
             LayerHostEvent::Alpha(alpha) => self.set_surface_alpha(alpha, state),
             LayerHostEvent::Margin(margin) => self.set_surface_margin(margin, state),
             LayerHostEvent::Quit => return ReturnData::RequestExit,
@@ -384,9 +387,9 @@ impl OsrLayerHost {
             } => self.update_ime_cursor_area(state, id, x, y, width, height),
             OsrMessage::TooltipChanged(text) => self.update_tooltip(text, state),
             OsrMessage::ImeSurroundingChanged { .. } => {}
-            OsrMessage::ShowRequested => self.set_surface_visible(true, state),
-            OsrMessage::HideRequested => self.set_surface_visible(false, state),
-            OsrMessage::FocusRequested(_) => self.set_surface_visible(true, state),
+            OsrMessage::ShowRequested => self.set_surface_visible(true, None, state),
+            OsrMessage::HideRequested => self.set_surface_visible(false, None, state),
+            OsrMessage::FocusRequested(_) => self.set_surface_visible(true, None, state),
             OsrMessage::BridgeRequest(line) => {
                 if !line.is_empty() {
                     let mut output = std::io::stdout();

@@ -50,6 +50,16 @@ impl SabineService {
         manifest.validate()?;
         let _lock = RegistryLock::acquire(&self.root)?;
         let mut registry = self.load_registry()?;
+        if let Some(message) =
+            incompatibility_message(&manifest, crate::install::installed_system_compatibility())
+        {
+            registry.apps.remove(&manifest.id);
+            self.save_registry(&registry)?;
+            return Err(ServiceError::IncompatibleApp {
+                app_id: manifest.id,
+                message,
+            });
+        }
         if let Some(existing) = registry.apps.get(&manifest.id)
             && version_is_newer(&existing.manifest.version, &manifest.version)
             && existing.manifest.executable.is_file()
@@ -94,6 +104,26 @@ impl SabineService {
             .apps
             .remove(id)
             .ok_or_else(|| ServiceError::AppNotFound(id.to_string()))
+    }
+
+    pub(crate) fn remove_incompatible_apps(&self) -> ServiceResult<Vec<String>> {
+        let _lock = RegistryLock::acquire(&self.root)?;
+        let mut registry = self.load_registry()?;
+        let compatibility = crate::install::installed_system_compatibility();
+        let incompatible = registry
+            .apps
+            .iter()
+            .filter(|(_, app)| incompatibility_message(&app.manifest, compatibility).is_some())
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        if incompatible.is_empty() {
+            return Ok(incompatible);
+        }
+        for id in &incompatible {
+            registry.apps.remove(id);
+        }
+        self.save_registry(&registry)?;
+        Ok(incompatible)
     }
 
     pub fn runtime(&self) -> ServiceResult<RuntimeInfo> {
@@ -156,6 +186,35 @@ impl SabineService {
         replace_file(&temporary, &path)?;
         Ok(())
     }
+}
+
+fn incompatibility_message(
+    app: &AppManifest,
+    system: crate::SystemCompatibility,
+) -> Option<String> {
+    let required = app.sabine;
+    if required.build == 0 {
+        return None;
+    }
+    if required.major != system.major || required.build < system.minimum_app_build {
+        return Some(format!(
+            "The developer of {} has not updated it to work with this version of Sabine. The app was not added to Sabine.",
+            app.name
+        ));
+    }
+    if required.build > system.build {
+        return Some(format!(
+            "{} needs Sabine {}, but this computer could not update past Sabine {}.",
+            app.name,
+            required.label(),
+            crate::SabineVersion {
+                major: system.major,
+                build: system.build,
+            }
+            .label()
+        ));
+    }
+    None
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

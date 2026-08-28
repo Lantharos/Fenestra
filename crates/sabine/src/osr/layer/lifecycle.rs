@@ -82,7 +82,13 @@ impl OsrLayerHost {
         }
     }
 
-    pub(super) fn set_surface_visible(&mut self, visible: bool, state: &mut WindowState<()>) {
+    pub(super) fn set_surface_visible(
+        &mut self,
+        visible: bool,
+        request_id: Option<u64>,
+        state: &mut WindowState<()>,
+    ) {
+        self.pending_visibility_ack = request_id.map(|request_id| (request_id, visible));
         self.visible = visible;
         if visible {
             self.show_surface(state);
@@ -92,10 +98,23 @@ impl OsrLayerHost {
     }
 
     pub(super) fn show_surface(&mut self, state: &mut WindowState<()>) {
+        let retained_frame_ready = self.retained_frame_ready();
+        if retained_frame_ready {
+            self.loading = None;
+            self.presentation_buffer.clear();
+            self.presentation_full_damage = true;
+            self.commit_surface(
+                state,
+                super::buffer::DamageRect::full(self.buffer_size.0, self.buffer_size.1),
+            );
+        }
         self.force_resume("visible");
         self.send_resize();
         if self.pointer_inside {
             self.forward_mouse_move(false);
+        }
+        if retained_frame_ready {
+            return;
         }
         if self.main_frame_ready() && self.loading.is_some() {
             self.finish_loading(state);
@@ -124,21 +143,21 @@ impl OsrLayerHost {
         }
     }
 
-    pub(super) fn set_surface_alpha(&mut self, alpha: f32, state: &WindowState<()>) {
+    pub(super) fn set_surface_alpha(&mut self, alpha: f32, state: &mut WindowState<()>) {
         let alpha = alpha.clamp(0.0, 1.0);
         if (self.surface_alpha - alpha).abs() <= 0.001 {
             return;
         }
         self.surface_alpha = alpha;
         if self.surface_mapped {
-            self.commit_layer_state(state);
+            self.commit_current_layer_state(state);
         }
     }
 
     pub(super) fn set_surface_margin(
         &mut self,
         margin: sabine_platform::ShellSurfaceMargin,
-        state: &WindowState<()>,
+        state: &mut WindowState<()>,
     ) {
         let Some(shell_surface) = self.config.shell_surface.as_mut() else {
             return;
@@ -148,7 +167,7 @@ impl OsrLayerHost {
         }
         shell_surface.margin = margin;
         if self.surface_mapped {
-            self.commit_layer_state(state);
+            self.commit_current_layer_state(state);
         }
     }
 
@@ -158,5 +177,20 @@ impl OsrLayerHost {
         if let Some(mut child) = self.child.take() {
             let _ = child.try_wait();
         }
+    }
+
+    pub(super) fn acknowledge_visibility(&mut self, mapped: bool) {
+        let Some((request_id, expected)) = self.pending_visibility_ack else {
+            return;
+        };
+        if expected != mapped {
+            return;
+        }
+        self.pending_visibility_ack = None;
+        let state = if mapped { "mapped" } else { "unmapped" };
+        let mut output = std::io::stdout();
+        use std::io::Write;
+        let _ = writeln!(output, "SABINE_LAYER_VISIBILITY\t{request_id}\t{state}");
+        let _ = output.flush();
     }
 }

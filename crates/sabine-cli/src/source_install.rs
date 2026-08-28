@@ -117,6 +117,8 @@ fn detect_source_app(
 }
 
 fn register_app(app: &SourceApp, desktop: bool) -> Result<(), String> {
+    sabine_service::ensure_service_executable(|_| {}).map_err(|error| error.to_string())?;
+    sabine_service::ensure_daemon_running().map_err(|error| error.to_string())?;
     let app_dir = app_dir(&app.id)?;
     fs::create_dir_all(&app_dir).map_err(|error| error.to_string())?;
     let assets = source_assets::stage(&app.source, &app_dir, app.icon.as_deref())?;
@@ -143,6 +145,7 @@ fn register_app(app: &SourceApp, desktop: bool) -> Result<(), String> {
             executable: wrapper.clone(),
             args: Vec::new(),
             update: None,
+            sabine: sabine_service::SabineVersion::current(),
         })
         .map_err(|error| error.to_string())?;
 

@@ -30,6 +30,7 @@ pub(crate) fn run_from_args(args: &[String]) -> bool {
             std::process::exit(1);
         }
     };
+    let app_name = register.as_ref().map(|app| app.name.clone());
     let result = ui::run_progress_window("Preparing Sabine", move |state, proxy| {
         let result = prepare_machine_with_progress(config, register, |progress| {
             ui::set_progress(&state, &proxy, progress.message, progress.fraction);
@@ -41,6 +42,11 @@ pub(crate) fn run_from_args(args: &[String]) -> bool {
         );
     });
     if let Err(error) = result {
+        let title = app_name
+            .as_deref()
+            .map(|name| format!("Can't open {name}"))
+            .unwrap_or_else(|| "Sabine needs attention".to_string());
+        let _ = ui::show_notice(&title, &error);
         eprintln!("Sabine setup failed: {error}");
         std::process::exit(1);
     }
@@ -51,10 +57,20 @@ pub(crate) fn prepare(config: &SabineWindowConfig) -> SabineResult<()> {
     let register = app_manifest(config);
 
     if resolve_runtime(&config.runtime).is_ok() {
-        let report = sabine_service::adopt_with_runtime(config.runtime.clone(), register.clone())
-            .map_err(|error| SabineError::CreationFailed {
-            message: format!("failed to register with Sabine service: {error}"),
-        })?;
+        let report =
+            match sabine_service::adopt_with_runtime(config.runtime.clone(), register.clone()) {
+                Ok(report) => report,
+                Err(error @ sabine_service::ServiceError::IncompatibleApp { .. }) => {
+                    let message = error.to_string();
+                    let _ = ui::show_notice(&format!("Can't open {}", config.title), &message);
+                    return Err(SabineError::CreationFailed { message });
+                }
+                Err(error) => {
+                    return Err(SabineError::CreationFailed {
+                        message: format!("failed to register with Sabine service: {error}"),
+                    });
+                }
+            };
         if std::env::var_os("SABINE_TRACE").is_some() {
             eprintln!(
                 "sabine-service ready runtime={} daemon={} login_autostart={}",
@@ -107,7 +123,11 @@ fn offer_pending_update(config: &SabineWindowConfig) {
     let Ok(Some(update)) = service.pending_app_update(id) else {
         return;
     };
+    if !update.ready_for_prompt() {
+        return;
+    }
     if !ui::confirm_update(&config.title, &update.version).unwrap_or(false) {
+        let _ = service.defer_pending_app_update(id);
         return;
     }
     let Ok(service_executable) = sabine_service::resolve_service_executable() else {
@@ -181,6 +201,7 @@ pub(crate) fn app_manifest(config: &SabineWindowConfig) -> Option<AppManifest> {
         executable,
         args: Vec::new(),
         update: config.app_update.clone(),
+        sabine: sabine_service::SabineVersion::current(),
     })
 }
 

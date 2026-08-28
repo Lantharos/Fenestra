@@ -143,10 +143,11 @@ pub(super) fn download_file(
     Ok(())
 }
 
-pub(super) fn fetch_system_manifest() -> ServiceResult<SystemReleaseManifest> {
-    let url = std::env::var("SABINE_RELEASE_MANIFEST_URL").unwrap_or_else(|_| {
-        format!("https://github.com/{SERVICE_REPO}/releases/latest/download/sabine-release.json")
-    });
+pub(super) fn fetch_system_manifest(
+    required_version: Option<&str>,
+) -> ServiceResult<SystemReleaseManifest> {
+    let url = std::env::var("SABINE_RELEASE_MANIFEST_URL")
+        .unwrap_or_else(|_| system_manifest_url(required_version));
     if !url.starts_with("https://") {
         return Err(ServiceError::Update(
             "Sabine release manifest must use HTTPS".to_string(),
@@ -161,6 +162,21 @@ pub(super) fn fetch_system_manifest() -> ServiceResult<SystemReleaseManifest> {
         .map_err(|error| ServiceError::Update(format!("release manifest read failed: {error}")))?;
     serde_json::from_slice(&body)
         .map_err(|error| ServiceError::Update(format!("invalid Sabine release manifest: {error}")))
+}
+
+fn system_manifest_url(required_version: Option<&str>) -> String {
+    required_version.map_or_else(
+        || {
+            format!(
+                "https://github.com/{SERVICE_REPO}/releases/latest/download/sabine-release.json"
+            )
+        },
+        |version| {
+            format!(
+                "https://github.com/{SERVICE_REPO}/releases/download/v{version}/sabine-release.json"
+            )
+        },
+    )
 }
 
 pub(super) fn verify_sha256(path: &Path, expected: &str) -> ServiceResult<()> {
@@ -250,5 +266,12 @@ mod tests {
             path.file_name().and_then(|name| name.to_str()),
             Some(service_daemon_binary_name())
         );
+    }
+
+    #[test]
+    fn required_updates_keep_the_exact_release_tag() {
+        assert!(system_manifest_url(None).contains("/releases/latest/"));
+        assert!(system_manifest_url(Some("0.1.20")).contains("/releases/download/v0.1.20/"));
+        assert!(system_manifest_url(Some("0.21")).contains("/releases/download/v0.21/"));
     }
 }

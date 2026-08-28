@@ -16,7 +16,10 @@ use crate::osr::protocol::{OsrMessage, OsrPaintBatch, read_message};
 pub(super) enum LayerHostEvent {
     Connected(UnixStream),
     MessagesReady(Arc<MessageQueue>),
-    Visible(bool),
+    Visible {
+        visible: bool,
+        request_id: Option<u64>,
+    },
     Alpha(f32),
     Margin(ShellSurfaceMargin),
     Quit,
@@ -209,8 +212,14 @@ pub(super) fn start_layer_parent_bridge_reader(sender: Sender<LayerHostEvent>) {
     thread::spawn(move || {
         let input = io::stdin();
         for line in input.lock().lines().map_while(std::result::Result::ok) {
-            if let Some(visible) = parse_visibility_control(&line) {
-                if sender.send(LayerHostEvent::Visible(visible)).is_err() {
+            if let Some((visible, request_id)) = parse_visibility_control(&line) {
+                if sender
+                    .send(LayerHostEvent::Visible {
+                        visible,
+                        request_id,
+                    })
+                    .is_err()
+                {
                     break;
                 }
                 continue;
@@ -312,16 +321,22 @@ fn start_socket_reader(
     });
 }
 
-fn parse_visibility_control(line: &str) -> Option<bool> {
+fn parse_visibility_control(line: &str) -> Option<(bool, Option<u64>)> {
     let (command, value) = crate::parse_host_control(line)?;
     match command {
-        "visible" => match value {
-            "1" | "true" | "yes" | "show" | "visible" => Some(true),
-            "0" | "false" | "no" | "hide" | "hidden" => Some(false),
-            _ => None,
-        },
-        "show" | "focus" => Some(true),
-        "hide" => Some(false),
+        "visible" => {
+            let (value, request_id) = value
+                .split_once(':')
+                .map(|(value, request_id)| (value, request_id.parse::<u64>().ok()))
+                .unwrap_or((value, None));
+            match value {
+                "1" | "true" | "yes" | "show" | "visible" => Some((true, request_id)),
+                "0" | "false" | "no" | "hide" | "hidden" => Some((false, request_id)),
+                _ => None,
+            }
+        }
+        "show" | "focus" => Some((true, None)),
+        "hide" => Some((false, None)),
         _ => None,
     }
 }
@@ -357,4 +372,21 @@ fn parse_margin_control(line: &str) -> Option<ShellSurfaceMargin> {
         bottom,
         left,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_visibility_control;
+
+    #[test]
+    fn visibility_control_preserves_completion_request_id() {
+        assert_eq!(
+            parse_visibility_control("SABINE_HOST_CONTROL\tvisible\t1:42"),
+            Some((true, Some(42)))
+        );
+        assert_eq!(
+            parse_visibility_control("SABINE_HOST_CONTROL\tvisible\t0"),
+            Some((false, None))
+        );
+    }
 }

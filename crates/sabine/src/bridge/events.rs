@@ -1,8 +1,13 @@
 use std::{
+    collections::HashMap,
     io::{BufRead, BufReader, Write},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     thread::{self, JoinHandle},
+    time::Duration,
 };
 
 use sabine_bridge::{BridgeCommand, BridgeHandlers, BridgeResult};
@@ -13,7 +18,11 @@ use crate::launch::browser::HOST_CONTROL_PREFIX;
 #[derive(Clone)]
 pub struct BridgeEventEmitter {
     targets: Arc<Mutex<Vec<BridgeTarget>>>,
+    visibility_waiters: Arc<Mutex<HashMap<u64, crossbeam_channel::Sender<bool>>>>,
 }
+
+static NEXT_VISIBILITY_REQUEST: AtomicU64 = AtomicU64::new(1);
+const VISIBILITY_ACK_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct BridgeTarget {
     window_id: u32,
@@ -44,6 +53,29 @@ impl BridgeEventEmitter {
 
     pub fn set_visible(&self, visible: bool) -> bool {
         self.emit_host_control("visible", if visible { "1" } else { "0" })
+    }
+
+    pub(crate) fn set_layer_visible(&self, visible: bool) -> bool {
+        let request_id = NEXT_VISIBILITY_REQUEST.fetch_add(1, Ordering::Relaxed);
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        let Ok(mut waiters) = self.visibility_waiters.lock() else {
+            return false;
+        };
+        waiters.insert(request_id, sender);
+        drop(waiters);
+        if !self.emit_host_control("visible", &format!("{}:{request_id}", u8::from(visible))) {
+            if let Ok(mut waiters) = self.visibility_waiters.lock() {
+                waiters.remove(&request_id);
+            }
+            return false;
+        }
+        let acknowledged = receiver
+            .recv_timeout(VISIBILITY_ACK_TIMEOUT)
+            .is_ok_and(|mapped| mapped == visible);
+        if let Ok(mut waiters) = self.visibility_waiters.lock() {
+            waiters.remove(&request_id);
+        }
+        acknowledged
     }
 
     pub fn set_alpha(&self, alpha: f32) -> bool {
@@ -197,6 +229,7 @@ pub(crate) fn spawn_bridge_dispatch(
             window_id,
             stdin: Arc::clone(&stdin),
         }])),
+        visibility_waiters: Arc::new(Mutex::new(HashMap::new())),
     };
     let Some(stdout) = child.stdout.take() else {
         return BridgeDispatch {
@@ -208,11 +241,15 @@ pub(crate) fn spawn_bridge_dispatch(
     let activity_emitter = Some(emitter.clone());
     let response_stdin = Arc::clone(&stdin);
     let detach_emitter = emitter.clone();
+    let visibility_waiters = Arc::clone(&emitter.visibility_waiters);
     let thread = thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(std::result::Result::ok) {
             if line == "SABINE_OSR_READY" {
                 let _ = ready_sender.try_send(());
+                continue;
+            }
+            if acknowledge_visibility(&line, &visibility_waiters) {
                 continue;
             }
             let Some(request) = BridgeIpcRequest::parse(&line) else {
@@ -264,9 +301,13 @@ pub(crate) fn spawn_bridge_dispatch_for_window(
     emitter.attach(window_id, Arc::clone(&stdin));
     let stdout = child.stdout.take()?;
     let activity_emitter = emitter.clone();
+    let visibility_waiters = Arc::clone(&emitter.visibility_waiters);
     Some(thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(std::result::Result::ok) {
+            if acknowledge_visibility(&line, &visibility_waiters) {
+                continue;
+            }
             let Some(request) = BridgeIpcRequest::parse(&line) else {
                 continue;
             };
@@ -291,6 +332,26 @@ pub(crate) fn spawn_bridge_dispatch_for_window(
         }
         activity_emitter.detach(window_id);
     }))
+}
+
+fn acknowledge_visibility(
+    line: &str,
+    waiters: &Mutex<HashMap<u64, crossbeam_channel::Sender<bool>>>,
+) -> bool {
+    let mut parts = line.split('\t');
+    if parts.next() != Some("SABINE_LAYER_VISIBILITY") {
+        return false;
+    }
+    let Some(request_id) = parts.next().and_then(|value| value.parse::<u64>().ok()) else {
+        return true;
+    };
+    let mapped = parts.next() == Some("mapped");
+    if let Ok(mut waiters) = waiters.lock()
+        && let Some(waiter) = waiters.remove(&request_id)
+    {
+        let _ = waiter.try_send(mapped);
+    }
+    true
 }
 
 pub(crate) fn parse_host_control(line: &str) -> Option<(&str, &str)> {
@@ -402,6 +463,7 @@ mod tests {
                 window_id: child.id(),
                 stdin,
             }])),
+            visibility_waiters: Arc::new(Mutex::new(HashMap::new())),
         };
         assert!(emitter.emit("ping", serde_json::json!({})));
         emitter.detach(child.id());

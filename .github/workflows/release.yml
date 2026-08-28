@@ -40,8 +40,9 @@ jobs:
           if ($content -notmatch '(?ms)\[workspace\.package\].*?^version\s*=\s*"([^"]+)"') {
             throw "workspace version is missing"
           }
-          if ($env:GITHUB_REF_NAME -ne "v$($Matches[1])") {
-            throw "tag $env:GITHUB_REF_NAME does not match workspace version v$($Matches[1])"
+          $publicVersion = $Matches[1] -replace '\.0$', ''
+          if ($env:GITHUB_REF_NAME -ne "v$publicVersion") {
+            throw "tag $env:GITHUB_REF_NAME does not match public workspace version v$publicVersion"
           }
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -147,4 +148,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes release/*
-          gh release edit "$GITHUB_REF_NAME" --draft=false
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false

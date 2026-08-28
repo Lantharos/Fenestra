@@ -1,13 +1,14 @@
 mod install;
 mod lifecycle;
 mod registry;
+mod rollout;
 mod signing;
 mod types;
 mod updates;
 
 pub use install::{
     StagedSystemUpdate, cached_service_path, ensure_service_executable, find_service_executable,
-    rollback_system_update, service_daemon_path, stage_system_update,
+    repair_system_installation, rollback_system_update, service_daemon_path, stage_system_update,
 };
 pub use lifecycle::{
     PrepareProgress, PrepareStage, ServicePolicy, ServiceReadyReport, adopt, adopt_with_runtime,
@@ -17,6 +18,7 @@ pub use lifecycle::{
     save_policy, set_login_autostart, start_daemon, uninstall_login_autostart,
 };
 pub use registry::SabineService;
+pub(crate) use rollout::release_is_soaked;
 pub use signing::{
     public_key_from_private, sign_app_release, sign_system_release, verify_app_release,
     verify_system_release,
@@ -24,8 +26,9 @@ pub use signing::{
 pub use types::{
     AppArtifact, AppArtifactKind, AppInstallMode, AppManifest, AppReleaseManifest, AppUpdateConfig,
     AppUpdateSource, AppUpdateStatus, MaintenanceReport, PendingAppUpdate, RegisteredApp,
-    ServiceError, ServiceResult, SystemReleaseArtifact, SystemReleaseManifest, UpdatePolicy,
-    default_maintenance_interval, service_data_dir, valid_app_id,
+    SABINE_BUILD, SABINE_MAJOR, SABINE_VERSION, SabineVersion, ServiceError, ServiceResult,
+    SystemCompatibility, SystemReleaseArtifact, SystemReleaseManifest, UPDATE_ROLLOUT_WINDOW,
+    UPDATE_SOAK, UpdatePolicy, default_maintenance_interval, service_data_dir, valid_app_id,
 };
 pub use updates::retry_quarantined_runtimes;
 
@@ -60,6 +63,7 @@ mod tests {
                 public_key: "VXtTlN3HZuGwYByjJu+3HQGavjJwRo0i9/RGrT6Ua6M=".to_string(),
                 package_kind: None,
             }),
+            sabine: SabineVersion::default(),
         }
     }
 

@@ -10,7 +10,7 @@ use crate::types::{
     MaintenanceReport, PendingAppUpdate, ServiceError, ServiceResult, UpdatePolicy, is_https_url,
     unix_timestamp, update_artifact_target, version_is_newer,
 };
-use crate::verify_app_release;
+use crate::{release_is_soaked, verify_app_release};
 
 mod installers;
 
@@ -40,10 +40,12 @@ impl SabineService {
             runtime = resolve_runtime(&self.runtime)?;
         }
         let pruned_runtimes = prune_user_runtimes(2)?;
+        let incompatible_apps = self.remove_incompatible_apps()?;
         let apps = self.apps()?;
         let mut updated_apps = Vec::new();
         let mut pending_apps = Vec::new();
         let mut update_failures = Vec::new();
+        let mut required_system_update = None;
         for app in &apps {
             let Some(update) = &app.manifest.update else {
                 continue;
@@ -51,12 +53,23 @@ impl SabineService {
             if update.policy != UpdatePolicy::Automatic {
                 continue;
             }
-            match self.update_app(&app.manifest.id) {
+            match self.update_app_routine(&app.manifest.id) {
                 Ok(AppUpdateStatus::Installed { .. }) => updated_apps.push(app.manifest.id.clone()),
                 Ok(AppUpdateStatus::PendingApproval(_)) => {
                     pending_apps.push(app.manifest.id.clone())
                 }
-                Ok(AppUpdateStatus::Current | AppUpdateStatus::StoreManaged) => {}
+                Ok(AppUpdateStatus::RequiresSystem { sabine, .. }) => {
+                    required_system_update = Some(
+                        required_system_update.map_or(sabine, |required: crate::SabineVersion| {
+                            required.max(sabine)
+                        }),
+                    );
+                }
+                Ok(
+                    AppUpdateStatus::Current
+                    | AppUpdateStatus::Deferred { .. }
+                    | AppUpdateStatus::StoreManaged,
+                ) => {}
                 Err(error) => update_failures.push(format!("{}: {error}", app.manifest.id)),
             }
         }
@@ -76,10 +89,20 @@ impl SabineService {
             updated_apps,
             pending_apps,
             update_failures,
+            incompatible_apps,
+            required_system_update,
         })
     }
 
     pub fn update_app(&self, id: &str) -> ServiceResult<AppUpdateStatus> {
+        self.update_app_with_soak(id, false)
+    }
+
+    fn update_app_routine(&self, id: &str) -> ServiceResult<AppUpdateStatus> {
+        self.update_app_with_soak(id, true)
+    }
+
+    fn update_app_with_soak(&self, id: &str, require_soak: bool) -> ServiceResult<AppUpdateStatus> {
         let app = self.app(id)?;
         let update = app
             .manifest
@@ -95,6 +118,36 @@ impl SabineService {
         validate_release(&release, id, &update.channel)?;
         if !version_is_newer(&release.version, &app.manifest.version) {
             return Ok(AppUpdateStatus::Current);
+        }
+        if require_soak && !release_is_soaked(&release.published_at) {
+            return Ok(AppUpdateStatus::Deferred {
+                version: release.version,
+            });
+        }
+        let system = crate::install::installed_system_compatibility();
+        let installed = crate::SabineVersion {
+            major: system.major,
+            build: system.build,
+        };
+        if release.requires_sabine > installed {
+            if !require_soak {
+                crate::install::install_required_system_update(release.requires_sabine)?;
+            } else {
+                return Ok(AppUpdateStatus::RequiresSystem {
+                    app_version: release.version,
+                    sabine: release.requires_sabine,
+                });
+            }
+        }
+        let system = crate::install::installed_system_compatibility();
+        if !system.accepts(release.requires_sabine) {
+            return Err(ServiceError::Update(format!(
+                "app update {} requires Sabine {}, installed system is {}.{}",
+                release.version,
+                release.requires_sabine.label(),
+                system.major,
+                system.build
+            )));
         }
         let target = update_artifact_target(update.install_mode, update.package_kind);
         let artifact = release
@@ -162,6 +215,15 @@ impl SabineService {
         Ok(true)
     }
 
+    pub fn defer_pending_app_update(&self, id: &str) -> ServiceResult<bool> {
+        let Some(mut pending) = self.pending_app_update(id)? else {
+            return Ok(false);
+        };
+        pending.prompt_after = unix_timestamp().saturating_add(crate::UPDATE_SOAK.as_secs());
+        write_json_atomic(&pending_path(&self.root, id), &pending)?;
+        Ok(true)
+    }
+
     fn stage_package_update(
         &self,
         id: &str,
@@ -178,6 +240,9 @@ impl SabineService {
             download_artifact(&artifact.url, &path)?;
         }
         verify_sha256(&path, &artifact.sha256)?;
+        let existing = self
+            .pending_app_update(id)?
+            .filter(|pending| pending.version == version);
         let pending = PendingAppUpdate {
             app_id: id.to_string(),
             version: version.to_string(),
@@ -185,6 +250,15 @@ impl SabineService {
             sha256: artifact.sha256.clone(),
             kind: artifact.kind,
             requires_elevation: artifact.kind.requires_elevation(),
+            staged_at: existing
+                .as_ref()
+                .map(|pending| pending.staged_at)
+                .filter(|timestamp| *timestamp > 0)
+                .unwrap_or_else(unix_timestamp),
+            prompt_after: existing
+                .as_ref()
+                .map(|pending| pending.prompt_after)
+                .unwrap_or_default(),
         };
         let pending_path = pending_path(&self.root, id);
         if let Some(parent) = pending_path.parent() {

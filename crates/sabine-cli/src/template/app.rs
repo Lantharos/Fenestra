@@ -46,7 +46,10 @@ fn app_package_json(name: &str, local_package: bool) -> String {
     let sabine_dependency = if local_package {
         "file:vendor/sabine".to_string()
     } else {
-        format!("github:Lantharos/Sabine#v{}", env!("CARGO_PKG_VERSION"))
+        format!(
+            "github:Lantharos/Sabine#v{}",
+            sabine_service::SABINE_VERSION
+        )
     };
     format!(
         r#"{{

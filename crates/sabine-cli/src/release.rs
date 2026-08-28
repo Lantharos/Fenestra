@@ -110,11 +110,17 @@ pub(crate) fn write_manifest(
     if artifacts.is_empty() {
         return Err("at least one --artifact target=path is required".to_string());
     }
+    let published_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".to_string());
     let mut manifest = AppReleaseManifest {
         schema: 1,
         app_id: config.app.id,
         version: config.app.version,
         channel: channel.to_string(),
+        published_at,
+        requires_sabine: sabine_service::SabineVersion::current(),
         artifacts,
         signature: String::new(),
     };
@@ -137,6 +143,14 @@ pub(crate) fn write_system_manifest(
     let version = version.trim_start_matches('v');
     if version.is_empty() {
         return Err("system release version is required".to_string());
+    }
+    if sabine_service::SabineVersion::parse(version)
+        != Some(sabine_service::SabineVersion::current())
+    {
+        return Err(format!(
+            "system release version must be {}",
+            sabine_service::SABINE_VERSION
+        ));
     }
     let directory = absolute(directory)?;
     let mut artifacts = BTreeMap::new();
@@ -178,6 +192,7 @@ pub(crate) fn write_system_manifest(
         schema: 1,
         version: version.to_string(),
         published_at,
+        compatibility: sabine_service::SystemCompatibility::current(),
         artifacts,
         signature: String::new(),
     };

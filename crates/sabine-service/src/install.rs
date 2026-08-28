@@ -1,30 +1,38 @@
 use crate::{
-    PrepareProgress, PrepareStage, ServiceError, ServiceResult, SystemReleaseManifest,
-    registry::replace_file, service_data_dir, verify_system_release,
+    PrepareProgress, PrepareStage, SabineVersion, ServiceError, ServiceResult, SystemCompatibility,
+    SystemReleaseManifest, service_data_dir, verify_system_release,
 };
-use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
 };
 
 mod artifacts;
+mod state;
 
 use artifacts::{
     copy_directory, download_file, extract_system_archive, fetch_system_manifest,
     sabine_host_relative_path, service_binary_name, service_daemon_binary_name, system_asset_name,
     verify_sha256, which,
 };
+use state::{
+    SystemInstallationState, clear_system_failure, compatibility_for_version, current_installation,
+    finalize_system_update, normalized_state_compatibility, prune_system_versions,
+    read_installation_state, record_system_failure, system_update_is_backed_off, versions_dir,
+    write_installation_state,
+};
 
 const SERVICE_REPO: &str = "Lantharos/Sabine";
 const SYSTEM_UPDATE_PUBLIC_KEYS: &str = include_str!("../update-public-key.txt");
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct SystemInstallationState {
-    schema: u32,
-    active: String,
-    previous: Option<String>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SystemUpdateMode {
+    Required(SabineVersion),
+    Repair {
+        required: SabineVersion,
+        release_version: String,
+    },
+    Routine,
 }
 
 #[derive(Clone, Debug)]
@@ -37,7 +45,7 @@ pub struct StagedSystemUpdate {
 pub fn cached_service_path() -> PathBuf {
     current_installation()
         .map(|(_, path)| path.join(service_binary_name()))
-        .unwrap_or_else(|| service_path_for_version(env!("CARGO_PKG_VERSION")))
+        .unwrap_or_else(|| service_path_for_version(crate::SABINE_VERSION))
 }
 
 pub(crate) fn service_path_for_version(version: &str) -> PathBuf {
@@ -50,6 +58,14 @@ pub fn service_daemon_path(service: &Path) -> PathBuf {
 
 fn complete_service_at(path: PathBuf) -> Option<PathBuf> {
     (path.is_file() && service_daemon_path(&path).is_file()).then_some(path)
+}
+
+fn complete_managed_system_at(directory: &Path) -> Option<PathBuf> {
+    directory
+        .join(sabine_host_relative_path())
+        .is_file()
+        .then_some(())?;
+    complete_service_at(directory.join(service_binary_name()))
 }
 
 pub fn find_service_executable() -> Option<PathBuf> {
@@ -93,10 +109,52 @@ pub fn ensure_service_executable(
         if let Some(path) = adjacent_service() {
             return seed_managed_install(&path);
         }
-        if let Some(update) = install_latest_system(true, &mut on_progress)? {
+        if let Some(update) = install_latest_system(
+            SystemUpdateMode::Required(SabineVersion::current()),
+            &mut on_progress,
+        )? {
             return Ok(update.service);
         }
         return Ok(current);
+    }
+    if let Some(state) = read_installation_state() {
+        on_progress(PrepareProgress {
+            stage: PrepareStage::Service,
+            message: "Repairing Sabine service".to_string(),
+            fraction: Some(0.02),
+        });
+        if managed_system_is_older(&state.active) {
+            if let Some(path) = adjacent_service() {
+                return seed_managed_install(&path);
+            }
+            if let Some(update) = install_latest_system(
+                SystemUpdateMode::Required(SabineVersion::current()),
+                &mut on_progress,
+            )? {
+                return Ok(update.service);
+            }
+        } else {
+            let installed = SabineVersion::parse(&state.active).ok_or_else(|| {
+                ServiceError::Update(format!(
+                    "installed Sabine version {} is invalid",
+                    state.active
+                ))
+            })?;
+            if installed == SabineVersion::current()
+                && let Some(path) = adjacent_service()
+            {
+                return seed_managed_install(&path);
+            }
+            if let Some(update) = install_latest_system(
+                SystemUpdateMode::Repair {
+                    required: installed,
+                    release_version: state.active,
+                },
+                &mut on_progress,
+            )? {
+                return Ok(update.service);
+            }
+        }
     }
     if let Some(path) = adjacent_service() {
         return seed_managed_install(&path);
@@ -113,7 +171,10 @@ pub fn ensure_service_executable(
         fraction: Some(0.02),
     });
 
-    let update = install_latest_system(false, &mut on_progress)?;
+    let update = install_latest_system(
+        SystemUpdateMode::Required(SabineVersion::current()),
+        &mut on_progress,
+    )?;
     let destination = update
         .map(|update| update.service)
         .or_else(|| complete_service_at(cached_service_path()))
@@ -127,7 +188,7 @@ pub fn ensure_service_executable(
 }
 
 fn managed_system_is_older(installed: &str) -> bool {
-    crate::types::version_is_newer(env!("CARGO_PKG_VERSION"), installed)
+    crate::types::version_is_newer(crate::SABINE_VERSION, installed)
 }
 
 fn configured_service() -> Option<PathBuf> {
@@ -145,7 +206,7 @@ fn seed_managed_install(service: &Path) -> ServiceResult<PathBuf> {
     let source_dir = service.parent().ok_or_else(|| {
         ServiceError::Update("bundled Sabine service has no parent directory".to_string())
     })?;
-    let version = env!("CARGO_PKG_VERSION");
+    let version = crate::SABINE_VERSION;
     let destination = versions_dir().join(version);
     let installed_service = destination.join(service_binary_name());
     if complete_service_at(installed_service.clone()).is_none()
@@ -190,10 +251,21 @@ fn seed_managed_install(service: &Path) -> ServiceResult<PathBuf> {
         }
         fs::rename(staging, &destination)?;
     }
+    let previous_state = read_installation_state();
+    let previous = previous_state
+        .as_ref()
+        .map(|state| state.active.clone())
+        .filter(|active| active != version);
+    let previous_compatibility = previous_state
+        .as_ref()
+        .filter(|state| state.active != version)
+        .map(normalized_state_compatibility);
     write_installation_state(&SystemInstallationState {
         schema: 1,
         active: version.to_string(),
-        previous: None,
+        previous,
+        compatibility: SystemCompatibility::current(),
+        previous_compatibility,
     })?;
     Ok(installed_service)
 }
@@ -202,7 +274,53 @@ pub fn stage_system_update() -> ServiceResult<Option<StagedSystemUpdate>> {
     if read_installation_state().is_none() {
         return Ok(None);
     }
-    install_latest_system(true, &mut |_| {})
+    install_latest_system(SystemUpdateMode::Routine, &mut |_| {})
+}
+
+pub(crate) fn stage_required_system_update(
+    required: SabineVersion,
+) -> ServiceResult<Option<StagedSystemUpdate>> {
+    install_latest_system(SystemUpdateMode::Required(required), &mut |_| {})
+}
+
+pub(crate) fn install_required_system_update(required: SabineVersion) -> ServiceResult<()> {
+    let Some(_) = stage_required_system_update(required)? else {
+        return Err(ServiceError::Update(format!(
+            "Sabine {} is not available",
+            required.label()
+        )));
+    };
+    crate::ensure_daemon_running()?;
+    let installed = installed_system_compatibility();
+    if installed.accepts(required) {
+        Ok(())
+    } else {
+        Err(ServiceError::Update(format!(
+            "Sabine {} did not become active",
+            required.label()
+        )))
+    }
+}
+
+pub fn repair_system_installation() -> ServiceResult<PathBuf> {
+    let release_version = read_installation_state()
+        .map(|state| state.active)
+        .unwrap_or_else(|| crate::SABINE_VERSION.to_string());
+    let required = SabineVersion::parse(&release_version).ok_or_else(|| {
+        ServiceError::Update(format!(
+            "installed Sabine version {release_version} is invalid"
+        ))
+    })?;
+    install_latest_system(
+        SystemUpdateMode::Repair {
+            required,
+            release_version,
+        },
+        &mut |_| {},
+    )?
+    .map(|update| update.service)
+    .or_else(|| complete_service_at(cached_service_path()))
+    .ok_or_else(|| ServiceError::Update("Sabine system repair did not produce a service".into()))
 }
 
 pub fn rollback_system_update(failed_version: &str) -> ServiceResult<Option<PathBuf>> {
@@ -210,24 +328,28 @@ pub fn rollback_system_update(failed_version: &str) -> ServiceResult<Option<Path
         return Ok(None);
     };
     if state.active != failed_version {
-        return Ok(complete_service_at(
-            versions_dir()
-                .join(&state.active)
-                .join(service_binary_name()),
+        return Ok(complete_managed_system_at(
+            &versions_dir().join(&state.active),
         ));
     }
     let Some(previous) = state.previous else {
         return Ok(None);
     };
-    let service = versions_dir().join(&previous).join(service_binary_name());
-    let Some(service) = complete_service_at(service) else {
+    let directory = versions_dir().join(&previous);
+    let Some(service) = complete_managed_system_at(&directory) else {
         return Ok(None);
     };
+    let compatibility = state
+        .previous_compatibility
+        .unwrap_or_else(|| compatibility_for_version(&previous));
     write_installation_state(&SystemInstallationState {
         schema: 1,
         active: previous,
         previous: None,
+        compatibility,
+        previous_compatibility: None,
     })?;
+    record_system_failure(failed_version)?;
     let failed = versions_dir().join(failed_version);
     if failed.is_dir() {
         let _ = fs::remove_dir_all(failed);
@@ -236,10 +358,17 @@ pub fn rollback_system_update(failed_version: &str) -> ServiceResult<Option<Path
 }
 
 fn install_latest_system(
-    require_newer: bool,
+    mode: SystemUpdateMode,
     on_progress: &mut impl FnMut(PrepareProgress),
 ) -> ServiceResult<Option<StagedSystemUpdate>> {
-    let manifest = fetch_system_manifest()?;
+    let requested_version = match &mode {
+        SystemUpdateMode::Required(required) => Some(required.label()),
+        SystemUpdateMode::Repair {
+            release_version, ..
+        } => Some(release_version.clone()),
+        SystemUpdateMode::Routine => None,
+    };
+    let manifest = fetch_system_manifest(requested_version.as_deref())?;
     if !SYSTEM_UPDATE_PUBLIC_KEYS
         .lines()
         .map(str::trim)
@@ -261,8 +390,32 @@ fn install_latest_system(
             "Sabine release version is missing".to_string(),
         ));
     }
+    let compatibility = normalized_release_compatibility(&manifest)?;
+    let required = match &mode {
+        SystemUpdateMode::Required(required) | SystemUpdateMode::Repair { required, .. } => {
+            Some(*required)
+        }
+        SystemUpdateMode::Routine => None,
+    };
+    if let Some(required) = required
+        && (compatibility.major != required.major || compatibility.build < required.build)
+    {
+        return Err(ServiceError::Update(format!(
+            "latest Sabine system {} cannot run an app requiring Sabine {}",
+            manifest.version,
+            required.label()
+        )));
+    }
+    if mode == SystemUpdateMode::Routine {
+        if !crate::release_is_soaked(&manifest.published_at) {
+            return Ok(None);
+        }
+        if system_update_is_backed_off(&manifest.version) {
+            return Ok(None);
+        }
+    }
     let previous = read_installation_state();
-    if require_newer
+    if !matches!(&mode, SystemUpdateMode::Repair { .. })
         && previous
             .as_ref()
             .is_some_and(|state| !crate::types::version_is_newer(&manifest.version, &state.active))
@@ -271,28 +424,84 @@ fn install_latest_system(
     }
     let install_dir = versions_dir().join(&manifest.version);
     let destination = install_dir.join(service_binary_name());
-    if complete_service_at(destination.clone()).is_none()
-        || !install_dir.join(sabine_host_relative_path()).is_file()
+    if (matches!(&mode, SystemUpdateMode::Repair { .. })
+        || complete_service_at(destination.clone()).is_none()
+        || !install_dir.join(sabine_host_relative_path()).is_file())
+        && let Err(error) = install_system_archive(&manifest, &install_dir, on_progress)
     {
-        install_system_archive(&manifest, &install_dir, on_progress)?;
+        record_system_failure(&manifest.version)?;
+        return Err(error);
     }
-    let previous_version = previous
+    let repairing_active = previous
         .as_ref()
-        .map(|state| state.active.clone())
-        .filter(|version| version != &manifest.version);
+        .is_some_and(|state| state.active == manifest.version);
+    let previous_version = if repairing_active {
+        previous.as_ref().and_then(|state| state.previous.clone())
+    } else {
+        previous.as_ref().map(|state| state.active.clone())
+    };
+    let previous_compatibility = if repairing_active {
+        previous
+            .as_ref()
+            .and_then(|state| state.previous_compatibility)
+    } else {
+        previous.as_ref().map(normalized_state_compatibility)
+    };
     write_installation_state(&SystemInstallationState {
         schema: 1,
         active: manifest.version.clone(),
         previous: previous_version.clone(),
+        compatibility,
+        previous_compatibility,
     })?;
     prune_system_versions(&manifest.version, previous_version.as_deref())?;
     Ok(Some(StagedSystemUpdate {
         version: manifest.version,
         service: destination,
         previous_service: previous_version
-            .map(|version| versions_dir().join(version).join(service_binary_name()))
-            .and_then(complete_service_at),
+            .map(|version| versions_dir().join(version))
+            .and_then(|directory| complete_managed_system_at(&directory)),
     }))
+}
+
+pub(crate) fn mark_system_update_healthy(version: &str) {
+    let _ = clear_system_failure(version);
+    let _ = finalize_system_update(version);
+}
+
+pub fn installed_system_compatibility() -> SystemCompatibility {
+    read_installation_state()
+        .map(|state| normalized_state_compatibility(&state))
+        .unwrap_or_else(SystemCompatibility::current)
+}
+
+fn normalized_release_compatibility(
+    manifest: &SystemReleaseManifest,
+) -> ServiceResult<SystemCompatibility> {
+    let version = SabineVersion::parse(&manifest.version).ok_or_else(|| {
+        ServiceError::Update(format!(
+            "invalid Sabine release version {}",
+            manifest.version
+        ))
+    })?;
+    let compatibility = if manifest.compatibility.build == 0 {
+        SystemCompatibility {
+            major: version.major,
+            build: version.build,
+            minimum_app_build: 1,
+        }
+    } else {
+        manifest.compatibility
+    };
+    if compatibility.major != version.major
+        || compatibility.build != version.build
+        || compatibility.minimum_app_build > compatibility.build
+    {
+        return Err(ServiceError::Update(
+            "Sabine release compatibility is inconsistent with its version".to_string(),
+        ));
+    }
+    Ok(compatibility)
 }
 
 fn install_system_archive(
@@ -357,64 +566,6 @@ fn install_system_archive(
     Ok(())
 }
 
-fn versions_dir() -> PathBuf {
-    service_data_dir().join("bin/versions")
-}
-
-fn installation_state_path() -> PathBuf {
-    service_data_dir().join("bin/current.json")
-}
-
-fn read_installation_state() -> Option<SystemInstallationState> {
-    let state = serde_json::from_slice::<SystemInstallationState>(
-        &fs::read(installation_state_path()).ok()?,
-    )
-    .ok()?;
-    (state.schema == 1).then_some(state)
-}
-
-fn current_installation() -> Option<(String, PathBuf)> {
-    let state = read_installation_state()?;
-    let path = versions_dir().join(&state.active);
-    complete_service_at(path.join(service_binary_name()))?;
-    Some((state.active, path))
-}
-
-fn write_installation_state(state: &SystemInstallationState) -> ServiceResult<()> {
-    let path = installation_state_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let temporary = path.with_extension("new");
-    let mut file = fs::File::create(&temporary)?;
-    file.write_all(&serde_json::to_vec_pretty(state).expect("system state is serializable"))?;
-    file.sync_all()?;
-    replace_file(&temporary, &path)?;
-    Ok(())
-}
-
-fn prune_system_versions(active: &str, previous: Option<&str>) -> ServiceResult<()> {
-    let base = versions_dir();
-    if !base.is_dir() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(base)? {
-        let path = entry?.path();
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        if path.is_dir()
-            && name != active
-            && Some(name) != previous
-            && !name.ends_with(".installing")
-        {
-            let _ = fs::remove_dir_all(path);
-        }
-    }
-    Ok(())
-}
-
 fn make_executable(path: &Path) -> ServiceResult<()> {
     #[cfg(unix)]
     {
@@ -435,7 +586,7 @@ mod tests {
     #[test]
     fn managed_system_upgrade_only_replaces_older_versions() {
         assert!(managed_system_is_older("0.0.1"));
-        assert!(!managed_system_is_older(env!("CARGO_PKG_VERSION")));
+        assert!(!managed_system_is_older(crate::SABINE_VERSION));
         assert!(!managed_system_is_older("999.0.0"));
     }
 }

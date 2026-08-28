@@ -169,7 +169,7 @@ sabine bundle . --target dmg --release
 
 ## Publishing and updates
 
-Sabine uses one coordinated `vX.Y.Z` GitHub Release for the CLI, service, daemon, and prebuilt CEF
+Sabine uses one coordinated `vMAJOR.BUILD` GitHub Release for the CLI, service, daemon, and prebuilt CEF
 host. The release workflow builds the complete system bundle for each platform and signs one
 immutable release manifest. Bootstrap verifies the Ed25519 signature and artifact SHA-256 before
 installing the binaries side by side. Customer machines do not compile Sabine or require Rust,
@@ -194,10 +194,12 @@ git push origin v0.1.0
 
 The workflow builds MSI, DMG, AppImage, deb, and rpm artifacts, signs `sabine-update.json`, attaches
 the exact platform/package mapping, attests the artifacts, and creates the GitHub Release. The daemon
-downloads updates in the background. Sabine-managed archives activate side by side; their stable
+downloads routine updates only after they have been live for 24 hours plus a stable per-installation
+rollout offset of up to six hours. Sabine-managed archives activate side by side; their stable
 bootstrap forwards to the current release on the next launch. Native packages are staged silently,
-then offer Install or Later when the app next opens. Accepting closes the app, requests elevation
-when needed, installs, and relaunches it. Store installs remain owned by the store.
+then offer Install or Later when the app next opens. Later snoozes the prompt for a day. Accepting
+closes the app, requests elevation when needed, installs, and relaunches it. Store installs remain
+owned by the store.
 
 Windows bundles statically link the Microsoft C runtime. MSI packages are x64, install under
 `Program Files`, and use the configured app icon for their Start menu shortcut. The release workflow
@@ -230,11 +232,29 @@ console window to the login process.
 4. The app registers with the service and starts.
 
 Later apps reuse that service and runtime. Updates are atomic: Sabine retains the previous system
-version until the replacement daemon reports healthy, and CEF runtimes in active use hold leases so
-maintenance cannot prune them. A failed CEF initialization is quarantined and resolution falls back
-to the previous runtime. Quarantines are scoped to the health-probe version so a corrected probe
-automatically reconsiders runtimes it previously rejected. By default the service also starts at
-login so the runtime stays warm.
+version until the replacement daemon reports healthy. Exactly one daemon is active during handoff;
+the old service binary acts as a short-lived supervisor, rolls back a failed replacement, and backs
+off repeatedly failing releases. If the active installation is damaged, bootstrap silently replaces
+it from signed release metadata. An app built for a newer Sabine build bypasses the routine rollout
+delay and upgrades the shared system before registration. An app below the system's signed minimum
+supported build is removed from shared integration and gets a native explanation instead of being
+launched against an incompatible contract.
+
+New system releases are published as immutable, non-latest candidates. After 24 hours an hourly
+promotion job moves the newest eligible candidate to the `latest` channel, protecting older Sabine
+installations that predate client-side soak enforcement. Current installations then apply their
+stable zero-to-six-hour rollout offset. An app that explicitly requires the candidate build uses its
+signed versioned manifest directly and can upgrade immediately.
+
+Public Sabine versions use `MAJOR.BUILD`, so this source tree is `0.21`. Cargo and npm encode the same
+release as `0.21.0` because their package formats require three components. Build releases remain
+compatible within a major unless signed release metadata explicitly raises the minimum app build;
+fundamental contract breaks increment the major.
+
+CEF runtimes in active use hold leases so maintenance cannot prune them. A failed CEF initialization
+is quarantined and resolution falls back to the previous runtime. Quarantines are scoped to the
+health-probe version so a corrected probe automatically reconsiders runtimes it previously rejected.
+By default the service also starts at login so the runtime stays warm.
 Prefer on-demand start with `sabine-service prefer-on-demand`.
 
 Service acquisition order:

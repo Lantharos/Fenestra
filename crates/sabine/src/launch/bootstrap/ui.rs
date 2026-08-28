@@ -13,7 +13,7 @@ use winit::{
 };
 
 mod confirm;
-pub(super) use confirm::confirm_update;
+pub(super) use confirm::{confirm_update, show_notice};
 
 const WIDTH: u32 = 480;
 const HEIGHT: u32 = 148;

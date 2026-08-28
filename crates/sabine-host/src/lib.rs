@@ -357,7 +357,11 @@ fn prebuilt_host_path() -> Option<PathBuf> {
     let current =
         serde_json::from_slice::<CurrentSystem>(&std::fs::read(bin.join("current.json")).ok()?)
             .ok()?;
-    if current.active != env!("CARGO_PKG_VERSION") {
+    let package_version = env!("CARGO_PKG_VERSION");
+    let public_version = package_version
+        .strip_suffix(".0")
+        .unwrap_or(package_version);
+    if current.active != public_version {
         return None;
     }
     let directory = bin.join("versions").join(current.active);

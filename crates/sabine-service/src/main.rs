@@ -8,7 +8,7 @@ use std::{path::PathBuf, process::ExitCode};
 #[derive(Parser)]
 #[command(
     name = "sabine-service",
-    version,
+    version = sabine_service::SABINE_VERSION,
     about = "Sabine runtime and app service"
 )]
 struct Cli {
@@ -131,6 +131,18 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Update { id } => match service.update_app(&id)? {
             AppUpdateStatus::Current => println!("{id} already up to date"),
+            AppUpdateStatus::Deferred { version } => {
+                println!("{id} {version} is waiting for the update soak period")
+            }
+            AppUpdateStatus::RequiresSystem {
+                app_version,
+                sabine,
+            } => {
+                println!(
+                    "{id} {app_version} is ready after Sabine {} is installed",
+                    sabine.label()
+                )
+            }
             AppUpdateStatus::Installed { version } => {
                 println!("updated {id} to {version}")
             }

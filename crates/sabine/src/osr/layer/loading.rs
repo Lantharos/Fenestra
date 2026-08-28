@@ -2,10 +2,7 @@ use std::time::Instant;
 
 use layershellev::{RefreshRequest, WindowState};
 
-use crate::osr::host::loading_messages::loading_message;
-use crate::osr::host::types::{
-    LOADING_ANIMATION_INTERVAL, LOADING_MESSAGE_INTERVAL, LoadingKind, NativeLoading,
-};
+use crate::osr::host::types::{LOADING_ANIMATION_INTERVAL, LoadingKind, NativeLoading};
 use crate::render::raster_text::{blend_rect, fill_bgra};
 
 use super::buffer::DamageRect;
@@ -41,16 +38,6 @@ impl OsrLayerHost {
             self.config.background_color.to_rgba8(),
         );
         let center_y = height as i32 / 2;
-        let rotation =
-            (loading.started.elapsed().as_millis() / LOADING_MESSAGE_INTERVAL.as_millis()) as u64;
-        self.text_renderer.draw_centered(
-            &mut self.presentation_buffer,
-            (width, height),
-            (24, center_y - 34, width.saturating_sub(48), 24),
-            loading_message(loading.kind, loading.message_seed, rotation),
-            14.0,
-            [245, 245, 246, 200],
-        );
         let track_width = width.saturating_sub(48).clamp(1, 112);
         let track_x = (width - track_width) as i32 / 2;
         let phase = (loading.started.elapsed().as_millis() / 100) as usize % 9;
@@ -63,7 +50,7 @@ impl OsrLayerHost {
             blend_rect(
                 &mut self.presentation_buffer,
                 (width, height),
-                (x, center_y + 4, segment_width, 3),
+                (x, center_y - 1, segment_width, 3),
                 [245, 245, 246, alpha],
             );
         }

@@ -4,14 +4,31 @@ This document describes the current architecture and the boundaries contributors
 
 ## Release and update model
 
-Sabine publishes the CLI, service, daemon, and prebuilt CEF host as one `vX.Y.Z` release train. A
+Sabine publishes the CLI, service, daemon, and prebuilt CEF host as one `vMAJOR.BUILD` release train.
+Cargo and npm represent the same release with a trailing patch zero because their package formats
+require three components. Build numbers advance for ordinary releases; a fundamental contract break
+advances the major. A
 platform system archive and `sabine-release.json` are immutable release inputs. Metadata is signed
 with Ed25519; bootstrap verifies the embedded trust key and artifact SHA-256, then installs the
 binaries into a versioned directory. The active pointer changes atomically and the previous version
-is retained until the replacement daemon reports healthy; failed handoff restores the previous
-pointer and daemon. The host is compiled against CEF Stable API 133, so the runtime service can
+is retained until the replacement daemon reports healthy. The old binary supervises a single-daemon
+handoff; failed startup restores the previous pointer and daemon, records the failed release, and
+applies an exponential retry delay. A damaged active installation is silently replaced from signed
+release metadata. The host is compiled against CEF Stable API 133, so the runtime service can
 independently install newer compatible CEF builds. Apps negotiate Sabine behavior and capabilities
 and never request a Chromium version.
+
+Routine Sabine and app updates become eligible 24 hours after publication plus a stable
+per-installation rollout offset between zero and six hours. This spreads load and leaves time to
+withdraw a bad release without repeatedly prompting users. System releases are also kept off the
+GitHub `latest` channel for their first 24 hours, which protects clients running an updater from
+before this policy existed; hourly automation promotes the newest eligible immutable release.
+A newer app that declares a newer Sabine build bypasses both gates by fetching that build's signed
+versioned manifest: its bundled bootstrap stages the required system, hands off the daemon, and only
+then registers the app. System release metadata declares its current build and the oldest app build
+it accepts. Apps older than that floor are removed from shared registration and receive a native
+incompatibility notice. Legacy registrations without compatibility metadata remain accepted until
+they next register with a current Sabine build.
 
 App releases are separate from Sabine releases. `[updates]` in `Sabine.toml` identifies a GitHub
 repository or HTTPS manifest endpoint. Sabine's reusable GitHub Actions workflow builds native
@@ -160,6 +177,14 @@ queue so a stalled compositor applies backpressure instead of accumulating frame
 Linux layer-shell surfaces use their dedicated host because layer-shell configuration must happen
 before a regular winit surface is created. Other platforms express palette behavior with a normal
 frameless, always-on-top, hide-on-blur window.
+
+Initially hidden and prewarmed layer surfaces stay detached. With `retain_hidden_frame`, showing a
+surface immediately restores size, anchors, margin, layer, exclusive zone, keyboard mode, alpha, and
+background effect, then attaches the retained released SHM frame without waiting for another CEF
+paint. A busy presentation buffer schedules an immediate retry and wakes again on `wl_buffer.release`.
+`set_shell_surface_visible` reports success only after the cached frame is mapped or the surface is
+fully unmapped. Layer loading uses the compact three-line native animation without text so small
+shell surfaces do not reserve message space.
 
 ## Runtime ownership
 

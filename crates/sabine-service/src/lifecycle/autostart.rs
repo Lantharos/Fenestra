@@ -20,15 +20,6 @@ pub fn install_login_autostart() -> ServiceResult<()> {
 }
 
 pub fn install_login_autostart_with(executable: &Path) -> ServiceResult<()> {
-    install_login_autostart_with_mode(executable, true)
-}
-
-pub(super) fn install_login_autostart_with_mode(
-    executable: &Path,
-    restart_mismatched_daemon: bool,
-) -> ServiceResult<()> {
-    #[cfg(not(target_os = "linux"))]
-    let _ = restart_mismatched_daemon;
     let daemon = service_daemon_path(executable);
     if !daemon.is_file() {
         return Err(ServiceError::Update(format!(
@@ -68,7 +59,7 @@ pub(super) fn install_login_autostart_with_mode(
         let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Sabine";
         for (name, value) in [
             ("DisplayName", "Sabine".to_string()),
-            ("DisplayVersion", env!("CARGO_PKG_VERSION").to_string()),
+            ("DisplayVersion", crate::SABINE_VERSION.to_string()),
             ("Publisher", "Lantharos".to_string()),
             ("UninstallString", uninstall),
         ] {
@@ -101,7 +92,7 @@ pub(super) fn install_login_autostart_with_mode(
             "--now",
             "sabine.service",
         ]))?;
-        if restart_mismatched_daemon && !systemd_daemon_matches(&daemon) {
+        if !systemd_daemon_matches(&daemon) {
             run_checked(Command::new("systemctl").args(["--user", "restart", "sabine.service"]))?;
         }
     }

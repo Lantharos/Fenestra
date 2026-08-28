@@ -19,7 +19,7 @@ use runtime::RuntimeCommand;
 use source_install::{InstallOptions, UpdateOptions};
 
 #[derive(Debug, Parser)]
-#[command(name = "sabine", version, about = "Sabine web runtime tooling")]
+#[command(name = "sabine", version = sabine_service::SABINE_VERSION, about = "Sabine web runtime tooling")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
