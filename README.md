@@ -246,8 +246,8 @@ installations that predate client-side soak enforcement. Current installations t
 stable zero-to-six-hour rollout offset. An app that explicitly requires the candidate build uses its
 signed versioned manifest directly and can upgrade immediately.
 
-Public Sabine versions use `MAJOR.BUILD`, so this source tree is `0.21`. Cargo and npm encode the same
-release as `0.21.0` because their package formats require three components. Build releases remain
+Public Sabine versions use `MAJOR.BUILD`, so this source tree is `0.22`. Cargo and npm encode the same
+release as `0.22.0` because their package formats require three components. Build releases remain
 compatible within a major unless signed release metadata explicitly raises the minimum app build;
 fundamental contract breaks increment the major.
 
