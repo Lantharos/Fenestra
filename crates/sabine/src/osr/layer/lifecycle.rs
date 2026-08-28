@@ -88,8 +88,8 @@ impl OsrLayerHost {
         request_id: Option<u64>,
         state: &mut WindowState<()>,
     ) {
-        self.acknowledge_visibility(self.surface_mapped);
-        self.pending_visibility_ack = request_id;
+        self.acknowledge_superseded_visibility(self.surface_mapped);
+        self.pending_visibility_ack = request_id.map(|request_id| (request_id, visible));
         self.visible = visible;
         if visible {
             self.show_surface(state);
@@ -181,13 +181,51 @@ impl OsrLayerHost {
     }
 
     pub(super) fn acknowledge_visibility(&mut self, mapped: bool) {
-        let Some(request_id) = self.pending_visibility_ack.take() else {
+        let Some(request_id) =
+            take_matching_visibility_ack(&mut self.pending_visibility_ack, mapped)
+        else {
             return;
         };
+        Self::emit_visibility_acknowledgement(request_id, mapped);
+    }
+
+    fn acknowledge_superseded_visibility(&mut self, mapped: bool) {
+        let Some((request_id, _)) = self.pending_visibility_ack.take() else {
+            return;
+        };
+        Self::emit_visibility_acknowledgement(request_id, mapped);
+    }
+
+    fn emit_visibility_acknowledgement(request_id: u64, mapped: bool) {
         let state = if mapped { "mapped" } else { "unmapped" };
         let mut output = std::io::stdout();
         use std::io::Write;
         let _ = writeln!(output, "SABINE_LAYER_VISIBILITY\t{request_id}\t{state}");
         let _ = output.flush();
+    }
+}
+
+fn take_matching_visibility_ack(pending: &mut Option<(u64, bool)>, mapped: bool) -> Option<u64> {
+    if !pending.is_some_and(|(_, requested_visible)| requested_visible == mapped) {
+        return None;
+    }
+    pending.take().map(|(request_id, _)| request_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::take_matching_visibility_ack;
+
+    #[test]
+    fn show_remains_pending_across_transient_unmap_until_commit() {
+        let mut pending = Some((1, false));
+        assert_eq!(take_matching_visibility_ack(&mut pending, false), Some(1));
+        assert_eq!(pending, None);
+
+        pending = Some((2, true));
+        assert_eq!(take_matching_visibility_ack(&mut pending, false), None);
+        assert_eq!(pending, Some((2, true)));
+        assert_eq!(take_matching_visibility_ack(&mut pending, true), Some(2));
+        assert_eq!(pending, None);
     }
 }

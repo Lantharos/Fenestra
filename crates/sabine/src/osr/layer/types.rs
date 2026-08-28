@@ -35,7 +35,7 @@ pub(super) struct OsrLayerHost {
     pub(super) surface_mapped: bool,
     pub(super) wayland_failed: bool,
     pub(super) visible: bool,
-    pub(super) pending_visibility_ack: Option<u64>,
+    pub(super) pending_visibility_ack: Option<(u64, bool)>,
     pub(super) cursor_shape: String,
     pub(super) cursor_x: f32,
     pub(super) cursor_y: f32,
