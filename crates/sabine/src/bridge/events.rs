@@ -7,7 +7,6 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
     thread::{self, JoinHandle},
-    time::Duration,
 };
 
 use sabine_bridge::{BridgeCommand, BridgeHandlers, BridgeResult};
@@ -18,11 +17,68 @@ use crate::launch::browser::HOST_CONTROL_PREFIX;
 #[derive(Clone)]
 pub struct BridgeEventEmitter {
     targets: Arc<Mutex<Vec<BridgeTarget>>>,
-    visibility_waiters: Arc<Mutex<HashMap<u64, crossbeam_channel::Sender<bool>>>>,
+    visibility_waiters: Arc<Mutex<HashMap<u64, VisibilityWaiter>>>,
 }
 
 static NEXT_VISIBILITY_REQUEST: AtomicU64 = AtomicU64::new(1);
-const VISIBILITY_ACK_TIMEOUT: Duration = Duration::from_secs(5);
+
+struct VisibilityWaiter {
+    window_id: u32,
+    completion: crossbeam_channel::Sender<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellSurfaceVisibilityState {
+    Pending,
+    Mapped,
+    Unmapped,
+    Disconnected,
+}
+
+#[must_use = "poll the request state to observe when the compositor commit completes"]
+pub struct ShellSurfaceVisibilityRequest {
+    request_id: u64,
+    requested_visible: bool,
+    completion: crossbeam_channel::Receiver<bool>,
+    observed: Mutex<Option<bool>>,
+}
+
+impl ShellSurfaceVisibilityRequest {
+    pub fn id(&self) -> u64 {
+        self.request_id
+    }
+
+    pub fn requested_visible(&self) -> bool {
+        self.requested_visible
+    }
+
+    pub fn state(&self) -> ShellSurfaceVisibilityState {
+        let Ok(mut observed) = self.observed.lock() else {
+            return ShellSurfaceVisibilityState::Disconnected;
+        };
+        if let Some(mapped) = *observed {
+            return visibility_state(mapped);
+        }
+        match self.completion.try_recv() {
+            Ok(mapped) => {
+                *observed = Some(mapped);
+                visibility_state(mapped)
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => ShellSurfaceVisibilityState::Pending,
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                ShellSurfaceVisibilityState::Disconnected
+            }
+        }
+    }
+}
+
+fn visibility_state(mapped: bool) -> ShellSurfaceVisibilityState {
+    if mapped {
+        ShellSurfaceVisibilityState::Mapped
+    } else {
+        ShellSurfaceVisibilityState::Unmapped
+    }
+}
 
 struct BridgeTarget {
     window_id: u32,
@@ -49,33 +105,49 @@ impl BridgeEventEmitter {
         if let Ok(mut targets) = self.targets.lock() {
             targets.retain(|target| target.window_id != window_id);
         }
+        if let Ok(mut waiters) = self.visibility_waiters.lock() {
+            waiters.retain(|_, waiter| waiter.window_id != window_id);
+        }
     }
 
     pub fn set_visible(&self, visible: bool) -> bool {
         self.emit_host_control("visible", if visible { "1" } else { "0" })
     }
 
-    pub(crate) fn set_layer_visible(&self, visible: bool) -> bool {
+    pub(crate) fn set_layer_visible(
+        &self,
+        window_id: u32,
+        visible: bool,
+    ) -> Option<ShellSurfaceVisibilityRequest> {
         let request_id = NEXT_VISIBILITY_REQUEST.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = crossbeam_channel::bounded(1);
         let Ok(mut waiters) = self.visibility_waiters.lock() else {
-            return false;
+            return None;
         };
-        waiters.insert(request_id, sender);
+        waiters.insert(
+            request_id,
+            VisibilityWaiter {
+                window_id,
+                completion: sender,
+            },
+        );
         drop(waiters);
-        if !self.emit_host_control("visible", &format!("{}:{request_id}", u8::from(visible))) {
+        if !self.emit_host_control_to(
+            window_id,
+            "visible",
+            &format!("{}:{request_id}", u8::from(visible)),
+        ) {
             if let Ok(mut waiters) = self.visibility_waiters.lock() {
                 waiters.remove(&request_id);
             }
-            return false;
+            return None;
         }
-        let acknowledged = receiver
-            .recv_timeout(VISIBILITY_ACK_TIMEOUT)
-            .is_ok_and(|mapped| mapped == visible);
-        if let Ok(mut waiters) = self.visibility_waiters.lock() {
-            waiters.remove(&request_id);
-        }
-        acknowledged
+        Some(ShellSurfaceVisibilityRequest {
+            request_id,
+            requested_visible: visible,
+            completion: receiver,
+            observed: Mutex::new(None),
+        })
     }
 
     pub fn set_alpha(&self, alpha: f32) -> bool {
@@ -139,6 +211,23 @@ impl BridgeEventEmitter {
 
     fn emit_host_control(&self, command: &str, value: &str) -> bool {
         self.write_line(format!("{HOST_CONTROL_PREFIX}\t{command}\t{value}"))
+    }
+
+    fn emit_host_control_to(&self, window_id: u32, command: &str, value: &str) -> bool {
+        let Ok(mut targets) = self.targets.lock() else {
+            return false;
+        };
+        let Some(target) = targets
+            .iter_mut()
+            .find(|target| target.window_id == window_id)
+        else {
+            return false;
+        };
+        let Ok(mut stdin) = target.stdin.lock() else {
+            return false;
+        };
+        writeln!(stdin, "{HOST_CONTROL_PREFIX}\t{command}\t{value}").is_ok()
+            && stdin.flush().is_ok()
     }
 
     fn write_line(&self, line: impl std::fmt::Display) -> bool {
@@ -249,7 +338,7 @@ pub(crate) fn spawn_bridge_dispatch(
                 let _ = ready_sender.try_send(());
                 continue;
             }
-            if acknowledge_visibility(&line, &visibility_waiters) {
+            if acknowledge_visibility(&line, window_id, &visibility_waiters) {
                 continue;
             }
             let Some(request) = BridgeIpcRequest::parse(&line) else {
@@ -305,7 +394,7 @@ pub(crate) fn spawn_bridge_dispatch_for_window(
     Some(thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(std::result::Result::ok) {
-            if acknowledge_visibility(&line, &visibility_waiters) {
+            if acknowledge_visibility(&line, window_id, &visibility_waiters) {
                 continue;
             }
             let Some(request) = BridgeIpcRequest::parse(&line) else {
@@ -336,7 +425,8 @@ pub(crate) fn spawn_bridge_dispatch_for_window(
 
 fn acknowledge_visibility(
     line: &str,
-    waiters: &Mutex<HashMap<u64, crossbeam_channel::Sender<bool>>>,
+    window_id: u32,
+    waiters: &Mutex<HashMap<u64, VisibilityWaiter>>,
 ) -> bool {
     let mut parts = line.split('\t');
     if parts.next() != Some("SABINE_LAYER_VISIBILITY") {
@@ -347,9 +437,12 @@ fn acknowledge_visibility(
     };
     let mapped = parts.next() == Some("mapped");
     if let Ok(mut waiters) = waiters.lock()
+        && waiters
+            .get(&request_id)
+            .is_some_and(|waiter| waiter.window_id == window_id)
         && let Some(waiter) = waiters.remove(&request_id)
     {
-        let _ = waiter.try_send(mapped);
+        let _ = waiter.completion.try_send(mapped);
     }
     true
 }
@@ -443,8 +536,7 @@ mod tests {
     use super::*;
     use std::process::{Command, Stdio};
 
-    #[test]
-    fn emitter_detach_stops_broadcast() {
+    fn emitter_with_reader() -> (Child, BridgeEventEmitter) {
         let mut command = if cfg!(target_os = "windows") {
             let mut command = Command::new("cmd");
             command.args(["/d", "/c", "more"]);
@@ -465,9 +557,46 @@ mod tests {
             }])),
             visibility_waiters: Arc::new(Mutex::new(HashMap::new())),
         };
+        (child, emitter)
+    }
+
+    #[test]
+    fn emitter_detach_stops_broadcast() {
+        let (mut child, emitter) = emitter_with_reader();
         assert!(emitter.emit("ping", serde_json::json!({})));
         emitter.detach(child.id());
         assert!(!emitter.emit("ping", serde_json::json!({})));
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn layer_visibility_is_queued_and_completed_asynchronously() {
+        let (mut child, emitter) = emitter_with_reader();
+        let request = emitter
+            .set_layer_visible(child.id(), true)
+            .expect("visibility request queued");
+        assert!(request.requested_visible());
+        assert_eq!(request.state(), ShellSurfaceVisibilityState::Pending);
+        assert!(acknowledge_visibility(
+            &format!("SABINE_LAYER_VISIBILITY\t{}\tmapped", request.id()),
+            child.id(),
+            &emitter.visibility_waiters,
+        ));
+        assert_eq!(request.state(), ShellSurfaceVisibilityState::Mapped);
+        assert_eq!(request.state(), ShellSurfaceVisibilityState::Mapped);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn detaching_a_layer_disconnects_pending_visibility_requests() {
+        let (mut child, emitter) = emitter_with_reader();
+        let request = emitter
+            .set_layer_visible(child.id(), false)
+            .expect("visibility request queued");
+        emitter.detach(child.id());
+        assert_eq!(request.state(), ShellSurfaceVisibilityState::Disconnected);
         let _ = child.kill();
         let _ = child.wait();
     }

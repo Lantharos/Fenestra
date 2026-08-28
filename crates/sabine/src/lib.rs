@@ -19,12 +19,13 @@ pub mod prelude {
     pub use crate::{
         AppChrome, BridgeCommand, BridgeError, BridgeResponse, BridgeResult, SabineColor,
         SabineError, SabineLifecyclePolicy, SabineProcess, SabineProcessHandle, SabineResult,
-        SabineWindow, SabineWindowChrome, TrayIcon, WindowBackgroundEffect, WindowRegion,
+        SabineWindow, SabineWindowChrome, ShellSurfaceVisibilityRequest,
+        ShellSurfaceVisibilityState, TrayIcon, WindowBackgroundEffect, WindowRegion,
         WindowRegionRect,
     };
 }
 
-pub use bridge::BridgeEventEmitter;
+pub use bridge::{BridgeEventEmitter, ShellSurfaceVisibilityRequest, ShellSurfaceVisibilityState};
 pub use window::SabineWindowControlRegion;
 
 pub use sabine_bridge::{ActivityOptions, ActivityRecord, SabineActivityLease};

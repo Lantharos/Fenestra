@@ -6,7 +6,7 @@ use sabine_bridge::{
 };
 use sabine_platform::{PlatformEvent, ShellSurfaceMargin, SingleInstancePolicy};
 
-use crate::bridge::{BridgeEventEmitter, platform_event_payload};
+use crate::bridge::{BridgeEventEmitter, ShellSurfaceVisibilityRequest, platform_event_payload};
 use crate::desktop::{DesktopServiceState, start_desktop_event_forwarder};
 use crate::host::process_tree::ManagedChild;
 use crate::osr::launch::OpenWindowContext;
@@ -197,12 +197,15 @@ impl SabineProcess {
             .is_some_and(|emitter| emitter.guest_control(control))
     }
 
-    /// Maps or unmaps a layer-shell surface and waits for the native host to
-    /// acknowledge that the compositor-facing commit completed.
-    pub fn set_shell_surface_visible(&self, visible: bool) -> bool {
+    /// Enqueues a layer-shell visibility change and returns immediately.
+    /// Poll the returned request to observe the compositor-facing commit.
+    pub fn set_shell_surface_visible(
+        &self,
+        visible: bool,
+    ) -> Option<ShellSurfaceVisibilityRequest> {
         self.bridge_emitter
             .as_ref()
-            .is_some_and(|emitter| emitter.set_layer_visible(visible))
+            .and_then(|emitter| emitter.set_layer_visible(self.child.id(), visible))
     }
 
     pub fn set_shell_surface_alpha(&self, alpha: f32) -> bool {

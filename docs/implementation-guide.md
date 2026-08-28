@@ -182,9 +182,12 @@ Initially hidden and prewarmed layer surfaces stay detached. With `retain_hidden
 surface immediately restores size, anchors, margin, layer, exclusive zone, keyboard mode, alpha, and
 background effect, then attaches the retained released SHM frame without waiting for another CEF
 paint. A busy presentation buffer schedules an immediate retry and wakes again on `wl_buffer.release`.
-`set_shell_surface_visible` reports success only after the cached frame is mapped or the surface is
-fully unmapped. Layer loading uses the compact three-line native animation without text so small
-shell surfaces do not reserve message space.
+`set_shell_surface_visible` queues the change and returns a `ShellSurfaceVisibilityRequest`
+immediately. Poll its state for the asynchronous compositor-facing `Mapped` or `Unmapped`
+acknowledgement. A newer request completes any superseded request with the surface's actual state
+before applying the new target, so rapid toggles never block the shell thread or leave an
+acknowledgement pending forever. Layer loading uses the compact three-line native animation without
+text so small shell surfaces do not reserve message space.
 
 ## Runtime ownership
 

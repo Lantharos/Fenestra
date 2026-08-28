@@ -88,7 +88,8 @@ impl OsrLayerHost {
         request_id: Option<u64>,
         state: &mut WindowState<()>,
     ) {
-        self.pending_visibility_ack = request_id.map(|request_id| (request_id, visible));
+        self.acknowledge_visibility(self.surface_mapped);
+        self.pending_visibility_ack = request_id;
         self.visible = visible;
         if visible {
             self.show_surface(state);
@@ -180,13 +181,9 @@ impl OsrLayerHost {
     }
 
     pub(super) fn acknowledge_visibility(&mut self, mapped: bool) {
-        let Some((request_id, expected)) = self.pending_visibility_ack else {
+        let Some(request_id) = self.pending_visibility_ack.take() else {
             return;
         };
-        if expected != mapped {
-            return;
-        }
-        self.pending_visibility_ack = None;
         let state = if mapped { "mapped" } else { "unmapped" };
         let mut output = std::io::stdout();
         use std::io::Write;
