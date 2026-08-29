@@ -53,6 +53,7 @@ impl OsrLayerHost {
                     self.clear_frames();
                 }
                 let buffer = self.install_wayland_buffer(file, shm, qh, width, height);
+                self.surface_mapped = true;
                 if self.visible {
                     self.update_main_effect(state);
                 }
@@ -127,6 +128,10 @@ impl OsrLayerHost {
                 self.ensure_child();
                 self.send_resize();
                 self.drive_tooltip(state);
+                if !self.visible {
+                    self.hide_surface(state);
+                    return ReturnData::None;
+                }
                 if self.visible && self.main_frame_ready() && self.loading.is_some() {
                     self.finish_loading(state);
                 }

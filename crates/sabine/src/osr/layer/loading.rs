@@ -22,6 +22,9 @@ impl OsrLayerHost {
     }
 
     pub(super) fn refresh_loading(&mut self, state: &mut WindowState<()>) -> bool {
+        if !self.visible {
+            return false;
+        }
         let Some(mut loading) = self.loading else {
             return false;
         };

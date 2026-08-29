@@ -113,7 +113,6 @@ impl OsrLayerHost {
         let width = width.max(1);
         let height = height.max(1);
         self.buffer_size = (width, height);
-        self.surface_mapped = false;
         self.main_buffer.clear();
         self.presentation_buffer.clear();
         self.scratch.clear();
@@ -232,6 +231,13 @@ impl OsrLayerHost {
     }
 
     pub(super) fn commit_surface(&mut self, state: &mut WindowState<()>, damage: DamageRect) {
+        if !self.visible {
+            return;
+        }
+        if self.remap_sync_token.is_some() || self.remap_configure_generation.is_some() {
+            self.pending_surface_refresh = true;
+            return;
+        }
         if !self.surface_mapped {
             self.restore_layer_state(state);
         }
