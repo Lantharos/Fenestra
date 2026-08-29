@@ -100,7 +100,7 @@ impl OsrLayerHost {
 
     pub(super) fn show_surface(&mut self, state: &mut WindowState<()>) {
         let retained_frame_ready = self.retained_frame_ready();
-        let awaiting_configure = self.remap_requires_configure;
+        let awaiting_configure = self.remap_after_configure_generation.is_some();
         if awaiting_configure {
             self.restore_layer_state(state);
         } else if retained_frame_ready {

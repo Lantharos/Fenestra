@@ -854,6 +854,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "exwlshellev"
+version = "0.20.0"
+source = "git+https://github.com/Lantharos/exwlshelleventloop.git?rev=7f36da8d72a0b7bc7b33dfae4a490bc53812fede#7f36da8d72a0b7bc7b33dfae4a490bc53812fede"
+dependencies = [
+ "calloop",
+ "calloop-wayland-source",
+ "log",
+ "raw-window-handle",
+ "smithay-client-toolkit 0.21.1",
+ "tempfile",
+ "thiserror 2.0.20",
+ "waycrate_xkbkeycode",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-cursor",
+ "wayland-protocols",
+ "wayland-protocols-misc",
+ "wayland-protocols-wlr",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1713,28 +1734,6 @@ dependencies = [
  "serde",
  "tokio",
  "zbus",
-]
-
-[[package]]
-name = "layershellev"
-version = "0.19.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69fbd3ced50d91a5a118e3e00f49c72040ea6b48b78b159a3936104fc2632925"
-dependencies = [
- "calloop",
- "calloop-wayland-source",
- "log",
- "raw-window-handle",
- "smithay-client-toolkit 0.20.0",
- "tempfile",
- "thiserror 2.0.20",
- "waycrate_xkbkeycode",
- "wayland-backend",
- "wayland-client",
- "wayland-cursor",
- "wayland-protocols",
- "wayland-protocols-misc",
- "wayland-protocols-wlr",
 ]
 
 [[package]]
@@ -2732,13 +2731,13 @@ dependencies = [
  "ashpd",
  "bytemuck",
  "crossbeam-channel",
+ "exwlshellev",
  "futures-util",
  "getrandom 0.4.3",
  "global-hotkey",
  "glyphon",
  "image",
  "ksni",
- "layershellev",
  "libc",
  "pollster",
  "raw-window-handle",
@@ -3115,11 +3114,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74dc9ee14b0fdcb535f9556141bacac070c994a977d2240ee455d7438a617f00"
 dependencies = [
  "bitflags",
+ "bytemuck",
  "calloop",
  "calloop-wayland-source",
  "cursor-icon",
  "log",
  "memmap2",
+ "pkg-config",
  "rustix 1.1.4",
  "thiserror 2.0.20",
  "wayland-client",
@@ -3130,6 +3131,7 @@ dependencies = [
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "wayland-scanner",
+ "xkbcommon",
  "xkeysym",
 ]
 
@@ -3832,9 +3834,8 @@ dependencies = [
 
 [[package]]
 name = "waycrate_xkbkeycode"
-version = "0.19.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e904c31025b16851793aa2e8eae3c1b4466af8345b45fb7e46ec61b05a4f9086"
+version = "0.20.0"
+source = "git+https://github.com/Lantharos/exwlshelleventloop.git?rev=7f36da8d72a0b7bc7b33dfae4a490bc53812fede#7f36da8d72a0b7bc7b33dfae4a490bc53812fede"
 dependencies = [
  "calloop",
  "log",

@@ -45,7 +45,7 @@ impl OsrLayerHost {
         height: u32,
     ) {
         let id = id
-            .or_else(|| state.current_surface_id())
+            .or_else(|| state.keyboard_focus_id())
             .unwrap_or_else(|| state.main_window().id());
         state.set_ime_cursor_area(
             layershellev::dpi::LogicalPosition::new(x, y),

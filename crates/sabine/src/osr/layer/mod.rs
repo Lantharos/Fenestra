@@ -1,4 +1,4 @@
-use layershellev::{WindowState, calloop::channel};
+use layershellev::{LayerSize, WindowState, calloop::channel};
 
 use crate::osr::host::OsrHostConfig;
 
@@ -28,7 +28,8 @@ pub(crate) fn run(mut config: OsrHostConfig) -> Result<(), String> {
         .ok_or_else(|| "missing Sabine shell surface options".to_string())?;
     let shell_surface = normalized_shell_surface(shell_surface, (config.width, config.height));
     config.shell_surface = Some(shell_surface.clone());
-    let layer_size = shell_surface.size.expect("normalized shell surface size");
+    let layer_size =
+        layer_size_for_shell(shell_surface.size.expect("normalized shell surface size"));
     let mut window_state = WindowState::new(&shell_surface.namespace)
         .with_size(layer_size)
         .with_layer(layer_for_shell(shell_surface.layer))
@@ -54,6 +55,15 @@ pub(crate) fn run(mut config: OsrHostConfig) -> Result<(), String> {
             host.handle(event, state, id)
         })
         .map_err(|error| error.to_string())
+}
+
+fn layer_size_for_shell((width, height): (u32, u32)) -> LayerSize {
+    match (width, height) {
+        (0, 0) => LayerSize::FILL,
+        (0, height) => LayerSize::fill_width(height),
+        (width, 0) => LayerSize::fill_height(width),
+        (width, height) => LayerSize::px(width, height),
+    }
 }
 
 fn normalized_shell_surface(

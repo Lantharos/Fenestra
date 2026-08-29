@@ -1,8 +1,8 @@
 use std::fs::File;
 
+use layershellev::blur::BlurOption;
 use layershellev::reexport::xdg_positioner::{Anchor, ConstraintAdjustment, Gravity};
-use layershellev::{NewPopUpSettings, PopupPlacement, ReturnData, WindowState, id};
-use sabine_platform::{WindowBackgroundEffect, WindowOptions, WindowRegion, WindowRegions};
+use layershellev::{NewPopUpSettings, PixelSize, PopupPlacement, ReturnData, WindowState, id};
 use smithay_client_toolkit::shm::{Shm, slot::SlotPool};
 use wayland_client::{QueueHandle, protocol::wl_buffer::WlBuffer};
 
@@ -150,11 +150,11 @@ impl OsrLayerHost {
             buffer: Vec::new(),
             scratch: Vec::new(),
             mapped: false,
-            effect: None,
+            blur_configured: false,
         });
         ReturnData::NewPopUp((
             NewPopUpSettings {
-                size,
+                size: PixelSize::px(size.0, size.1),
                 id: parent_id,
                 placement: PopupPlacement::Position(position),
                 anchor: Anchor::TopLeft,
@@ -234,24 +234,20 @@ impl OsrLayerHost {
         self.commit_popup_surface(state, damage);
     }
 
-    pub(super) fn ensure_popup_effect(&mut self, state: &WindowState<()>) {
-        let Some(popup) = self.popup.as_mut() else {
+    pub(super) fn ensure_popup_effect(&mut self, state: &mut WindowState<()>) {
+        let Some(popup) = self.popup.as_ref() else {
             return;
         };
-        let options = popup_effect_options(popup.size);
-        if let Some(effect) = &popup.effect {
-            let _ = effect.update(&options, popup.size.0 as i32, popup.size.1 as i32);
+        if popup.blur_configured {
             return;
         }
-        let Some(unit) = state.get_unit_with_id(popup.id) else {
-            return;
-        };
-        popup.effect = sabine_platform::request_surface_effect(
-            unit,
-            &options,
-            popup.size.0 as i32,
-            popup.size.1 as i32,
-        );
+        let popup_id = popup.id;
+        if let Some(unit) = state.get_mut_unit_with_id(popup_id) {
+            unit.set_blur_option(BlurOption::FullRegion);
+            if let Some(popup) = self.popup.as_mut() {
+                popup.blur_configured = true;
+            }
+        }
     }
 
     pub(super) fn close_popup(&mut self, state: &mut WindowState<()>) {
@@ -358,16 +354,5 @@ fn empty_popup_frame(size: (u32, u32)) -> OsrFrame {
         x: 0,
         y: 0,
         bytes: vec![0; buffer_len(size.0, size.1)].into(),
-    }
-}
-
-fn popup_effect_options(size: (u32, u32)) -> WindowOptions {
-    WindowOptions {
-        width: size.0,
-        height: size.1,
-        transparent: true,
-        background_effect: WindowBackgroundEffect::Blur,
-        regions: WindowRegions::new().blur(WindowRegion::adaptive_full()),
-        ..WindowOptions::default()
     }
 }

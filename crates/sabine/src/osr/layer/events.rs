@@ -1,4 +1,6 @@
-use layershellev::{DispatchMessage, LayerShellEvent, ReturnData, WindowState, id};
+use layershellev::{
+    DispatchMessage, ExWlShellEvent as LayerShellEvent, ReturnData, WindowState, id,
+};
 
 use crate::osr::host::guest_preview_data_url;
 use crate::osr::protocol::{OsrMessage, OsrSurface};
@@ -80,7 +82,7 @@ impl OsrLayerHost {
                 width,
                 height,
                 scale_float,
-                ..
+                configure_generation,
             } => {
                 if self
                     .popup
@@ -101,11 +103,18 @@ impl OsrLayerHost {
                     self.refresh_popup_surface(state);
                     return ReturnData::None;
                 }
+                self.configure_generation = *configure_generation;
+                if self
+                    .remap_after_configure_generation
+                    .is_some_and(|generation| *configure_generation <= generation)
+                {
+                    return ReturnData::None;
+                }
+                self.remap_after_configure_generation = None;
                 let surface_size = ((*width).max(1), (*height).max(1));
                 let size_changed = self.surface_size != surface_size;
                 self.surface_size = surface_size;
                 self.scale = scale_float.max(1.0);
-                self.remap_requires_configure = false;
                 if size_changed {
                     self.recreate_wayland_buffer(surface_size.0, surface_size.1);
                 }

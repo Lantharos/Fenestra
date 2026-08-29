@@ -197,7 +197,7 @@ impl OsrLayerHost {
             return;
         }
         self.surface_mapped = false;
-        self.remap_requires_configure = true;
+        self.remap_after_configure_generation = Some(self.configure_generation);
         self.acknowledge_visibility(false);
     }
 
@@ -346,13 +346,19 @@ impl OsrLayerHost {
         Some(self.main_buffers.len() - 1)
     }
 
-    pub(super) fn restore_layer_state(&mut self, state: &WindowState<()>) {
+    pub(super) fn restore_layer_state(&mut self, state: &mut WindowState<()>) {
         let Some(shell_surface) = self.config.shell_surface.clone() else {
             return;
         };
-        let unit = state.main_window();
+        let main_id = state.main_window().id();
         let (width, height) = self.layer_commit_size();
-        unit.set_anchor_with_size(anchor_for_shell(shell_surface.anchor), (width, height));
+        let unit = state
+            .get_mut_unit_with_id(main_id)
+            .expect("main layer surface must exist");
+        unit.set_layout(
+            anchor_for_shell(shell_surface.anchor),
+            super::layer_size_for_shell((width, height)),
+        );
         unit.set_margin((
             shell_surface.margin.top,
             shell_surface.margin.right,

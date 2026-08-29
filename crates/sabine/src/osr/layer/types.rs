@@ -1,6 +1,8 @@
 use std::{process::Child, time::Instant};
 
-use layershellev::{WindowState, calloop::channel::Sender, id, reexport::wl_shm::WlShm};
+use layershellev::{
+    WindowState, blur::BlurOption, calloop::channel::Sender, id, reexport::wl_shm::WlShm,
+};
 use smithay_client_toolkit::shm::slot::{Buffer as ShmBuffer, SlotPool};
 use wayland_client::QueueHandle;
 
@@ -33,7 +35,8 @@ pub(super) struct OsrLayerHost {
     pub(super) presentation_full_damage: bool,
     pub(super) scratch: Vec<u8>,
     pub(super) surface_mapped: bool,
-    pub(super) remap_requires_configure: bool,
+    pub(super) configure_generation: u64,
+    pub(super) remap_after_configure_generation: Option<u64>,
     pub(super) wayland_failed: bool,
     pub(super) visible: bool,
     pub(super) pending_visibility_ack: Option<(u64, bool)>,
@@ -49,7 +52,7 @@ pub(super) struct OsrLayerHost {
     pub(super) lifecycle_state: LayerLifecycleState,
     pub(super) alpha_modifier: Option<LayerAlphaModifier>,
     pub(super) surface_alpha: f32,
-    pub(super) effect: Option<sabine_platform::WindowEffect>,
+    pub(super) blur_option: Option<BlurOption>,
     pub(super) loading: Option<crate::osr::host::types::NativeLoading>,
     pub(super) text_renderer: RasterText,
     pub(super) tooltip: Option<LayerTooltip>,
@@ -67,7 +70,7 @@ pub(super) struct PopupSurface {
     pub(super) buffer: Vec<u8>,
     pub(super) scratch: Vec<u8>,
     pub(super) mapped: bool,
-    pub(super) effect: Option<sabine_platform::WindowEffect>,
+    pub(super) blur_configured: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -126,7 +129,8 @@ impl OsrLayerHost {
             presentation_full_damage: false,
             scratch: Vec::new(),
             surface_mapped: false,
-            remap_requires_configure: false,
+            configure_generation: 0,
+            remap_after_configure_generation: None,
             wayland_failed: false,
             visible,
             pending_visibility_ack: None,
@@ -142,7 +146,7 @@ impl OsrLayerHost {
             lifecycle_state,
             alpha_modifier: None,
             surface_alpha,
-            effect: None,
+            blur_option: None,
             loading: visible.then(|| {
                 crate::osr::host::types::NativeLoading::new(
                     crate::osr::host::types::LoadingKind::Opening,
