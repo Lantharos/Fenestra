@@ -197,6 +197,7 @@ impl OsrLayerHost {
             return;
         }
         self.surface_mapped = false;
+        self.remap_requires_configure = true;
         self.acknowledge_visibility(false);
     }
 
@@ -345,7 +346,7 @@ impl OsrLayerHost {
         Some(self.main_buffers.len() - 1)
     }
 
-    fn restore_layer_state(&mut self, state: &WindowState<()>) {
+    pub(super) fn restore_layer_state(&mut self, state: &WindowState<()>) {
         let Some(shell_surface) = self.config.shell_surface.clone() else {
             return;
         };

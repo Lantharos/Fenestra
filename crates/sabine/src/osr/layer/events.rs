@@ -105,6 +105,7 @@ impl OsrLayerHost {
                 let size_changed = self.surface_size != surface_size;
                 self.surface_size = surface_size;
                 self.scale = scale_float.max(1.0);
+                self.remap_requires_configure = false;
                 if size_changed {
                     self.recreate_wayland_buffer(surface_size.0, surface_size.1);
                 }
