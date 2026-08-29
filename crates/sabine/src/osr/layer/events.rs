@@ -104,13 +104,16 @@ impl OsrLayerHost {
                     return ReturnData::None;
                 }
                 self.configure_generation = *configure_generation;
+                if self.remap_sync_token.is_some() {
+                    return ReturnData::None;
+                }
                 if self
-                    .remap_after_configure_generation
+                    .remap_configure_generation
                     .is_some_and(|generation| *configure_generation <= generation)
                 {
                     return ReturnData::None;
                 }
-                self.remap_after_configure_generation = None;
+                self.remap_configure_generation = None;
                 let surface_size = ((*width).max(1), (*height).max(1));
                 let size_changed = self.surface_size != surface_size;
                 self.surface_size = surface_size;
@@ -133,6 +136,13 @@ impl OsrLayerHost {
                     self.refresh_surface(state);
                 } else if self.visible {
                     self.hide_surface(state);
+                }
+            }
+            DispatchMessage::SyncDone { token } if self.remap_sync_token == Some(*token) => {
+                self.remap_sync_token = None;
+                self.remap_configure_generation = Some(self.configure_generation);
+                if self.visible {
+                    self.restore_layer_state(state);
                 }
             }
             DispatchMessage::Focused(_) if self.visible => {

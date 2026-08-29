@@ -192,12 +192,16 @@ impl OsrLayerHost {
         let unit = state.main_window();
         unit.get_wlsurface().attach(None, 0, 0);
         unit.get_wlsurface().commit();
+        self.next_remap_sync_token = self.next_remap_sync_token.wrapping_add(1);
+        let sync_token = self.next_remap_sync_token;
+        unit.request_sync(sync_token);
         if !flush_surface(unit.get_wlsurface()) {
             self.wayland_failed = true;
             return;
         }
         self.surface_mapped = false;
-        self.remap_after_configure_generation = Some(self.configure_generation);
+        self.remap_sync_token = Some(sync_token);
+        self.remap_configure_generation = None;
         self.acknowledge_visibility(false);
     }
 

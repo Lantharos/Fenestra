@@ -856,7 +856,7 @@ dependencies = [
 [[package]]
 name = "exwlshellev"
 version = "0.20.0"
-source = "git+https://github.com/Lantharos/exwlshelleventloop.git?rev=7f36da8d72a0b7bc7b33dfae4a490bc53812fede#7f36da8d72a0b7bc7b33dfae4a490bc53812fede"
+source = "git+https://github.com/Lantharos/exwlshelleventloop.git?rev=5c56310b589190188bc2e6e5b3b72d6a222b7501#5c56310b589190188bc2e6e5b3b72d6a222b7501"
 dependencies = [
  "calloop",
  "calloop-wayland-source",
@@ -3835,7 +3835,7 @@ dependencies = [
 [[package]]
 name = "waycrate_xkbkeycode"
 version = "0.20.0"
-source = "git+https://github.com/Lantharos/exwlshelleventloop.git?rev=7f36da8d72a0b7bc7b33dfae4a490bc53812fede#7f36da8d72a0b7bc7b33dfae4a490bc53812fede"
+source = "git+https://github.com/Lantharos/exwlshelleventloop.git?rev=5c56310b589190188bc2e6e5b3b72d6a222b7501#5c56310b589190188bc2e6e5b3b72d6a222b7501"
 dependencies = [
  "calloop",
  "log",

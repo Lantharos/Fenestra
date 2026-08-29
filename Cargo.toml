@@ -48,7 +48,7 @@ futures-util = "0.3.33"
 getrandom = "0.4.3"
 glyphon = "0.12.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
-layershellev = { package = "exwlshellev", git = "https://github.com/Lantharos/exwlshelleventloop.git", rev = "7f36da8d72a0b7bc7b33dfae4a490bc53812fede" }
+layershellev = { package = "exwlshellev", git = "https://github.com/Lantharos/exwlshelleventloop.git", rev = "5c56310b589190188bc2e6e5b3b72d6a222b7501" }
 smithay-client-toolkit = "0.20.0"
 ksni = { version = "0.3.6", features = ["blocking"] }
 libc = "0.2.189"

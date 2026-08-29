@@ -100,8 +100,9 @@ impl OsrLayerHost {
 
     pub(super) fn show_surface(&mut self, state: &mut WindowState<()>) {
         let retained_frame_ready = self.retained_frame_ready();
-        let awaiting_configure = self.remap_after_configure_generation.is_some();
-        if awaiting_configure {
+        let awaiting_sync = self.remap_sync_token.is_some();
+        let awaiting_configure = self.remap_configure_generation.is_some();
+        if awaiting_configure && !awaiting_sync {
             self.restore_layer_state(state);
         } else if retained_frame_ready {
             self.loading = None;
@@ -117,7 +118,7 @@ impl OsrLayerHost {
         if self.pointer_inside {
             self.forward_mouse_move(false);
         }
-        if retained_frame_ready || awaiting_configure {
+        if retained_frame_ready || awaiting_sync || awaiting_configure {
             return;
         }
         if self.main_frame_ready() && self.loading.is_some() {
