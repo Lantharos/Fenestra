@@ -117,6 +117,28 @@ impl OsrLayerHost {
         }
     }
 
+    pub(super) fn set_surface_presentation(
+        &mut self,
+        visible: bool,
+        request_id: u64,
+        alpha: f32,
+        margin: sabine_platform::ShellSurfaceMargin,
+        state: &mut WindowState<()>,
+    ) {
+        self.acknowledge_superseded_visibility(self.surface_mapped);
+        self.pending_visibility_ack = Some((request_id, visible));
+        self.surface_alpha = alpha.clamp(0.0, 1.0);
+        if let Some(shell_surface) = self.config.shell_surface.as_mut() {
+            shell_surface.margin = margin;
+        }
+        self.visible = visible;
+        if visible {
+            self.show_surface(state);
+        } else {
+            self.hide_shell_surface(state);
+        }
+    }
+
     pub(super) fn show_surface(&mut self, state: &mut WindowState<()>) {
         let retained_frame_ready = self.retained_frame_ready();
         let awaiting_sync = self.remap_sync_token.is_some();

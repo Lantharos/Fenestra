@@ -150,6 +150,46 @@ impl BridgeEventEmitter {
         })
     }
 
+    pub(crate) fn set_layer_presentation(
+        &self,
+        window_id: u32,
+        visible: bool,
+        alpha: f32,
+        margin: ShellSurfaceMargin,
+    ) -> Option<ShellSurfaceVisibilityRequest> {
+        let request_id = NEXT_VISIBILITY_REQUEST.fetch_add(1, Ordering::Relaxed);
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        let Ok(mut waiters) = self.visibility_waiters.lock() else {
+            return None;
+        };
+        waiters.insert(
+            request_id,
+            VisibilityWaiter {
+                window_id,
+                completion: sender,
+            },
+        );
+        drop(waiters);
+        let value = serde_json::json!({
+            "visible": visible,
+            "requestId": request_id,
+            "alpha": alpha.clamp(0.0, 1.0),
+            "margin": [margin.top, margin.right, margin.bottom, margin.left],
+        });
+        if !self.emit_host_control_to(window_id, "presentation", &value.to_string()) {
+            if let Ok(mut waiters) = self.visibility_waiters.lock() {
+                waiters.remove(&request_id);
+            }
+            return None;
+        }
+        Some(ShellSurfaceVisibilityRequest {
+            request_id,
+            requested_visible: visible,
+            completion: receiver,
+            observed: Mutex::new(None),
+        })
+    }
+
     pub fn set_alpha(&self, alpha: f32) -> bool {
         self.emit_host_control("alpha", &format!("{:.4}", alpha.clamp(0.0, 1.0)))
     }

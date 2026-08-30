@@ -186,8 +186,11 @@ paint. A busy presentation buffer schedules an immediate retry and wakes again o
 immediately. Poll its state for the asynchronous compositor-facing `Mapped` or `Unmapped`
 acknowledgement. A newer request completes any superseded request with the surface's actual state
 before applying the new target, so rapid toggles never block the shell thread or leave an
-acknowledgement pending forever. Layer loading uses the compact three-line native animation without
-text so small shell surfaces do not reserve message space.
+acknowledgement pending forever. Shells that change visibility, alpha, and margin together use
+`set_shell_surface_presentation`; the layer host applies all three before the compositor-facing
+commit, so a remap cannot acknowledge an intermediate hidden geometry. Layer loading uses the
+compact three-line native animation without text so small shell surfaces do not reserve message
+space.
 
 Layer surfaces also accept live size and frame-rate changes through their existing host connection.
 The host reconfigures the current Wayland surface and CEF browser in place, so responsive shell

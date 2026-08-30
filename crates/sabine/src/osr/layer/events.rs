@@ -284,6 +284,12 @@ impl OsrLayerHost {
                 visible,
                 request_id,
             } => self.set_surface_visible(visible, request_id, state),
+            LayerHostEvent::Presentation {
+                visible,
+                request_id,
+                alpha,
+                margin,
+            } => self.set_surface_presentation(visible, request_id, alpha, margin, state),
             LayerHostEvent::Alpha(alpha) => self.set_surface_alpha(alpha, state),
             LayerHostEvent::Margin(margin) => self.set_surface_margin(margin, state),
             LayerHostEvent::Size(width, height) => self.set_surface_size(width, height, state),

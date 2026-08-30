@@ -20,6 +20,12 @@ pub(super) enum LayerHostEvent {
         visible: bool,
         request_id: Option<u64>,
     },
+    Presentation {
+        visible: bool,
+        request_id: u64,
+        alpha: f32,
+        margin: ShellSurfaceMargin,
+    },
     Alpha(f32),
     Margin(ShellSurfaceMargin),
     Size(u32, u32),
@@ -214,6 +220,20 @@ pub(super) fn start_layer_parent_bridge_reader(sender: Sender<LayerHostEvent>) {
     thread::spawn(move || {
         let input = io::stdin();
         for line in input.lock().lines().map_while(std::result::Result::ok) {
+            if let Some((visible, request_id, alpha, margin)) = parse_presentation_control(&line) {
+                if sender
+                    .send(LayerHostEvent::Presentation {
+                        visible,
+                        request_id,
+                        alpha,
+                        margin,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+                continue;
+            }
             if let Some((visible, request_id)) = parse_visibility_control(&line) {
                 if sender
                     .send(LayerHostEvent::Visible {
@@ -259,6 +279,32 @@ pub(super) fn start_layer_parent_bridge_reader(sender: Sender<LayerHostEvent>) {
             }
         }
     });
+}
+
+fn parse_presentation_control(line: &str) -> Option<(bool, u64, f32, ShellSurfaceMargin)> {
+    let (command, value) = crate::parse_host_control(line)?;
+    if command != "presentation" {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(value).ok()?;
+    let visible = value.get("visible")?.as_bool()?;
+    let request_id = value.get("requestId")?.as_u64()?;
+    let alpha = value.get("alpha")?.as_f64()? as f32;
+    let margin = value.get("margin")?.as_array()?;
+    let [top, right, bottom, left] = margin.as_slice() else {
+        return None;
+    };
+    Some((
+        visible,
+        request_id,
+        alpha.clamp(0.0, 1.0),
+        ShellSurfaceMargin {
+            top: i32::try_from(top.as_i64()?).ok()?,
+            right: i32::try_from(right.as_i64()?).ok()?,
+            bottom: i32::try_from(bottom.as_i64()?).ok()?,
+            left: i32::try_from(left.as_i64()?).ok()?,
+        },
+    ))
 }
 
 pub(super) fn open_socket_reader(

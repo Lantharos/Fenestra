@@ -208,6 +208,19 @@ impl SabineProcess {
             .and_then(|emitter| emitter.set_layer_visible(self.child.id(), visible))
     }
 
+    /// Atomically updates the compositor-facing presentation of a layer surface.
+    /// The returned request completes after the final mapped state is committed.
+    pub fn set_shell_surface_presentation(
+        &self,
+        visible: bool,
+        alpha: f32,
+        margin: ShellSurfaceMargin,
+    ) -> Option<ShellSurfaceVisibilityRequest> {
+        self.bridge_emitter.as_ref().and_then(|emitter| {
+            emitter.set_layer_presentation(self.child.id(), visible, alpha, margin)
+        })
+    }
+
     pub fn set_shell_surface_alpha(&self, alpha: f32) -> bool {
         self.bridge_emitter
             .as_ref()
