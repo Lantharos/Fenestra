@@ -96,8 +96,19 @@ impl OsrLayerHost {
         request_id: Option<u64>,
         state: &mut WindowState<()>,
     ) {
-        self.acknowledge_superseded_visibility(self.surface_mapped);
-        self.pending_visibility_ack = request_id.map(|request_id| (request_id, visible));
+        match request_id {
+            Some(request_id) => {
+                self.acknowledge_superseded_visibility(self.surface_mapped);
+                self.pending_visibility_ack = Some((request_id, visible));
+            }
+            None if self
+                .pending_visibility_ack
+                .is_some_and(|(_, requested_visible)| requested_visible != visible) =>
+            {
+                self.acknowledge_superseded_visibility(self.surface_mapped);
+            }
+            None => {}
+        }
         self.visible = visible;
         if visible {
             self.show_surface(state);
