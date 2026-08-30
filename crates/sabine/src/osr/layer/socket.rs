@@ -22,6 +22,7 @@ pub(super) enum LayerHostEvent {
     },
     Alpha(f32),
     Margin(ShellSurfaceMargin),
+    Size(u32, u32),
     Quit,
     ControlLine(String),
     Disconnected,
@@ -236,6 +237,12 @@ pub(super) fn start_layer_parent_bridge_reader(sender: Sender<LayerHostEvent>) {
                 }
                 continue;
             }
+            if let Some((width, height)) = parse_size_control(&line) {
+                if sender.send(LayerHostEvent::Size(width, height)).is_err() {
+                    break;
+                }
+                continue;
+            }
             if parse_quit_control(&line) {
                 let _ = sender.send(LayerHostEvent::Quit);
                 break;
@@ -374,9 +381,21 @@ fn parse_margin_control(line: &str) -> Option<ShellSurfaceMargin> {
     })
 }
 
+fn parse_size_control(line: &str) -> Option<(u32, u32)> {
+    let (command, value) = crate::parse_host_control(line)?;
+    if command != "size" {
+        return None;
+    }
+    let (width, height) = value.split_once(',')?;
+    Some((
+        width.trim().parse::<u32>().ok()?.max(1),
+        height.trim().parse::<u32>().ok()?.max(1),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_visibility_control;
+    use super::{parse_size_control, parse_visibility_control};
 
     #[test]
     fn visibility_control_preserves_completion_request_id() {
@@ -387,6 +406,18 @@ mod tests {
         assert_eq!(
             parse_visibility_control("SABINE_HOST_CONTROL\tvisible\t0"),
             Some((false, None))
+        );
+    }
+
+    #[test]
+    fn size_control_clamps_empty_dimensions() {
+        assert_eq!(
+            parse_size_control("SABINE_HOST_CONTROL\tsize\t228,363"),
+            Some((228, 363))
+        );
+        assert_eq!(
+            parse_size_control("SABINE_HOST_CONTROL\tsize\t0,0"),
+            Some((1, 1))
         );
     }
 }

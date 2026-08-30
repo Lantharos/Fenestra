@@ -176,6 +176,30 @@ impl OsrLayerHost {
         }
     }
 
+    pub(super) fn set_surface_size(
+        &mut self,
+        width: u32,
+        height: u32,
+        state: &mut WindowState<()>,
+    ) {
+        let size = (width.max(1), height.max(1));
+        let Some(shell_surface) = self.config.shell_surface.as_mut() else {
+            return;
+        };
+        if shell_surface.size == Some(size) {
+            return;
+        }
+        shell_surface.size = Some(size);
+        self.restore_layer_state(state);
+        if self.surface_mapped {
+            self.presentation_full_damage = true;
+            self.commit_surface(
+                state,
+                super::buffer::DamageRect::full(self.buffer_size.0, self.buffer_size.1),
+            );
+        }
+    }
+
     pub(super) fn begin_close(&mut self) {
         self.send_control("close\n");
         // Detach CEF — shared process-singleton windows must survive sibling close.

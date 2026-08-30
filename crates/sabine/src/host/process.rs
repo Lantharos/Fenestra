@@ -220,6 +220,12 @@ impl SabineProcess {
             .is_some_and(|emitter| emitter.set_margin(margin))
     }
 
+    pub fn set_shell_surface_size(&self, width: u32, height: u32) -> bool {
+        self.bridge_emitter
+            .as_ref()
+            .is_some_and(|emitter| emitter.set_size(width, height))
+    }
+
     pub fn set_visible(&self, visible: bool) -> bool {
         self.bridge_emitter
             .as_ref()

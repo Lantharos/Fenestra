@@ -164,6 +164,10 @@ impl BridgeEventEmitter {
         )
     }
 
+    pub fn set_size(&self, width: u32, height: u32) -> bool {
+        self.emit_host_control("size", &format!("{},{}", width.max(1), height.max(1)))
+    }
+
     pub fn show(&self) -> bool {
         self.emit_host_control("show", "1")
     }

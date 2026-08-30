@@ -281,6 +281,7 @@ impl OsrLayerHost {
             } => self.set_surface_visible(visible, request_id, state),
             LayerHostEvent::Alpha(alpha) => self.set_surface_alpha(alpha, state),
             LayerHostEvent::Margin(margin) => self.set_surface_margin(margin, state),
+            LayerHostEvent::Size(width, height) => self.set_surface_size(width, height, state),
             LayerHostEvent::Quit => return ReturnData::RequestExit,
             LayerHostEvent::ControlLine(line) => {
                 let mut line = line;
