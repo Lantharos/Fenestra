@@ -248,12 +248,8 @@ pub(crate) fn cef_osr_command(
     })?;
     sabine_host::prepare_host_runtime(&host_binary, runtime_dir)?;
     let binary_dir = sabine_host::runtime_binary_directory(runtime_dir);
-    let profile_key = config
-        .app_id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .expect("cef_osr_command requires a non-empty app_id");
-    let cache_dir = browser_profile_dir(profile_key);
+    let profile_key = browser_profile_key(config);
+    let cache_dir = browser_profile_dir(&profile_key);
     let _ = std::fs::create_dir_all(&cache_dir);
     let token_file = crate::osr::transport::write_token_file(endpoint, authentication_token)
         .unwrap_or_else(|error| {
@@ -351,6 +347,29 @@ pub(crate) fn cef_osr_command(
     command.stdout(Stdio::null());
     command.stderr(Stdio::inherit());
     Ok(command)
+}
+
+fn browser_profile_key(config: &crate::osr::host::OsrHostConfig) -> String {
+    let app_id = config
+        .app_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .expect("cef_osr_command requires a non-empty app_id");
+
+    #[cfg(target_os = "linux")]
+    if config.shell_surface.is_some()
+        && let Some(display) = std::env::var_os("WAYLAND_DISPLAY")
+        && !display.is_empty()
+    {
+        let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").unwrap_or_default();
+        return format!(
+            "{app_id}\0wayland-shell\0{}\0{}",
+            runtime_dir.to_string_lossy(),
+            display.to_string_lossy()
+        );
+    }
+
+    app_id.to_string()
 }
 
 fn osr_instance_key() -> String {
