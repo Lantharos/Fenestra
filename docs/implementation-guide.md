@@ -189,6 +189,10 @@ before applying the new target, so rapid toggles never block the shell thread or
 acknowledgement pending forever. Layer loading uses the compact three-line native animation without
 text so small shell surfaces do not reserve message space.
 
+Layer surfaces also accept live size and frame-rate changes through their existing host connection.
+The host reconfigures the current Wayland surface and CEF browser in place, so responsive shell
+content and output refresh changes do not restart or discard a prewarmed browser process.
+
 ## Runtime ownership
 
 `sabine-runtime` is the only crate allowed to decide runtime locations, versions, download archives,

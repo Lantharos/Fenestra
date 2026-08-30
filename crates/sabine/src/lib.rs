@@ -5,6 +5,7 @@ mod host;
 mod launch;
 mod osr;
 mod render;
+mod shell;
 mod window;
 
 pub use error::{SabineError, SabineResult};
@@ -26,6 +27,7 @@ pub mod prelude {
 }
 
 pub use bridge::{BridgeEventEmitter, ShellSurfaceVisibilityRequest, ShellSurfaceVisibilityState};
+pub use shell::ShellSurfaceFrameRate;
 pub use window::SabineWindowControlRegion;
 
 pub use sabine_bridge::{ActivityOptions, ActivityRecord, SabineActivityLease};
@@ -43,11 +45,11 @@ pub use sabine_platform::{
     PlatformEvent, Shortcut, ShortcutModifiers, SingleInstancePolicy, TrayIcon, TrayMenuItem,
     WindowBackgroundEffect, WindowRegion, WindowRegionRect, WindowRegions,
 };
-pub use sabine_platform::{
+pub use sabine_runtime::{RuntimeConfig, RuntimeMode};
+pub use shell::{
     ShellSurfaceAnchor, ShellSurfaceKeyboardInteractivity, ShellSurfaceLayer, ShellSurfaceMargin,
     ShellSurfaceOptions,
 };
-pub use sabine_runtime::{RuntimeConfig, RuntimeMode};
 
 /// Runs an internal Sabine child mode selected by `args`.
 ///

@@ -23,6 +23,7 @@ pub(super) enum LayerHostEvent {
     Alpha(f32),
     Margin(ShellSurfaceMargin),
     Size(u32, u32),
+    FrameRate(crate::ShellSurfaceFrameRate),
     Quit,
     ControlLine(String),
     Disconnected,
@@ -243,6 +244,12 @@ pub(super) fn start_layer_parent_bridge_reader(sender: Sender<LayerHostEvent>) {
                 }
                 continue;
             }
+            if let Some(frame_rate) = parse_frame_rate_control(&line) {
+                if sender.send(LayerHostEvent::FrameRate(frame_rate)).is_err() {
+                    break;
+                }
+                continue;
+            }
             if parse_quit_control(&line) {
                 let _ = sender.send(LayerHostEvent::Quit);
                 break;
@@ -393,9 +400,17 @@ fn parse_size_control(line: &str) -> Option<(u32, u32)> {
     ))
 }
 
+fn parse_frame_rate_control(line: &str) -> Option<crate::ShellSurfaceFrameRate> {
+    let (command, value) = crate::parse_host_control(line)?;
+    if command != "shell-frame-rate" {
+        return None;
+    }
+    crate::ShellSurfaceFrameRate::new(value.trim().parse().ok()?)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_size_control, parse_visibility_control};
+    use super::{parse_frame_rate_control, parse_size_control, parse_visibility_control};
 
     #[test]
     fn visibility_control_preserves_completion_request_id() {
@@ -419,5 +434,15 @@ mod tests {
             parse_size_control("SABINE_HOST_CONTROL\tsize\t0,0"),
             Some((1, 1))
         );
+    }
+
+    #[test]
+    fn frame_rate_control_validates_bounds() {
+        assert_eq!(
+            parse_frame_rate_control("SABINE_HOST_CONTROL\tshell-frame-rate\t144")
+                .map(|rate| rate.get()),
+            Some(144)
+        );
+        assert!(parse_frame_rate_control("SABINE_HOST_CONTROL\tshell-frame-rate\t0").is_none());
     }
 }

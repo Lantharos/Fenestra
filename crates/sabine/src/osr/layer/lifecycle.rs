@@ -38,6 +38,14 @@ impl OsrLayerHost {
         }
     }
 
+    pub(super) fn set_active_frame_rate(&mut self, frame_rate: crate::ShellSurfaceFrameRate) {
+        if self.config.lifecycle.active_frame_rate == frame_rate.get() {
+            return;
+        }
+        self.config.lifecycle.active_frame_rate = frame_rate.get();
+        self.force_current_lifecycle("output-refresh");
+    }
+
     pub(super) fn content_size_for_cef(&self) -> (u32, u32, f64) {
         (
             self.surface_size.0.max(1),

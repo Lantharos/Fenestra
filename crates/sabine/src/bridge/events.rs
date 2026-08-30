@@ -213,7 +213,7 @@ impl BridgeEventEmitter {
         )
     }
 
-    fn emit_host_control(&self, command: &str, value: &str) -> bool {
+    pub(crate) fn emit_host_control(&self, command: &str, value: &str) -> bool {
         self.write_line(format!("{HOST_CONTROL_PREFIX}\t{command}\t{value}"))
     }
 
