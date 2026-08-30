@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use layershellev::{
     DispatchMessage, ExWlShellEvent as LayerShellEvent, ReturnData, WindowState, id,
 };
@@ -62,6 +64,7 @@ impl OsrLayerHost {
             LayerShellEvent::RequestMessages(message) => self.handle_message(message, state, id),
             LayerShellEvent::UserEvent(event) => self.handle_host_event(event, state, id),
             LayerShellEvent::NormalDispatch => {
+                self.drive_child();
                 self.refresh_loading(state);
                 self.drive_tooltip(state);
                 self.commit_pending_surface(state);
@@ -261,6 +264,8 @@ impl OsrLayerHost {
     ) -> ReturnData<()> {
         match event {
             LayerHostEvent::Connected(stream) => {
+                self.child_retry_at = None;
+                self.child_handoff_deadline = None;
                 self.control_writer = Some(super::socket::ControlWriter::start(stream));
                 if !self.visible {
                     self.force_suspend("hidden");
@@ -430,7 +435,15 @@ impl OsrLayerHost {
     }
 
     pub(super) fn ensure_child(&mut self) {
-        if self.child.is_some() {
+        if self.control_writer.is_some()
+            || self.child.is_some()
+            || self
+                .child_retry_at
+                .is_some_and(|deadline| Instant::now() < deadline)
+            || self
+                .child_handoff_deadline
+                .is_some_and(|deadline| Instant::now() < deadline)
+        {
             return;
         }
         let Some(app_id) = self
@@ -484,6 +497,49 @@ impl OsrLayerHost {
                 return;
             }
         };
+        self.child_retry_at = None;
+        self.child_handoff_deadline = None;
         self.child = Some(child);
     }
+
+    fn drive_child(&mut self) {
+        if self.control_writer.is_some() {
+            return;
+        }
+        if let Some(mut child) = self.child.take() {
+            match child.try_wait() {
+                Ok(None) => {
+                    self.child = Some(child);
+                    return;
+                }
+                Ok(Some(status))
+                    if status.code() == Some(CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED) =>
+                {
+                    self.child_handoff_deadline = Some(Instant::now() + PROFILE_HANDOFF_TIMEOUT);
+                }
+                Ok(Some(status)) => {
+                    eprintln!(
+                        "Sabine layer OSR child exited ({status}); retrying shared-profile launch"
+                    );
+                    self.child_retry_at = Some(Instant::now() + CHILD_RETRY_DELAY);
+                }
+                Err(error) => {
+                    eprintln!("failed to inspect Sabine layer OSR child: {error}");
+                    self.child_retry_at = Some(Instant::now() + CHILD_RETRY_DELAY);
+                }
+            }
+        }
+        if self
+            .child_handoff_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            eprintln!("Sabine layer OSR profile handoff timed out; retrying launch");
+            self.child_handoff_deadline = None;
+        }
+        self.ensure_child();
+    }
 }
+
+const CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED: i32 = 24;
+const CHILD_RETRY_DELAY: Duration = Duration::from_millis(150);
+const PROFILE_HANDOFF_TIMEOUT: Duration = Duration::from_secs(15);

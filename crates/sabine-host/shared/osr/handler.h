@@ -315,6 +315,7 @@ class SabineOsrHandler : public CefClient,
 	  // Blur/occlusion suspend only throttles frame rate — WasHidden there
 	  // blanks OSR and flickers on resume (common after interactive move).
 	  bool view_hidden_ = false;
+	  bool resume_needs_paint_ = false;
 	  bool pending_guest_cover_ = false;
 	  int active_frame_rate_ = 60;
 	  int background_frame_rate_ = 5;

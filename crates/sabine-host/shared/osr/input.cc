@@ -322,12 +322,16 @@ void SabineOsrHandler::ApplyLifecycle(const std::string& state,
   CefRefPtr<CefBrowserHost> host = browser_->GetHost();
   if (state == "active") {
     const bool was_hidden = view_hidden_;
+    const bool needs_paint = was_hidden || resume_needs_paint_;
     suspended_ = false;
     view_hidden_ = false;
+    resume_needs_paint_ = false;
     host->SetWindowlessFrameRate(std::max(1, frame_rate));
     if (was_hidden) {
       host->WasHidden(false);
       host->WasResized();
+    }
+    if (needs_paint) {
       host->Invalidate(PET_VIEW);
     }
     ApplyGuestLifecycle();
@@ -338,6 +342,7 @@ void SabineOsrHandler::ApplyLifecycle(const std::string& state,
     DispatchLifecycle("hibernate", reason);
     suspended_ = true;
     view_hidden_ = true;
+    resume_needs_paint_ = false;
     host->SetWindowlessFrameRate(std::max(1, background_frame_rate_));
     host->WasHidden(true);
     ApplyGuestLifecycle();
@@ -346,6 +351,7 @@ void SabineOsrHandler::ApplyLifecycle(const std::string& state,
   // Suspend: throttle only. Do not WasHidden — Wayland fires brief blur /
   // occlusion around interactive move, and hiding blanks the OSR surface.
   suspended_ = true;
+  resume_needs_paint_ = resume_needs_paint_ || reason == "hidden";
   host->SetWindowlessFrameRate(std::max(1, frame_rate));
   ApplyGuestLifecycle();
   DispatchLifecycle("suspended", reason);
