@@ -132,6 +132,15 @@ impl OsrLayerHost {
             shell_surface.margin = margin;
         }
         self.visible = visible;
+        self.restore_layer_state(state);
+        if !visible && !self.surface_mapped {
+            let surface = state.main_window().get_wlsurface();
+            surface.commit();
+            if !super::surface::flush_surface(surface) {
+                self.wayland_failed = true;
+                return;
+            }
+        }
         if visible {
             self.show_surface(state);
         } else {
