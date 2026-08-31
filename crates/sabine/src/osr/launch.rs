@@ -250,12 +250,14 @@ pub(crate) fn cef_osr_command(
     let binary_dir = sabine_host::runtime_binary_directory(runtime_dir);
     let profile_key = browser_profile_key(config);
     let cache_dir = browser_profile_dir(&profile_key);
-    let _ = std::fs::create_dir_all(&cache_dir);
+    std::fs::create_dir_all(&cache_dir).map_err(|error| {
+        format!(
+            "could not create Sabine browser profile {}: {error}",
+            cache_dir.display()
+        )
+    })?;
     let token_file = crate::osr::transport::write_token_file(endpoint, authentication_token)
-        .unwrap_or_else(|error| {
-            eprintln!("failed to write OSR token file: {error}");
-            PathBuf::new()
-        });
+        .map_err(|error| format!("could not write Sabine OSR token file: {error}"))?;
     let mut command = Command::new(&host_binary);
     sabine_runtime::configure_background_command(&mut command);
     sabine_host::apply_runtime_resource_args(&mut command, runtime_dir);
@@ -267,9 +269,7 @@ pub(crate) fn cef_osr_command(
     if viewport.accelerated_paint {
         command.arg("--sabine-shared-texture");
     }
-    if !token_file.as_os_str().is_empty() {
-        command.arg(format!("--sabine-osr-token-file={}", token_file.display()));
-    }
+    command.arg(format!("--sabine-osr-token-file={}", token_file.display()));
     command
         .arg(format!("--sabine-width={}", viewport.width))
         .arg(format!("--sabine-height={}", viewport.height))

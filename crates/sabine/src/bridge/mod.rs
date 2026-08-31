@@ -1,4 +1,5 @@
 mod events;
+mod request_dispatch;
 
 pub use events::{BridgeEventEmitter, ShellSurfaceVisibilityRequest, ShellSurfaceVisibilityState};
 pub(crate) use events::{

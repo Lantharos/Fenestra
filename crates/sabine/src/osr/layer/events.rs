@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use layershellev::{
     DispatchMessage, ExWlShellEvent as LayerShellEvent, ReturnData, WindowState, id,
@@ -67,8 +70,6 @@ impl OsrLayerHost {
                 self.drive_child();
                 self.refresh_loading(state);
                 self.drive_tooltip(state);
-                self.commit_pending_surface(state);
-                self.commit_pending_popup_surface(state);
                 ReturnData::None
             }
             _ => ReturnData::None,
@@ -98,13 +99,16 @@ impl OsrLayerHost {
                         if popup.size != size {
                             popup.size = size;
                             popup.pool = None;
+                            popup.pool_error = None;
                             popup.buffers.clear();
                             popup.pending_refresh = false;
+                            popup.pending_damage = None;
                         }
                         popup.mapped = false;
                     }
                     self.ensure_popup_effect(state);
                     self.refresh_popup_surface(state);
+                    self.commit_pending_popup_surface(state);
                     return ReturnData::None;
                 }
                 self.configure_generation = *configure_generation;
@@ -142,6 +146,7 @@ impl OsrLayerHost {
                     self.refresh_loading(state);
                 } else if self.visible && self.main_frame_ready() {
                     self.refresh_surface(state);
+                    self.commit_pending_surface(state);
                 } else if self.visible {
                     self.hide_surface(state);
                 }
@@ -276,7 +281,13 @@ impl OsrLayerHost {
                 self.force_current_lifecycle("connect");
             }
             LayerHostEvent::MessagesReady(messages) => {
-                for message in messages.drain() {
+                let (queued, remaining) = messages.drain_budgeted();
+                if remaining {
+                    let _ = self
+                        .sender
+                        .send(LayerHostEvent::MessagesReady(Arc::clone(&messages)));
+                }
+                for message in queued {
                     if let Some(return_data) = self.handle_osr_message(message, state, id) {
                         return return_data;
                     }

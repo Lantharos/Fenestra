@@ -59,7 +59,7 @@ impl DamageRect {
         self.x == 0 && self.y == 0 && self.width >= width && self.height >= height
     }
 
-    fn union(self, other: Self) -> Self {
+    pub(super) fn union(self, other: Self) -> Self {
         let left = self.x.min(other.x);
         let top = self.y.min(other.y);
         let right = (self.x + self.width).max(other.x + other.width);

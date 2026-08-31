@@ -1,8 +1,4 @@
-use std::{
-    fs::File,
-    os::fd::AsFd,
-    time::{Duration, Instant},
-};
+use std::{fs::File, os::fd::AsFd};
 
 use layershellev::{RefreshRequest, WindowState, reexport::wl_shm};
 use smithay_client_toolkit::shm::{Shm, slot::SlotPool};
@@ -133,7 +129,7 @@ impl OsrLayerHost {
         if self.presentation_full_damage {
             damage = DamageRect::full(self.buffer_size.0, self.buffer_size.1);
         }
-        self.commit_surface(state, damage);
+        self.schedule_surface(state, damage);
     }
 
     pub(super) fn refresh_batch_surface(
@@ -179,8 +175,18 @@ impl OsrLayerHost {
             return None;
         }
         self.force_resume("first-paint");
-        self.commit_surface(state, damage);
+        self.schedule_surface(state, damage);
         None
+    }
+
+    fn schedule_surface(&mut self, state: &mut WindowState<()>, damage: DamageRect) {
+        self.pending_surface_damage = Some(
+            self.pending_surface_damage
+                .map_or(damage, |pending| pending.union(damage)),
+        );
+        self.pending_surface_refresh = true;
+        let main_id = state.main_window().id();
+        state.request_refresh(main_id, RefreshRequest::NextFrame);
     }
 
     pub(super) fn hide_surface(&mut self, state: &mut WindowState<()>) {
@@ -242,24 +248,37 @@ impl OsrLayerHost {
             self.restore_layer_state(state);
         }
         let unit = state.main_window();
-        let damage = if self.surface_mapped && !self.pending_surface_refresh {
+        let damage = if self.surface_mapped && !self.presentation_full_damage {
             damage
         } else {
             DamageRect::full(self.buffer_size.0, self.buffer_size.1)
         };
-        let Some(buffer_index) = self.prepare_main_buffer() else {
-            self.pending_surface_refresh = true;
-            state.request_refresh_all(RefreshRequest::At(
-                Instant::now() + Duration::from_millis(8),
-            ));
-            return;
+        let buffer_index = match self.prepare_main_buffer() {
+            BufferPreparation::Ready(index) => index,
+            BufferPreparation::Busy => {
+                self.pending_surface_refresh = true;
+                let surface = unit.get_wlsurface().clone();
+                let unit_id = unit.id();
+                state.request_next_present(unit_id);
+                surface.commit();
+                if !flush_surface(&surface) {
+                    self.wayland_failed = true;
+                    return;
+                }
+                state.request_refresh(unit_id, RefreshRequest::NextFrame);
+                return;
+            }
+            BufferPreparation::Fatal(error) => {
+                eprintln!("Sabine layer main buffer failed: {error}");
+                self.wayland_failed = true;
+                return;
+            }
         };
-        let surface = unit.get_wlsurface();
-        if self.main_buffers[buffer_index].attach_to(surface).is_err() {
-            self.pending_surface_refresh = true;
-            state.request_refresh_all(RefreshRequest::At(
-                Instant::now() + Duration::from_millis(8),
-            ));
+        let unit_id = unit.id();
+        let surface = unit.get_wlsurface().clone();
+        if let Err(error) = self.main_buffers[buffer_index].attach_to(&surface) {
+            eprintln!("Sabine layer main buffer attach failed: {error}");
+            self.wayland_failed = true;
             return;
         }
         surface.damage_buffer(
@@ -268,12 +287,14 @@ impl OsrLayerHost {
             damage.width as i32,
             damage.height as i32,
         );
+        state.request_next_present(unit_id);
         surface.commit();
-        if !flush_surface(surface) {
+        if !flush_surface(&surface) {
             self.wayland_failed = true;
             return;
         }
         self.pending_surface_refresh = false;
+        self.pending_surface_damage = None;
         self.surface_mapped = true;
         self.presentation_full_damage = false;
         self.acknowledge_visibility(true);
@@ -292,7 +313,9 @@ impl OsrLayerHost {
         if !self.pending_surface_refresh || !self.visible || !self.current_buffer_ready() {
             return;
         }
-        let damage = DamageRect::full(self.buffer_size.0, self.buffer_size.1);
+        let damage = self
+            .pending_surface_damage
+            .unwrap_or_else(|| DamageRect::full(self.buffer_size.0, self.buffer_size.1));
         self.commit_surface(state, damage);
     }
 
@@ -303,46 +326,67 @@ impl OsrLayerHost {
 
     fn reset_main_pool(&mut self, shm: &wl_shm::WlShm, byte_len: usize) {
         self.main_buffers.clear();
-        self.main_pool = SlotPool::new(byte_len.max(1), &Shm::from(shm.clone())).ok();
+        self.pending_surface_damage = None;
+        match SlotPool::new(byte_len.max(1), &Shm::from(shm.clone())) {
+            Ok(pool) => {
+                self.main_pool = Some(pool);
+                self.main_pool_error = None;
+            }
+            Err(error) => {
+                self.main_pool = None;
+                self.main_pool_error = Some(error.to_string());
+            }
+        }
         self.pending_surface_refresh = false;
+        self.pending_surface_damage = None;
     }
 
-    fn prepare_main_buffer(&mut self) -> Option<usize> {
-        let pool = self.main_pool.as_mut()?;
+    fn prepare_main_buffer(&mut self) -> BufferPreparation {
+        let Some(pool) = self.main_pool.as_mut() else {
+            return BufferPreparation::Fatal(
+                self.main_pool_error
+                    .clone()
+                    .unwrap_or_else(|| "SHM pool is unavailable".to_string()),
+            );
+        };
         let pixels = if self.presentation_buffer.is_empty() {
             self.main_buffer.as_slice()
         } else {
             self.presentation_buffer.as_slice()
         };
         if pixels.len() != buffer_len(self.buffer_size.0, self.buffer_size.1) {
-            return None;
+            return BufferPreparation::Fatal("main pixel buffer has an invalid size".to_string());
         }
         let stride = pixel_stride(self.buffer_size.0);
 
         for (index, buffer) in self.main_buffers.iter().enumerate() {
             if let Some(canvas) = buffer.canvas(pool) {
-                return copy_pixels_to_canvas(
+                return if copy_pixels_to_canvas(
                     canvas,
                     pixels,
                     self.buffer_size.0,
                     self.buffer_size.1,
                     stride,
-                )
-                .then_some(index);
+                ) {
+                    BufferPreparation::Ready(index)
+                } else {
+                    BufferPreparation::Fatal("main SHM canvas has an invalid layout".to_string())
+                };
             }
         }
 
         if self.main_buffers.len() >= MAX_MAIN_BUFFERS {
-            return None;
+            return BufferPreparation::Busy;
         }
-        let (buffer, canvas) = pool
-            .create_buffer(
-                self.buffer_size.0 as i32,
-                self.buffer_size.1 as i32,
-                stride as i32,
-                wl_shm::Format::Argb8888,
-            )
-            .ok()?;
+        let (buffer, canvas) = match pool.create_buffer(
+            self.buffer_size.0 as i32,
+            self.buffer_size.1 as i32,
+            stride as i32,
+            wl_shm::Format::Argb8888,
+        ) {
+            Ok(buffer) => buffer,
+            Err(error) => return BufferPreparation::Fatal(error.to_string()),
+        };
         if !copy_pixels_to_canvas(
             canvas,
             pixels,
@@ -350,10 +394,10 @@ impl OsrLayerHost {
             self.buffer_size.1,
             stride,
         ) {
-            return None;
+            return BufferPreparation::Fatal("main SHM canvas has an invalid layout".to_string());
         }
         self.main_buffers.push(buffer);
-        Some(self.main_buffers.len() - 1)
+        BufferPreparation::Ready(self.main_buffers.len() - 1)
     }
 
     pub(super) fn restore_layer_state(&mut self, state: &mut WindowState<()>) {
@@ -400,6 +444,12 @@ impl OsrLayerHost {
         }
         (self.surface_size.0.max(1), self.surface_size.1.max(1))
     }
+}
+
+enum BufferPreparation {
+    Ready(usize),
+    Busy,
+    Fatal(String),
 }
 
 pub(super) fn flush_surface(surface: &wayland_client::protocol::wl_surface::WlSurface) -> bool {

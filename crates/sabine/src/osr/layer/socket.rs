@@ -6,6 +6,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Condvar, Mutex},
     thread,
+    time::Duration,
 };
 
 use layershellev::calloop::channel::Sender;
@@ -37,7 +38,12 @@ pub(super) enum LayerHostEvent {
 
 pub(super) struct MessageQueue {
     state: Mutex<MessageQueueState>,
+    space_available: Condvar,
 }
+
+const MAX_QUEUED_MESSAGES: usize = 256;
+const MAX_QUEUED_CONTROLS: usize = 256;
+const MESSAGE_DISPATCH_BUDGET: usize = 32;
 
 #[derive(Default)]
 struct MessageQueueState {
@@ -49,18 +55,38 @@ impl MessageQueue {
     fn new() -> Self {
         Self {
             state: Mutex::new(MessageQueueState::default()),
+            space_available: Condvar::new(),
         }
     }
 
     fn push(&self, message: OsrMessage) -> bool {
-        let Ok(mut state) = self.state.lock() else {
+        let Ok(state) = self.state.lock() else {
             return false;
         };
+        let mut state = state;
+        while state.messages.len() >= MAX_QUEUED_MESSAGES {
+            let Ok(next) = self.space_available.wait(state) else {
+                return false;
+            };
+            state = next;
+        }
         match message {
             OsrMessage::PaintBatch(incoming) => {
-                let incoming = match state.messages.back_mut() {
-                    Some(OsrMessage::PaintBatch(queued)) => merge_paint_batch(queued, incoming),
-                    _ => Some(incoming),
+                let matching = state
+                    .messages
+                    .iter_mut()
+                    .rev()
+                    .take_while(|message| matches!(message, OsrMessage::PaintBatch(_)))
+                    .find_map(|message| match message {
+                        OsrMessage::PaintBatch(queued) if queued.surface == incoming.surface => {
+                            Some(queued)
+                        }
+                        _ => None,
+                    });
+                let incoming = if let Some(queued) = matching {
+                    merge_paint_batch(queued, incoming)
+                } else {
+                    Some(incoming)
                 };
                 if let Some(incoming) = incoming {
                     state.messages.push_back(OsrMessage::PaintBatch(incoming));
@@ -76,12 +102,17 @@ impl MessageQueue {
         }
     }
 
-    pub(super) fn drain(&self) -> VecDeque<OsrMessage> {
+    pub(super) fn drain_budgeted(&self) -> (VecDeque<OsrMessage>, bool) {
         let Ok(mut state) = self.state.lock() else {
-            return VecDeque::new();
+            return (VecDeque::new(), false);
         };
-        state.wake_queued = false;
-        std::mem::take(&mut state.messages)
+        let count = state.messages.len().min(MESSAGE_DISPATCH_BUDGET);
+        let messages = state.messages.drain(..count).collect();
+        let remaining = !state.messages.is_empty();
+        state.wake_queued = remaining;
+        drop(state);
+        self.space_available.notify_all();
+        (messages, remaining)
     }
 }
 
@@ -129,6 +160,7 @@ struct ControlQueue {
 struct ControlQueueState {
     messages: VecDeque<ControlMessage>,
     closed: bool,
+    error: Option<String>,
 }
 
 enum ControlMessage {
@@ -142,6 +174,7 @@ impl ControlWriter {
             state: Mutex::new(ControlQueueState {
                 messages: VecDeque::new(),
                 closed: false,
+                error: None,
             }),
             ready: Condvar::new(),
         });
@@ -151,7 +184,8 @@ impl ControlWriter {
                 let line = match message {
                     ControlMessage::Motion(line) | ControlMessage::Ordered(line) => line,
                 };
-                if stream.write_all(line.as_bytes()).is_err() {
+                if let Err(error) = stream.write_all(line.as_bytes()) {
+                    worker_queue.fail(error);
                     break;
                 }
             }
@@ -159,16 +193,33 @@ impl ControlWriter {
         Self { queue }
     }
 
-    pub(super) fn send(&self, line: String) {
-        self.queue.push(ControlMessage::Ordered(line));
+    pub(super) fn send(&self, line: String) -> Result<(), String> {
+        self.queue.push(ControlMessage::Ordered(line))
     }
 
-    pub(super) fn send_motion(&self, line: String) {
+    pub(super) fn send_motion(&self, line: String) -> Result<(), String> {
         let Ok(mut state) = self.queue.state.lock() else {
-            return;
+            return Err("control queue lock was poisoned".to_string());
         };
         if state.closed {
-            return;
+            return Err(state
+                .error
+                .clone()
+                .unwrap_or_else(|| "control writer is closed".to_string()));
+        }
+        if state.messages.len() >= MAX_QUEUED_CONTROLS {
+            if let Some(pending) = state
+                .messages
+                .iter_mut()
+                .rev()
+                .find_map(|message| match message {
+                    ControlMessage::Motion(pending) => Some(pending),
+                    ControlMessage::Ordered(_) => None,
+                })
+            {
+                *pending = line;
+            }
+            return Ok(());
         }
         if let Some(ControlMessage::Motion(pending)) = state.messages.back_mut() {
             *pending = line;
@@ -177,6 +228,7 @@ impl ControlWriter {
         }
         drop(state);
         self.queue.ready.notify_one();
+        Ok(())
     }
 }
 
@@ -190,22 +242,34 @@ impl Drop for ControlWriter {
 }
 
 impl ControlQueue {
-    fn push(&self, message: ControlMessage) {
-        let Ok(mut state) = self.state.lock() else {
-            return;
+    fn push(&self, message: ControlMessage) -> Result<(), String> {
+        let Ok(state) = self.state.lock() else {
+            return Err("control queue lock was poisoned".to_string());
         };
+        let mut state = state;
+        while state.messages.len() >= MAX_QUEUED_CONTROLS && !state.closed {
+            let Ok(next) = self.ready.wait(state) else {
+                return Err("control queue lock was poisoned".to_string());
+            };
+            state = next;
+        }
         if state.closed {
-            return;
+            return Err(state
+                .error
+                .clone()
+                .unwrap_or_else(|| "control writer is closed".to_string()));
         }
         state.messages.push_back(message);
         drop(state);
         self.ready.notify_one();
+        Ok(())
     }
 
     fn next(&self) -> Option<ControlMessage> {
         let mut state = self.state.lock().ok()?;
         loop {
             if let Some(message) = state.messages.pop_front() {
+                self.ready.notify_all();
                 return Some(message);
             }
             if state.closed {
@@ -213,6 +277,14 @@ impl ControlQueue {
             }
             state = self.ready.wait(state).ok()?;
         }
+    }
+
+    fn fail(&self, error: io::Error) {
+        if let Ok(mut state) = self.state.lock() {
+            state.closed = true;
+            state.error = Some(error.to_string());
+        }
+        self.ready.notify_all();
     }
 }
 
@@ -338,8 +410,20 @@ fn start_socket_reader(
                 endpoint.unlink();
                 return;
             };
+            if let Err(error) = candidate.set_read_timeout(Some(Duration::from_millis(750))) {
+                eprintln!("Sabine layer OSR could not set authentication deadline: {error}");
+                continue;
+            }
             match crate::osr::transport::authenticate(&mut candidate, &authentication_token) {
-                Ok(crate::osr::transport::Authentication::Accepted) => break candidate,
+                Ok(crate::osr::transport::Authentication::Accepted) => {
+                    if let Err(error) = candidate.set_read_timeout(None) {
+                        eprintln!(
+                            "Sabine layer OSR could not clear authentication deadline: {error}"
+                        );
+                        continue;
+                    }
+                    break candidate;
+                }
                 Ok(crate::osr::transport::Authentication::Probe) => continue,
                 Err(error) => {
                     eprintln!("Sabine layer OSR reject connect: {error}");

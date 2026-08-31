@@ -9,9 +9,10 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use sabine_bridge::{BridgeCommand, BridgeHandlers, BridgeResult};
+use sabine_bridge::BridgeHandlers;
 use sabine_platform::{PlatformEvent, ShellSurfaceMargin};
 
+use super::request_dispatch::{BridgeIpcRequest, BridgeRequestDispatcher};
 use crate::launch::browser::HOST_CONTROL_PREFIX;
 
 #[derive(Clone)]
@@ -371,8 +372,12 @@ pub(crate) fn spawn_bridge_dispatch(
             ready,
         };
     };
-    let activity_emitter = Some(emitter.clone());
-    let response_stdin = Arc::clone(&stdin);
+    let dispatcher = BridgeRequestDispatcher::new(
+        bridge_runtime,
+        activity,
+        emitter.clone(),
+        Arc::clone(&stdin),
+    );
     let detach_emitter = emitter.clone();
     let visibility_waiters = Arc::clone(&emitter.visibility_waiters);
     let thread = thread::spawn(move || {
@@ -388,28 +393,7 @@ pub(crate) fn spawn_bridge_dispatch(
             let Some(request) = BridgeIpcRequest::parse(&line) else {
                 continue;
             };
-            let response = if let Some((response, update)) =
-                activity.dispatch_bridge_command(&request.command)
-            {
-                if let (Ok(_), Some(update), Some(emitter)) = (
-                    response.as_ref(),
-                    update.as_ref(),
-                    activity_emitter.as_ref(),
-                ) {
-                    let _ = emitter.emit_activity_update(update);
-                }
-                response
-            } else {
-                bridge_runtime.dispatch(request.command)
-            };
-            let line = BridgeIpcResponse::from_result(request.browser_id, request.id, response);
-            let Ok(mut stdin) = response_stdin.lock() else {
-                break;
-            };
-            if writeln!(stdin, "{line}").is_err() {
-                break;
-            }
-            let _ = stdin.flush();
+            dispatcher.submit(request);
         }
         detach_emitter.detach(window_id);
     });
@@ -435,6 +419,12 @@ pub(crate) fn spawn_bridge_dispatch_for_window(
     let stdout = child.stdout.take()?;
     let activity_emitter = emitter.clone();
     let visibility_waiters = Arc::clone(&emitter.visibility_waiters);
+    let dispatcher = BridgeRequestDispatcher::new(
+        bridge_runtime,
+        activity,
+        emitter.clone(),
+        Arc::clone(&stdin),
+    );
     Some(thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(std::result::Result::ok) {
@@ -444,24 +434,7 @@ pub(crate) fn spawn_bridge_dispatch_for_window(
             let Some(request) = BridgeIpcRequest::parse(&line) else {
                 continue;
             };
-            let response = if let Some((response, update)) =
-                activity.dispatch_bridge_command(&request.command)
-            {
-                if let (Ok(_), Some(update)) = (response.as_ref(), update.as_ref()) {
-                    let _ = activity_emitter.emit_activity_update(update);
-                }
-                response
-            } else {
-                bridge_runtime.dispatch(request.command)
-            };
-            let line = BridgeIpcResponse::from_result(request.browser_id, request.id, response);
-            let Ok(mut stdin) = stdin.lock() else {
-                break;
-            };
-            if writeln!(stdin, "{line}").is_err() {
-                break;
-            }
-            let _ = stdin.flush();
+            dispatcher.submit(request);
         }
         activity_emitter.detach(window_id);
     }))
@@ -497,69 +470,6 @@ pub(crate) fn parse_host_control(line: &str) -> Option<(&str, &str)> {
         return None;
     }
     Some((parts.next()?, parts.next().unwrap_or("1")))
-}
-
-struct BridgeIpcRequest {
-    browser_id: String,
-    id: String,
-    command: BridgeCommand,
-}
-
-impl BridgeIpcRequest {
-    fn parse(line: &str) -> Option<Self> {
-        let parts = line.splitn(6, '\t').collect::<Vec<_>>();
-        if parts.first().copied()? != "SABINE_BRIDGE_REQUEST" || parts.len() != 6 {
-            return None;
-        }
-        let params = serde_json::from_str(parts[5]).ok()?;
-        Some(Self {
-            browser_id: parts[1].to_string(),
-            id: parts[2].to_string(),
-            command: BridgeCommand {
-                origin: Some(parts[3].to_string()).filter(|origin| !origin.is_empty()),
-                name: parts[4].to_string(),
-                params,
-            },
-        })
-    }
-}
-
-struct BridgeIpcResponse {
-    browser_id: String,
-    id: String,
-    ok: bool,
-    payload: serde_json::Value,
-}
-
-impl BridgeIpcResponse {
-    fn from_result(browser_id: String, id: String, result: BridgeResult) -> Self {
-        match result {
-            Ok(response) => Self {
-                browser_id,
-                id,
-                ok: true,
-                payload: response.result,
-            },
-            Err(error) => Self {
-                browser_id,
-                id,
-                ok: false,
-                payload: serde_json::json!({ "message": error.message }),
-            },
-        }
-    }
-}
-
-impl std::fmt::Display for BridgeIpcResponse {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let status = if self.ok { "ok" } else { "error" };
-        let payload = serde_json::to_string(&self.payload).unwrap_or_else(|_| "null".to_string());
-        write!(
-            formatter,
-            "SABINE_BRIDGE_RESPONSE\t{}\t{}\t{status}\t{payload}",
-            self.browser_id, self.id
-        )
-    }
 }
 
 struct BridgeIpcEvent {

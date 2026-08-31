@@ -59,9 +59,19 @@ impl OsrLayerHost {
             let _ = file.set_len(byte_len as u64);
         }
         let buffer = create_buffer(file, shm, qh, width, height);
-        popup.pool = SlotPool::new(byte_len.max(1), &Shm::from(shm.clone())).ok();
+        match SlotPool::new(byte_len.max(1), &Shm::from(shm.clone())) {
+            Ok(pool) => {
+                popup.pool = Some(pool);
+                popup.pool_error = None;
+            }
+            Err(error) => {
+                popup.pool = None;
+                popup.pool_error = Some(error.to_string());
+            }
+        }
         popup.buffers.clear();
         popup.pending_refresh = false;
+        popup.pending_damage = None;
         buffer
     }
 
@@ -145,8 +155,10 @@ impl OsrLayerHost {
             frame: Some(frame),
             pending_frames: Vec::new(),
             pool: None,
+            pool_error: None,
             buffers: Vec::new(),
             pending_refresh: false,
+            pending_damage: None,
             buffer: Vec::new(),
             scratch: Vec::new(),
             mapped: false,
@@ -181,7 +193,20 @@ impl OsrLayerHost {
             popup.frame.as_slice(),
             &mut popup.buffer,
         );
-        self.commit_popup_surface(state, damage);
+        self.schedule_popup_surface(state, damage);
+    }
+
+    fn schedule_popup_surface(&mut self, state: &mut WindowState<()>, damage: DamageRect) {
+        let Some(popup) = self.popup.as_mut() else {
+            return;
+        };
+        popup.pending_damage = Some(
+            popup
+                .pending_damage
+                .map_or(damage, |pending| pending.union(damage)),
+        );
+        popup.pending_refresh = true;
+        state.request_refresh(popup.id, layershellev::RefreshRequest::NextFrame);
     }
 
     pub(super) fn commit_popup_surface(&mut self, state: &mut WindowState<()>, damage: DamageRect) {
@@ -192,21 +217,36 @@ impl OsrLayerHost {
         let Some(unit) = state.get_unit_with_id(popup.id) else {
             return;
         };
-        let Some(buffer_index) = prepare_popup_buffer(popup) else {
-            if popup.pool.is_none() {
-                unit.refresh();
+        let buffer_index = match prepare_popup_buffer(popup) {
+            BufferPreparation::Ready(index) => index,
+            BufferPreparation::Busy => {
+                popup.pending_refresh = true;
+                let popup_id = popup.id;
+                let surface = unit.get_wlsurface().clone();
+                state.request_next_present(popup_id);
+                surface.commit();
+                if !super::surface::flush_surface(&surface) {
+                    self.wayland_failed = true;
+                    return;
+                }
+                state.request_refresh(popup_id, layershellev::RefreshRequest::NextFrame);
+                return;
             }
-            popup.pending_refresh = true;
-            return;
+            BufferPreparation::Fatal(error) => {
+                eprintln!("Sabine layer popup buffer failed: {error}");
+                self.wayland_failed = true;
+                return;
+            }
         };
-        let damage = if popup.mapped && !popup.pending_refresh {
-            damage
+        let damage = if popup.mapped {
+            popup.pending_damage.take().unwrap_or(damage)
         } else {
             DamageRect::full(popup.size.0, popup.size.1)
         };
-        let surface = unit.get_wlsurface();
-        if popup.buffers[buffer_index].attach_to(surface).is_err() {
-            popup.pending_refresh = true;
+        let surface = unit.get_wlsurface().clone();
+        if let Err(error) = popup.buffers[buffer_index].attach_to(&surface) {
+            eprintln!("Sabine layer popup buffer attach failed: {error}");
+            self.wayland_failed = true;
             return;
         }
         surface.damage_buffer(
@@ -215,11 +255,13 @@ impl OsrLayerHost {
             damage.width as i32,
             damage.height as i32,
         );
+        state.request_next_present(popup.id);
         surface.commit();
-        if !super::surface::flush_surface(surface) {
+        if !super::surface::flush_surface(&surface) {
             self.wayland_failed = true;
         }
         popup.pending_refresh = false;
+        popup.pending_damage = None;
         popup.mapped = true;
     }
 
@@ -230,7 +272,9 @@ impl OsrLayerHost {
         if !popup.pending_refresh {
             return;
         }
-        let damage = DamageRect::full(popup.size.0, popup.size.1);
+        let damage = popup
+            .pending_damage
+            .unwrap_or_else(|| DamageRect::full(popup.size.0, popup.size.1));
         self.commit_popup_surface(state, damage);
     }
 
@@ -243,7 +287,14 @@ impl OsrLayerHost {
         }
         let popup_id = popup.id;
         if let Some(unit) = state.get_mut_unit_with_id(popup_id) {
-            unit.set_blur_option(BlurOption::FullRegion);
+            let blur = if self.config.transparent
+                && self.config.background_effect != sabine_platform::WindowBackgroundEffect::None
+            {
+                BlurOption::FullRegion
+            } else {
+                BlurOption::None
+            };
+            unit.set_blur_option(blur);
             if let Some(popup) = self.popup.as_mut() {
                 popup.blur_configured = true;
             }
@@ -266,11 +317,16 @@ impl OsrLayerHost {
         if popup.pool.is_some() {
             return;
         }
-        popup.pool = SlotPool::new(
+        match SlotPool::new(
             buffer_len(popup.size.0, popup.size.1).max(1),
             &Shm::from(shm.clone()),
-        )
-        .ok();
+        ) {
+            Ok(pool) => {
+                popup.pool = Some(pool);
+                popup.pool_error = None;
+            }
+            Err(error) => popup.pool_error = Some(error.to_string()),
+        }
     }
 
     pub(super) fn pointer_position_for_unit(
@@ -303,41 +359,58 @@ impl OsrLayerHost {
         let damage =
             compose_frames_buffer(popup.size.0, popup.size.1, &local_frames, &mut popup.buffer);
         popup.frame = local_frames.last().cloned();
-        self.commit_popup_surface(state, damage);
+        self.schedule_popup_surface(state, damage);
     }
 }
 
-fn prepare_popup_buffer(popup: &mut PopupSurface) -> Option<usize> {
-    let pool = popup.pool.as_mut()?;
+enum BufferPreparation {
+    Ready(usize),
+    Busy,
+    Fatal(String),
+}
+
+fn prepare_popup_buffer(popup: &mut PopupSurface) -> BufferPreparation {
+    let Some(pool) = popup.pool.as_mut() else {
+        return BufferPreparation::Fatal(
+            popup
+                .pool_error
+                .clone()
+                .unwrap_or_else(|| "SHM pool is unavailable".to_string()),
+        );
+    };
     let pixels = popup.buffer.as_slice();
     if pixels.len() != buffer_len(popup.size.0, popup.size.1) {
-        return None;
+        return BufferPreparation::Fatal("popup pixel buffer has an invalid size".to_string());
     }
     let stride = pixel_stride(popup.size.0);
 
     for (index, buffer) in popup.buffers.iter().enumerate() {
         if let Some(canvas) = buffer.canvas(pool) {
-            return copy_pixels_to_canvas(canvas, pixels, popup.size.0, popup.size.1, stride)
-                .then_some(index);
+            return if copy_pixels_to_canvas(canvas, pixels, popup.size.0, popup.size.1, stride) {
+                BufferPreparation::Ready(index)
+            } else {
+                BufferPreparation::Fatal("popup SHM canvas has an invalid layout".to_string())
+            };
         }
     }
 
     if popup.buffers.len() >= MAX_POPUP_BUFFERS {
-        return None;
+        return BufferPreparation::Busy;
     }
-    let (buffer, canvas) = pool
-        .create_buffer(
-            popup.size.0 as i32,
-            popup.size.1 as i32,
-            stride as i32,
-            wayland_client::protocol::wl_shm::Format::Argb8888,
-        )
-        .ok()?;
+    let (buffer, canvas) = match pool.create_buffer(
+        popup.size.0 as i32,
+        popup.size.1 as i32,
+        stride as i32,
+        wayland_client::protocol::wl_shm::Format::Argb8888,
+    ) {
+        Ok(buffer) => buffer,
+        Err(error) => return BufferPreparation::Fatal(error.to_string()),
+    };
     if !copy_pixels_to_canvas(canvas, pixels, popup.size.0, popup.size.1, stride) {
-        return None;
+        return BufferPreparation::Fatal("popup SHM canvas has an invalid layout".to_string());
     }
     popup.buffers.push(buffer);
-    Some(popup.buffers.len() - 1)
+    BufferPreparation::Ready(popup.buffers.len() - 1)
 }
 
 fn local_popup_frame(mut frame: OsrFrame) -> OsrFrame {

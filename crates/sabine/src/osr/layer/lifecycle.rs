@@ -6,14 +6,18 @@ impl OsrLayerHost {
         let Some(writer) = &self.control_writer else {
             return;
         };
-        writer.send(line.to_string());
+        if let Err(error) = writer.send(line.to_string()) {
+            eprintln!("Sabine layer OSR control send failed: {error}");
+        }
     }
 
     pub(super) fn send_mouse_motion(&self, line: String) {
         let Some(writer) = &self.control_writer else {
             return;
         };
-        writer.send_motion(line);
+        if let Err(error) = writer.send_motion(line) {
+            eprintln!("Sabine layer OSR pointer send failed: {error}");
+        }
     }
 
     pub(super) fn send_lifecycle(&self, state: LayerLifecycleState, reason: &str) {
