@@ -137,9 +137,7 @@ impl OsrLayerHost {
                     self.recreate_wayland_buffer(surface_size.0, surface_size.1);
                 }
                 if self.visible {
-                    if self.layer_layout_dirty
-                        || (!self.surface_lifecycle.is_mapped() && self.presentation_dirty)
-                    {
+                    if self.layer_layout_dirty {
                         self.request_layer_configure(state);
                         return ReturnData::None;
                     }

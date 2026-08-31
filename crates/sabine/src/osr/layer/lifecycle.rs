@@ -171,9 +171,7 @@ impl OsrLayerHost {
         if !self.surface_lifecycle.presentation_ready() {
             return;
         }
-        if self.layer_layout_dirty
-            || (!self.surface_lifecycle.is_mapped() && self.presentation_dirty)
-        {
+        if self.layer_layout_dirty {
             self.request_layer_configure(state);
             return;
         }

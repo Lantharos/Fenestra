@@ -51,10 +51,7 @@ impl OsrLayerHost {
     }
 
     pub(super) fn apply_pending_presentation(&mut self, state: &mut WindowState<()>) {
-        if !self.presentation_dirty
-            || !self.visible
-            || !self.surface_lifecycle.is_mapped()
-            || !self.surface_lifecycle.presentation_ready()
+        if !self.presentation_dirty || !self.visible || !self.surface_lifecycle.presentation_ready()
         {
             return;
         }
