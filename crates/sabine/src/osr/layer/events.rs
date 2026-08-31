@@ -206,6 +206,8 @@ impl OsrLayerHost {
                 self.pointer_inside = false;
                 self.forward_mouse_move(true);
             }
+            DispatchMessage::MouseButton { state, button, .. }
+                if self.consume_suppressed_mouse_release(*button, state) => {}
             DispatchMessage::MouseButton { state, button, .. } if self.visible => {
                 self.forward_mouse_button(*button, state);
             }

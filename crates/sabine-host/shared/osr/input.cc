@@ -113,6 +113,10 @@ void SabineOsrHandler::HandleControlLine(const std::string& line) {
     }
   }
   CefRefPtr<CefBrowserHost> host = target_browser->GetHost();
+  if (parts[0] == "capture_lost") {
+    host->SendCaptureLostEvent();
+    return;
+  }
   if (parts[0] == "ime_delete" && parts.size() >= 3) {
     const int target_browser_id = target_browser->GetIdentifier();
     CefRefPtr<CefFrame> frame = target_browser->GetMainFrame();

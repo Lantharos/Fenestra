@@ -176,6 +176,7 @@ impl OsrLayerHost {
 
     pub(super) fn hide_shell_surface(&mut self, state: &mut WindowState<()>) {
         self.close_popup(state);
+        self.cancel_mouse_capture();
         if self.pointer_inside {
             self.forward_mouse_move(true);
             self.pointer_inside = false;

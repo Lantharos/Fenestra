@@ -11,10 +11,39 @@ use super::input::{
     EVENTFLAG_PRECISION_SCROLLING_DELTA, EVENTFLAG_RIGHT_MOUSE_BUTTON, EVENTFLAG_SHIFT_DOWN,
     cef_mouse_button, key_name, should_send_char_text,
 };
-use super::types::{ClickMemory, OsrLayerHost};
+use super::types::{ClickMemory, MouseButtons, OsrLayerHost};
 use crate::osr::protocol::encode_component;
 
 impl OsrLayerHost {
+    pub(super) fn cancel_mouse_capture(&mut self) {
+        if !self.mouse.any() {
+            return;
+        }
+        self.send_control("capture_lost\n");
+        self.suppressed_mouse_releases.merge(self.mouse);
+        self.mouse = MouseButtons::default();
+        self.last_click = None;
+        self.active_click_count = 1;
+    }
+
+    pub(super) fn consume_suppressed_mouse_release(
+        &mut self,
+        button: u32,
+        state: &WEnum<ButtonState>,
+    ) -> bool {
+        if matches!(state, WEnum::Value(ButtonState::Pressed)) {
+            self.suppressed_mouse_releases.set(button, false);
+            return false;
+        }
+        if !matches!(state, WEnum::Value(ButtonState::Released))
+            || !self.suppressed_mouse_releases.pressed(button)
+        {
+            return false;
+        }
+        self.suppressed_mouse_releases.set(button, false);
+        true
+    }
+
     pub(super) fn forward_touch(&self, id: i32, x: f32, y: f32, phase: &str) {
         self.send_control(&format!(
             "touch\t{x:.2}\t{y:.2}\t{id}\t{phase}\t0.0000\ttouch\t{}\n",
@@ -138,12 +167,7 @@ impl OsrLayerHost {
     }
 
     fn set_mouse_button(&mut self, button: u32, pressed: bool) {
-        match button {
-            0x110 => self.mouse.left = pressed,
-            0x112 => self.mouse.middle = pressed,
-            0x111 => self.mouse.right = pressed,
-            _ => {}
-        }
+        self.mouse.set(button, pressed);
     }
 
     fn next_click_count(&mut self, button: u32) -> i32 {
@@ -166,5 +190,35 @@ impl OsrLayerHost {
             count,
         });
         count
+    }
+}
+
+impl MouseButtons {
+    fn any(self) -> bool {
+        self.left || self.middle || self.right
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.left |= other.left;
+        self.middle |= other.middle;
+        self.right |= other.right;
+    }
+
+    fn pressed(self, button: u32) -> bool {
+        match button {
+            0x110 => self.left,
+            0x112 => self.middle,
+            0x111 => self.right,
+            _ => false,
+        }
+    }
+
+    fn set(&mut self, button: u32, pressed: bool) {
+        match button {
+            0x110 => self.left = pressed,
+            0x112 => self.middle = pressed,
+            0x111 => self.right = pressed,
+            _ => {}
+        }
     }
 }
