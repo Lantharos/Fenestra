@@ -5,18 +5,7 @@
 
 #![cfg(target_os = "windows")]
 
-use std::{
-    collections::HashMap,
-    fs,
-    io::{Read, Write},
-    net::{TcpListener, TcpStream},
-    path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread::{self, JoinHandle},
-};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use global_hotkey::{
     GlobalHotKeyManager,
@@ -24,24 +13,21 @@ use global_hotkey::{
 };
 use sabine_platform::{
     AutostartEntry, DeepLinkRegistration, GlobalShortcutRegistration, NativeMessagingHost,
-    PlatformEvent, Shortcut, SingleInstanceActivation, SingleInstancePolicy, TrayIcon,
+    Shortcut, TrayIcon,
 };
 use tray_icon::{
     Icon, TrayIconBuilder,
     menu::{Menu, MenuItem, PredefinedMenuItem},
 };
 use windows::Win32::{
-    Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, ERROR_SUCCESS, GetLastError, HANDLE},
-    System::{
-        Registry::{
-            HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
-            RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW,
-        },
-        Threading::CreateMutexW,
+    Foundation::ERROR_SUCCESS,
+    System::Registry::{
+        HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
+        RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW,
     },
 };
 
-pub(super) use super::{EventQueue, HotkeyRuntime, MenuActions, ShortcutActions, TrayRuntime};
+pub(super) use super::{HotkeyRuntime, MenuActions, ShortcutActions, TrayRuntime};
 
 pub(super) fn spawn_tray_icon(icon: &TrayIcon) -> Result<(TrayRuntime, MenuActions), String> {
     let menu = Menu::new();
@@ -265,130 +251,6 @@ pub(super) fn register_native_messaging_host(host: &NativeMessagingHost) -> Resu
     Ok(())
 }
 
-pub(super) struct SingleInstanceGuard {
-    mutex: HANDLE,
-    _listener: Option<JoinHandle<()>>,
-    running: Arc<AtomicBool>,
-    wake_port: u16,
-}
-
-impl SingleInstanceGuard {
-    pub(super) fn acquire(
-        id: Option<&str>,
-        policy: SingleInstancePolicy,
-        events: EventQueue,
-    ) -> Result<Self, String> {
-        let name = format!(
-            "Local\\sabine-{}",
-            sanitize_id(id.unwrap_or("default-instance"))
-        );
-        let wide = wide_null(&name);
-        let handle = unsafe { CreateMutexW(None, false, windows::core::PCWSTR(wide.as_ptr())) }
-            .map_err(|error| error.to_string())?;
-        let already = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
-        if already {
-            unsafe {
-                let _ = CloseHandle(handle);
-            }
-            notify_existing_instance(&name)?;
-            return Err(crate::desktop::INSTANCE_ALREADY_RUNNING.to_string());
-        }
-        let running = Arc::new(AtomicBool::new(true));
-        let (listener, wake_port) =
-            match spawn_instance_listener(name, policy, events, Arc::clone(&running)) {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    unsafe {
-                        let _ = CloseHandle(handle);
-                    }
-                    return Err(error);
-                }
-            };
-        Ok(Self {
-            mutex: handle,
-            _listener: Some(listener),
-            running,
-            wake_port,
-        })
-    }
-}
-
-impl Drop for SingleInstanceGuard {
-    fn drop(&mut self) {
-        self.running.store(false, Ordering::Relaxed);
-        let _ = TcpStream::connect(("127.0.0.1", self.wake_port));
-        if let Some(thread) = self._listener.take() {
-            let _ = thread.join();
-        }
-        unsafe {
-            let _ = CloseHandle(self.mutex);
-        }
-    }
-}
-
-pub(super) fn spawn_instance_listener(
-    name: String,
-    policy: SingleInstancePolicy,
-    events: EventQueue,
-    running: Arc<AtomicBool>,
-) -> Result<(JoinHandle<()>, u16), String> {
-    let port_path = instance_port_path(&name)?;
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
-    let port = listener
-        .local_addr()
-        .map_err(|error| error.to_string())?
-        .port();
-    fs::write(&port_path, port.to_string()).map_err(|error| error.to_string())?;
-    let thread = thread::spawn(move || {
-        while running.load(Ordering::Relaxed) {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    if !running.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let mut buffer = String::new();
-                    let _ = stream.read_to_string(&mut buffer);
-                    let arguments = buffer
-                        .lines()
-                        .map(str::to_string)
-                        .filter(|line| !line.is_empty())
-                        .collect::<Vec<_>>();
-                    push_event(
-                        &events,
-                        PlatformEvent::SingleInstance(SingleInstanceActivation::new(
-                            policy, arguments,
-                        )),
-                    );
-                }
-                Err(_) => break,
-            }
-        }
-        let _ = fs::remove_file(port_path);
-    });
-    Ok((thread, port))
-}
-
-pub(super) fn notify_existing_instance(name: &str) -> Result<(), String> {
-    let port_path = instance_port_path(name)?;
-    let port = fs::read_to_string(port_path)
-        .map_err(|error| error.to_string())?
-        .trim()
-        .parse::<u16>()
-        .map_err(|error| error.to_string())?;
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(|error| error.to_string())?;
-    let payload = std::env::args().collect::<Vec<_>>().join("\n");
-    stream
-        .write_all(payload.as_bytes())
-        .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-pub(super) fn instance_port_path(name: &str) -> Result<PathBuf, String> {
-    let dir = local_app_data()?.join("sabine").join("instances");
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    Ok(dir.join(format!("{}.port", sanitize_id(name))))
-}
-
 pub(super) fn set_registry_string(
     root: windows::Win32::System::Registry::HKEY,
     subkey: &str,
@@ -444,10 +306,6 @@ pub(super) fn delete_registry_value(
     let wide = wide_null(&path);
     let _ = unsafe { RegDeleteTreeW(root, windows::core::PCWSTR(wide.as_ptr())) };
     Ok(())
-}
-
-pub(super) fn push_event(events: &EventQueue, event: PlatformEvent) {
-    let _ = events.send(event);
 }
 
 pub(super) fn local_app_data() -> Result<PathBuf, String> {

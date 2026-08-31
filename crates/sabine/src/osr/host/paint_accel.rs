@@ -3,8 +3,6 @@ use crate::osr::host::types::{overlay_id_for_surface, overlay_texture_id};
 use crate::osr::protocol::OsrAccelFrame;
 #[cfg(windows)]
 use crate::osr::protocol::{MAIN_TEXTURE_ID, OsrFrame, OsrSurface};
-#[cfg(windows)]
-use std::io::Write;
 
 use super::native::OsrNativeHost;
 
@@ -28,18 +26,15 @@ impl OsrNativeHost {
     #[cfg(windows)]
     fn try_install_accel_texture(&mut self, frame: &OsrAccelFrame) -> bool {
         #[cfg(windows)]
-        let release_socket = self.socket.clone();
+        let release_writer = self.control_writer.clone();
         #[cfg(windows)]
         let slot_token = frame.slot_token;
         #[cfg(windows)]
         let release_slot = move || {
-            let Some(socket) = release_socket else {
+            let Some(writer) = release_writer else {
                 return;
             };
-            if let Ok(mut socket) = socket.lock() {
-                let _ = writeln!(socket, "accel_release\t{slot_token}");
-                let _ = socket.flush();
-            }
+            let _ = writer.send(format!("accel_release\t{slot_token}\n"));
         };
         if frame.surface == OsrSurface::Main {
             let frame_size = self.accel_frame_size(frame);

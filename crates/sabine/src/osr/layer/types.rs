@@ -6,12 +6,13 @@ use layershellev::{
 use smithay_client_toolkit::shm::slot::{Buffer as ShmBuffer, SlotPool};
 use wayland_client::QueueHandle;
 
+use crate::osr::control::ControlWriter;
 use crate::osr::host::OsrHostConfig;
 use crate::osr::protocol::OsrFrame;
 use crate::render::RasterText;
 
 use super::alpha::LayerAlphaModifier;
-use super::socket::{ControlWriter, LayerHostEvent};
+use super::socket::{LayerHostEvent, LayerSocketHandle};
 
 pub(super) struct OsrLayerHost {
     pub(super) config: OsrHostConfig,
@@ -19,7 +20,9 @@ pub(super) struct OsrLayerHost {
     pub(super) child: Option<Child>,
     pub(super) child_retry_at: Option<Instant>,
     pub(super) child_handoff_deadline: Option<Instant>,
+    pub(super) pending_socket: Option<LayerSocketHandle>,
     pub(super) control_writer: Option<ControlWriter>,
+    pub(super) last_sent_content_size: Option<(u32, u32, u64)>,
     pub(super) shm: Option<WlShm>,
     pub(super) queue_handle: Option<QueueHandle<WindowState<()>>>,
     pub(super) main_pool: Option<SlotPool>,
@@ -38,10 +41,10 @@ pub(super) struct OsrLayerHost {
     pub(super) presentation_buffer: Vec<u8>,
     pub(super) presentation_full_damage: bool,
     pub(super) scratch: Vec<u8>,
-    pub(super) surface_mapped: bool,
+    pub(super) surface_lifecycle: LayerSurfaceLifecycle,
+    pub(super) layer_layout_dirty: bool,
+    pub(super) presentation_dirty: bool,
     pub(super) configure_generation: u64,
-    pub(super) remap_sync_token: Option<u64>,
-    pub(super) remap_configure_generation: Option<u64>,
     pub(super) next_remap_sync_token: u64,
     pub(super) wayland_failed: bool,
     pub(super) visible: bool,
@@ -57,6 +60,7 @@ pub(super) struct OsrLayerHost {
     pub(super) active_click_count: i32,
     pub(super) focused: bool,
     pub(super) lifecycle_state: LayerLifecycleState,
+    pub(super) alpha_manager_name: Option<u32>,
     pub(super) alpha_modifier: Option<LayerAlphaModifier>,
     pub(super) surface_alpha: f32,
     pub(super) blur_option: Option<BlurOption>,
@@ -104,6 +108,98 @@ pub(super) enum LayerLifecycleState {
     Suspended,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct LayerSurfaceLifecycle {
+    mapped: bool,
+    barrier: LayerSurfaceBarrier,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LayerSurfaceBarrier {
+    Ready,
+    DrainBeforeUnmap,
+    SyncBeforeRemap(u64),
+    ConfigureBeforePresent(u64),
+}
+
+impl LayerSurfaceLifecycle {
+    pub(super) const fn new() -> Self {
+        Self {
+            mapped: false,
+            barrier: LayerSurfaceBarrier::Ready,
+        }
+    }
+
+    pub(super) const fn is_mapped(self) -> bool {
+        self.mapped
+    }
+
+    pub(super) const fn presentation_ready(self) -> bool {
+        matches!(self.barrier, LayerSurfaceBarrier::Ready)
+    }
+
+    pub(super) const fn unmap_pending(self) -> bool {
+        matches!(self.barrier, LayerSurfaceBarrier::DrainBeforeUnmap)
+    }
+
+    pub(super) fn mark_mapped(&mut self) {
+        self.mapped = true;
+        self.barrier = LayerSurfaceBarrier::Ready;
+    }
+
+    pub(super) fn schedule_unmap(&mut self) -> bool {
+        if !self.mapped || self.unmap_pending() {
+            return false;
+        }
+        self.barrier = LayerSurfaceBarrier::DrainBeforeUnmap;
+        true
+    }
+
+    pub(super) fn cancel_scheduled_unmap(&mut self) -> bool {
+        if !self.unmap_pending() {
+            return false;
+        }
+        self.barrier = LayerSurfaceBarrier::Ready;
+        true
+    }
+
+    pub(super) fn complete_unmap(&mut self, sync_token: u64) -> bool {
+        if !self.unmap_pending() {
+            return false;
+        }
+        self.mapped = false;
+        self.barrier = LayerSurfaceBarrier::SyncBeforeRemap(sync_token);
+        true
+    }
+
+    pub(super) fn complete_sync(&mut self, sync_token: u64) -> bool {
+        if self.barrier != LayerSurfaceBarrier::SyncBeforeRemap(sync_token) {
+            return false;
+        }
+        self.barrier = LayerSurfaceBarrier::Ready;
+        true
+    }
+
+    pub(super) fn wait_for_configure(&mut self, configure_generation: u64) {
+        self.barrier = LayerSurfaceBarrier::ConfigureBeforePresent(configure_generation);
+    }
+
+    pub(super) fn accept_configure(&mut self, configure_generation: u64) -> bool {
+        match self.barrier {
+            LayerSurfaceBarrier::Ready => true,
+            LayerSurfaceBarrier::ConfigureBeforePresent(previous_generation)
+                if configure_generation > previous_generation =>
+            {
+                self.barrier = LayerSurfaceBarrier::Ready;
+                true
+            }
+            LayerSurfaceBarrier::DrainBeforeUnmap
+            | LayerSurfaceBarrier::SyncBeforeRemap(_)
+            | LayerSurfaceBarrier::ConfigureBeforePresent(_) => false,
+        }
+    }
+}
+
 impl OsrLayerHost {
     pub(super) fn new(config: OsrHostConfig, sender: Sender<LayerHostEvent>) -> Self {
         super::socket::start_layer_parent_bridge_reader(sender.clone());
@@ -122,7 +218,9 @@ impl OsrLayerHost {
             child: None,
             child_retry_at: None,
             child_handoff_deadline: None,
+            pending_socket: None,
             control_writer: None,
+            last_sent_content_size: None,
             shm: None,
             queue_handle: None,
             main_pool: None,
@@ -141,10 +239,10 @@ impl OsrLayerHost {
             presentation_buffer: Vec::new(),
             presentation_full_damage: false,
             scratch: Vec::new(),
-            surface_mapped: false,
+            surface_lifecycle: LayerSurfaceLifecycle::new(),
+            layer_layout_dirty: false,
+            presentation_dirty: false,
             configure_generation: 0,
-            remap_sync_token: None,
-            remap_configure_generation: None,
             next_remap_sync_token: 0,
             wayland_failed: false,
             visible,
@@ -160,6 +258,7 @@ impl OsrLayerHost {
             active_click_count: 1,
             focused,
             lifecycle_state,
+            alpha_manager_name: None,
             alpha_modifier: None,
             surface_alpha,
             blur_option: None,

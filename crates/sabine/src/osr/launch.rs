@@ -25,6 +25,11 @@ pub(crate) fn run_from_args(args: &[String]) -> bool {
         eprintln!("missing Sabine OSR host config path");
         std::process::exit(1);
     };
+    #[cfg(target_os = "linux")]
+    if let Err(error) = crate::osr::wayland_broker::adopt() {
+        eprintln!("Sabine OSR host could not adopt its Wayland broker: {error}");
+        std::process::exit(1);
+    }
     if let Err(error) = crate::osr::host::run(config_path) {
         eprintln!("Sabine OSR host failed: {error}");
         std::process::exit(1);
@@ -172,6 +177,12 @@ pub(crate) fn spawn_osr_host_child(
         .stderr(Stdio::inherit());
     prepare_bridge_command(&mut command, &BridgeHandlers::default());
     prepare_child_command(&mut command);
+    #[cfg(target_os = "linux")]
+    crate::osr::wayland_broker::prepare_child(&mut command, true).map_err(|error| {
+        SabineError::CreationFailed {
+            message: format!("failed to acquire Sabine OSR Wayland connection: {error}"),
+        }
+    })?;
     command
         .spawn()
         .map_err(|error| SabineError::CreationFailed {
@@ -346,6 +357,9 @@ pub(crate) fn cef_osr_command(
     command.stdin(Stdio::null());
     command.stdout(Stdio::null());
     command.stderr(Stdio::inherit());
+    #[cfg(target_os = "linux")]
+    crate::osr::wayland_broker::prepare_child(&mut command, false)
+        .map_err(|error| format!("could not acquire CEF Wayland connection: {error}"))?;
     Ok(command)
 }
 
@@ -358,8 +372,9 @@ fn browser_profile_key(config: &crate::osr::host::OsrHostConfig) -> String {
 
     #[cfg(target_os = "linux")]
     if config.shell_surface.is_some()
-        && let Some(display) = std::env::var_os("WAYLAND_DISPLAY")
-        && !display.is_empty()
+        && let Some(display) = std::env::var_os(crate::osr::wayland_broker::BROKER_KEY_ENV)
+            .filter(|display| !display.is_empty())
+            .or_else(|| std::env::var_os("WAYLAND_DISPLAY").filter(|display| !display.is_empty()))
     {
         let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").unwrap_or_default();
         return format!(

@@ -83,7 +83,37 @@ fn visibility_state(mapped: bool) -> ShellSurfaceVisibilityState {
 
 struct BridgeTarget {
     window_id: u32,
-    stdin: Arc<Mutex<std::process::ChildStdin>>,
+    writer: BridgeWriter,
+}
+
+#[derive(Clone)]
+pub(crate) struct BridgeWriter {
+    sender: crossbeam_channel::Sender<String>,
+}
+
+impl BridgeWriter {
+    fn spawn(mut stdin: std::process::ChildStdin) -> Self {
+        let (sender, receiver) = crossbeam_channel::bounded::<String>(512);
+        thread::spawn(move || {
+            while let Ok(line) = receiver.recv() {
+                if writeln!(stdin, "{line}").is_err() || stdin.flush().is_err() {
+                    break;
+                }
+            }
+        });
+        Self { sender }
+    }
+
+    pub(super) fn try_send(
+        &self,
+        line: impl Into<String>,
+    ) -> Result<(), crossbeam_channel::TrySendError<String>> {
+        self.sender.try_send(line.into())
+    }
+
+    pub(super) fn send(&self, line: impl Into<String>) -> bool {
+        self.sender.send(line.into()).is_ok()
+    }
 }
 
 impl BridgeEventEmitter {
@@ -95,10 +125,10 @@ impl BridgeEventEmitter {
         self.write_line(event)
     }
 
-    pub(crate) fn attach(&self, window_id: u32, stdin: Arc<Mutex<std::process::ChildStdin>>) {
+    pub(crate) fn attach(&self, window_id: u32, writer: BridgeWriter) {
         if let Ok(mut targets) = self.targets.lock() {
             targets.retain(|target| target.window_id != window_id);
-            targets.push(BridgeTarget { window_id, stdin });
+            targets.push(BridgeTarget { window_id, writer });
         }
     }
 
@@ -259,20 +289,16 @@ impl BridgeEventEmitter {
     }
 
     fn emit_host_control_to(&self, window_id: u32, command: &str, value: &str) -> bool {
-        let Ok(mut targets) = self.targets.lock() else {
+        let Ok(targets) = self.targets.lock() else {
             return false;
         };
-        let Some(target) = targets
-            .iter_mut()
-            .find(|target| target.window_id == window_id)
-        else {
+        let Some(target) = targets.iter().find(|target| target.window_id == window_id) else {
             return false;
         };
-        let Ok(mut stdin) = target.stdin.lock() else {
-            return false;
-        };
-        writeln!(stdin, "{HOST_CONTROL_PREFIX}\t{command}\t{value}").is_ok()
-            && stdin.flush().is_ok()
+        target
+            .writer
+            .try_send(format!("{HOST_CONTROL_PREFIX}\t{command}\t{value}"))
+            .is_ok()
     }
 
     fn write_line(&self, line: impl std::fmt::Display) -> bool {
@@ -283,16 +309,16 @@ impl BridgeEventEmitter {
             return false;
         }
         let message = line.to_string();
-        targets.retain(|target| {
-            let Ok(mut stdin) = target.stdin.lock() else {
-                return false;
-            };
-            if writeln!(stdin, "{message}").is_err() {
-                return false;
+        let mut delivered = false;
+        targets.retain(|target| match target.writer.try_send(message.clone()) {
+            Ok(()) => {
+                delivered = true;
+                true
             }
-            stdin.flush().is_ok()
+            Err(crossbeam_channel::TrySendError::Full(_)) => true,
+            Err(crossbeam_channel::TrySendError::Disconnected(_)) => false,
         });
-        !targets.is_empty()
+        delivered
     }
 }
 
@@ -356,12 +382,12 @@ pub(crate) fn spawn_bridge_dispatch(
             ready,
         };
     };
-    let stdin = Arc::new(Mutex::new(stdin));
+    let writer = BridgeWriter::spawn(stdin);
     let window_id = child.id();
     let emitter = BridgeEventEmitter {
         targets: Arc::new(Mutex::new(vec![BridgeTarget {
             window_id,
-            stdin: Arc::clone(&stdin),
+            writer: writer.clone(),
         }])),
         visibility_waiters: Arc::new(Mutex::new(HashMap::new())),
     };
@@ -372,12 +398,8 @@ pub(crate) fn spawn_bridge_dispatch(
             ready,
         };
     };
-    let dispatcher = BridgeRequestDispatcher::new(
-        bridge_runtime,
-        activity,
-        emitter.clone(),
-        Arc::clone(&stdin),
-    );
+    let dispatcher =
+        BridgeRequestDispatcher::new(bridge_runtime, activity, emitter.clone(), writer);
     let detach_emitter = emitter.clone();
     let visibility_waiters = Arc::clone(&emitter.visibility_waiters);
     let thread = thread::spawn(move || {
@@ -412,19 +434,14 @@ pub(crate) fn spawn_bridge_dispatch_for_window(
     activity: sabine_bridge::ActivityRegistry,
     emitter: &BridgeEventEmitter,
 ) -> Option<JoinHandle<()>> {
-    let stdin = child.stdin.take()?;
-    let stdin = Arc::new(Mutex::new(stdin));
+    let writer = BridgeWriter::spawn(child.stdin.take()?);
     let window_id = child.id();
-    emitter.attach(window_id, Arc::clone(&stdin));
+    emitter.attach(window_id, writer.clone());
     let stdout = child.stdout.take()?;
     let activity_emitter = emitter.clone();
     let visibility_waiters = Arc::clone(&emitter.visibility_waiters);
-    let dispatcher = BridgeRequestDispatcher::new(
-        bridge_runtime,
-        activity,
-        emitter.clone(),
-        Arc::clone(&stdin),
-    );
+    let dispatcher =
+        BridgeRequestDispatcher::new(bridge_runtime, activity, emitter.clone(), writer);
     Some(thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(std::result::Result::ok) {
@@ -503,11 +520,11 @@ mod tests {
             .stdout(Stdio::null())
             .spawn()
             .expect("stdin reader");
-        let stdin = Arc::new(Mutex::new(child.stdin.take().expect("stdin")));
+        let writer = BridgeWriter::spawn(child.stdin.take().expect("stdin"));
         let emitter = BridgeEventEmitter {
             targets: Arc::new(Mutex::new(vec![BridgeTarget {
                 window_id: child.id(),
-                stdin,
+                writer,
             }])),
             visibility_waiters: Arc::new(Mutex::new(HashMap::new())),
         };

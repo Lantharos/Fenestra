@@ -649,7 +649,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -681,7 +681,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.8.9",
+ "libloading 0.7.4",
 ]
 
 [[package]]
@@ -812,7 +812,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -856,7 +856,7 @@ dependencies = [
 [[package]]
 name = "exwlshellev"
 version = "0.20.0"
-source = "git+https://github.com/Lantharos/exwlshelleventloop.git?rev=5c56310b589190188bc2e6e5b3b72d6a222b7501#5c56310b589190188bc2e6e5b3b72d6a222b7501"
+source = "git+https://github.com/Lantharos/exwlshelleventloop.git?rev=fdff48c7a525f00e2229fef9734030d9cb3d24cb#fdff48c7a525f00e2229fef9734030d9cb3d24cb"
 dependencies = [
  "calloop",
  "calloop-wayland-source",
@@ -2680,7 +2680,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2741,6 +2741,7 @@ dependencies = [
  "libc",
  "pollster",
  "raw-window-handle",
+ "rustix 1.1.4",
  "sabine-bridge",
  "sabine-host",
  "sabine-platform",
@@ -3318,7 +3319,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3835,7 +3836,7 @@ dependencies = [
 [[package]]
 name = "waycrate_xkbkeycode"
 version = "0.20.0"
-source = "git+https://github.com/Lantharos/exwlshelleventloop.git?rev=5c56310b589190188bc2e6e5b3b72d6a222b7501#5c56310b589190188bc2e6e5b3b72d6a222b7501"
+source = "git+https://github.com/Lantharos/exwlshelleventloop.git?rev=fdff48c7a525f00e2229fef9734030d9cb3d24cb#fdff48c7a525f00e2229fef9734030d9cb3d24cb"
 dependencies = [
  "calloop",
  "log",
@@ -4219,7 +4220,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

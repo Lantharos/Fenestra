@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use winit::{cursor::CursorIcon, event_loop::ActiveEventLoop};
 
 use crate::osr::protocol::{OsrMessage, POPUP_OVERLAY_ID};
@@ -6,12 +8,42 @@ use super::native::{OsrNativeHost, present_window};
 pub(super) use super::types::HostActivity;
 use super::types::HostControl;
 
+const HOST_EVENT_DISPATCH_BUDGET: usize = 16;
+
 impl OsrNativeHost {
     pub(super) fn process_osr_events(&mut self, event_loop: &dyn ActiveEventLoop) {
         let mut needs_redraw = false;
         let mut needs_initial_present = false;
         let mut resize_frame_ready = false;
-        while let Ok(event) = self.receiver.try_recv() {
+        let mut message_budget_used = false;
+        let mut events = VecDeque::new();
+        if let Some((generation, messages)) = self.pending_messages.take()
+            && generation == self.connection_generation
+        {
+            let (queued, remaining) = messages.drain_budgeted();
+            if remaining {
+                self.pending_messages = Some((generation, std::sync::Arc::clone(&messages)));
+                self.proxy.wake_up();
+            }
+            events.extend(
+                queued
+                    .into_iter()
+                    .map(|message| super::types::OsrHostEvent::Message(generation, message)),
+            );
+            message_budget_used = true;
+        }
+        let mut received = 0;
+        while received < HOST_EVENT_DISPATCH_BUDGET {
+            let Ok(event) = self.receiver.try_recv() else {
+                break;
+            };
+            events.push_back(event);
+            received += 1;
+        }
+        if received == HOST_EVENT_DISPATCH_BUDGET {
+            self.proxy.wake_up();
+        }
+        while let Some(event) = events.pop_front() {
             if event
                 .connection_generation()
                 .is_some_and(|generation| generation != self.connection_generation)
@@ -19,8 +51,39 @@ impl OsrNativeHost {
                 continue;
             }
             match event {
+                super::types::OsrHostEvent::MessagesReady(generation, messages) => {
+                    if message_budget_used {
+                        if self.pending_messages.is_none() {
+                            self.pending_messages = Some((generation, messages));
+                        }
+                        self.proxy.wake_up();
+                        continue;
+                    }
+                    let (queued, remaining) = messages.drain_budgeted();
+                    if remaining {
+                        self.pending_messages =
+                            Some((generation, std::sync::Arc::clone(&messages)));
+                        self.proxy.wake_up();
+                    }
+                    for message in queued.into_iter().rev() {
+                        events.push_front(super::types::OsrHostEvent::Message(generation, message));
+                    }
+                    message_budget_used = true;
+                }
                 super::types::OsrHostEvent::Connected(_, stream) => {
+                    let writer_stream = match stream.try_clone() {
+                        Ok(writer) => writer,
+                        Err(error) => {
+                            eprintln!("Sabine OSR could not clone control socket: {error}");
+                            let _ = stream.shutdown(std::net::Shutdown::Both);
+                            self.awaiting_connection = false;
+                            continue;
+                        }
+                    };
                     self.socket = Some(std::sync::Arc::new(std::sync::Mutex::new(stream)));
+                    self.control_writer = Some(std::sync::Arc::new(
+                        crate::osr::control::ControlWriter::start(writer_stream),
+                    ));
                     self.awaiting_connection = false;
                     let mut output = std::io::stdout();
                     use std::io::Write;
@@ -238,6 +301,8 @@ impl OsrNativeHost {
                     self.send_control(&line);
                 }
                 super::types::OsrHostEvent::Disconnected(_) => {
+                    self.control_writer = None;
+                    self.pending_messages = None;
                     self.socket = None;
                     self.awaiting_connection = false;
                     if self.closing_deadline.is_some() {

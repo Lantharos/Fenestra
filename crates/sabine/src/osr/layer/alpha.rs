@@ -12,10 +12,10 @@ pub(super) struct LayerAlphaModifier {
 }
 
 impl LayerAlphaModifier {
-    pub(super) fn bind(state: &WindowState<()>) -> Option<Self> {
+    pub(super) fn bind(state: &WindowState<()>, manager_name: u32) -> Option<Self> {
         let display = display_ptr(state)?;
         let surface = surface_ptr(state)?;
-        unsafe { bind_alpha_modifier(display, surface) }
+        unsafe { bind_alpha_modifier(display, surface, manager_name) }
     }
 
     pub(super) fn set_alpha(&self, alpha: f32) -> bool {
@@ -35,6 +35,15 @@ impl LayerAlphaModifier {
         }
         true
     }
+}
+
+pub(super) fn alpha_manager_name(globals: &wayland_client::globals::GlobalList) -> Option<u32> {
+    globals.contents().with_list(|globals| {
+        globals
+            .iter()
+            .find(|global| global.interface == ALPHA_MANAGER_INTERFACE_NAME && global.version >= 1)
+            .map(|global| global.name)
+    })
 }
 
 impl Drop for LayerAlphaModifier {
@@ -81,6 +90,7 @@ fn surface_ptr(state: &WindowState<()>) -> Option<*mut WlProxy> {
 unsafe fn bind_alpha_modifier(
     display: *mut WlDisplay,
     surface: *mut WlProxy,
+    manager_name: u32,
 ) -> Option<LayerAlphaModifier> {
     if display.is_null() || surface.is_null() {
         return None;
@@ -99,29 +109,6 @@ unsafe fn bind_alpha_modifier(
     if registry.is_null() {
         return None;
     }
-
-    let mut state = RegistryState::default();
-    let add_listener = unsafe {
-        wl_proxy_add_listener(
-            registry.cast(),
-            &REGISTRY_LISTENER as *const RegistryListener as *mut _,
-            &mut state as *mut RegistryState as *mut c_void,
-        )
-    };
-    if add_listener != 0 {
-        unsafe { wl_proxy_destroy(registry.cast()) };
-        return None;
-    }
-
-    unsafe {
-        wl_display_roundtrip(display);
-        wl_display_roundtrip(display);
-    }
-
-    let Some(manager_name) = state.manager_name else {
-        unsafe { wl_proxy_destroy(registry.cast()) };
-        return None;
-    };
 
     let manager = unsafe {
         wl_proxy_marshal_flags(
@@ -163,50 +150,7 @@ unsafe fn bind_alpha_modifier(
     })
 }
 
-unsafe extern "C" fn registry_global(
-    data: *mut c_void,
-    _registry: *mut WlRegistry,
-    name: u32,
-    interface: *const c_char,
-    _version: u32,
-) {
-    if data.is_null() || interface.is_null() {
-        return;
-    }
-    let state = unsafe { &mut *(data.cast::<RegistryState>()) };
-    let interface = unsafe { std::ffi::CStr::from_ptr(interface) };
-    if interface.to_bytes() == ALPHA_MANAGER_INTERFACE_NAME {
-        state.manager_name = Some(name);
-    }
-}
-
-unsafe extern "C" fn registry_global_remove(
-    _data: *mut c_void,
-    _registry: *mut WlRegistry,
-    _name: u32,
-) {
-}
-
-#[derive(Default)]
-struct RegistryState {
-    manager_name: Option<u32>,
-}
-
-#[repr(C)]
-struct RegistryListener {
-    global: unsafe extern "C" fn(*mut c_void, *mut WlRegistry, u32, *const c_char, u32),
-    global_remove: unsafe extern "C" fn(*mut c_void, *mut WlRegistry, u32),
-}
-
-static REGISTRY_LISTENER: RegistryListener = RegistryListener {
-    global: registry_global,
-    global_remove: registry_global_remove,
-};
-
-unsafe impl Sync for RegistryListener {}
-
 type WlDisplay = c_void;
-type WlRegistry = c_void;
 type WlProxy = c_void;
 
 #[repr(C)]
@@ -235,7 +179,7 @@ unsafe impl Sync for WlInterface {}
 unsafe impl Sync for WlMessage {}
 unsafe impl Sync for InterfaceTypes {}
 
-const ALPHA_MANAGER_INTERFACE_NAME: &[u8] = b"wp_alpha_modifier_v1";
+const ALPHA_MANAGER_INTERFACE_NAME: &str = "wp_alpha_modifier_v1";
 const DISPLAY_GET_REGISTRY: u32 = 1;
 const REGISTRY_BIND: u32 = 0;
 const ALPHA_MANAGER_DESTROY: u32 = 0;
@@ -301,12 +245,6 @@ unsafe extern "C" {
     #[link_name = "wl_registry_interface"]
     static WL_REGISTRY_INTERFACE: WlInterface;
 
-    fn wl_display_roundtrip(display: *mut WlDisplay) -> c_int;
-    fn wl_proxy_add_listener(
-        proxy: *mut WlProxy,
-        implementation: *mut c_void,
-        data: *mut c_void,
-    ) -> c_int;
     fn wl_proxy_get_version(proxy: *mut WlProxy) -> u32;
     fn wl_proxy_destroy(proxy: *mut WlProxy);
     fn wl_proxy_marshal_flags(

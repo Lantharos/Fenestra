@@ -1,10 +1,12 @@
 use std::{
-    collections::VecDeque,
-    io::{self, BufRead, Write},
+    io::{self, BufRead},
     net::Shutdown,
+    os::fd::AsRawFd,
     os::unix::net::{UnixListener, UnixStream},
-    path::PathBuf,
-    sync::{Arc, Condvar, Mutex},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::Duration,
 };
@@ -12,7 +14,8 @@ use std::{
 use layershellev::calloop::channel::Sender;
 
 use crate::ShellSurfaceMargin;
-use crate::osr::protocol::{OsrMessage, OsrPaintBatch, read_message};
+use crate::osr::message_queue::MessageQueue;
+use crate::osr::protocol::read_message;
 
 pub(super) enum LayerHostEvent {
     Connected(UnixStream),
@@ -34,258 +37,6 @@ pub(super) enum LayerHostEvent {
     Quit,
     ControlLine(String),
     Disconnected,
-}
-
-pub(super) struct MessageQueue {
-    state: Mutex<MessageQueueState>,
-    space_available: Condvar,
-}
-
-const MAX_QUEUED_MESSAGES: usize = 256;
-const MAX_QUEUED_CONTROLS: usize = 256;
-const MESSAGE_DISPATCH_BUDGET: usize = 32;
-
-#[derive(Default)]
-struct MessageQueueState {
-    messages: VecDeque<OsrMessage>,
-    wake_queued: bool,
-}
-
-impl MessageQueue {
-    fn new() -> Self {
-        Self {
-            state: Mutex::new(MessageQueueState::default()),
-            space_available: Condvar::new(),
-        }
-    }
-
-    fn push(&self, message: OsrMessage) -> bool {
-        let Ok(state) = self.state.lock() else {
-            return false;
-        };
-        let mut state = state;
-        while state.messages.len() >= MAX_QUEUED_MESSAGES {
-            let Ok(next) = self.space_available.wait(state) else {
-                return false;
-            };
-            state = next;
-        }
-        match message {
-            OsrMessage::PaintBatch(incoming) => {
-                let matching = state
-                    .messages
-                    .iter_mut()
-                    .rev()
-                    .take_while(|message| matches!(message, OsrMessage::PaintBatch(_)))
-                    .find_map(|message| match message {
-                        OsrMessage::PaintBatch(queued) if queued.surface == incoming.surface => {
-                            Some(queued)
-                        }
-                        _ => None,
-                    });
-                let incoming = if let Some(queued) = matching {
-                    merge_paint_batch(queued, incoming)
-                } else {
-                    Some(incoming)
-                };
-                if let Some(incoming) = incoming {
-                    state.messages.push_back(OsrMessage::PaintBatch(incoming));
-                }
-            }
-            message => state.messages.push_back(message),
-        }
-        if state.wake_queued {
-            false
-        } else {
-            state.wake_queued = true;
-            true
-        }
-    }
-
-    pub(super) fn drain_budgeted(&self) -> (VecDeque<OsrMessage>, bool) {
-        let Ok(mut state) = self.state.lock() else {
-            return (VecDeque::new(), false);
-        };
-        let count = state.messages.len().min(MESSAGE_DISPATCH_BUDGET);
-        let messages = state.messages.drain(..count).collect();
-        let remaining = !state.messages.is_empty();
-        state.wake_queued = remaining;
-        drop(state);
-        self.space_available.notify_all();
-        (messages, remaining)
-    }
-}
-
-fn merge_paint_batch(queued: &mut OsrPaintBatch, incoming: OsrPaintBatch) -> Option<OsrPaintBatch> {
-    if queued.surface != incoming.surface
-        || queued.width != incoming.width
-        || queued.height != incoming.height
-    {
-        return Some(incoming);
-    }
-    queued.x = incoming.x;
-    queued.y = incoming.y;
-    for frame in incoming.frames {
-        queued
-            .frames
-            .retain(|queued_frame| !frame_covers(&frame, queued_frame));
-        queued.frames.push(frame);
-    }
-    None
-}
-
-fn frame_covers(
-    newer: &crate::osr::protocol::OsrFrame,
-    older: &crate::osr::protocol::OsrFrame,
-) -> bool {
-    let newer_right = i64::from(newer.x) + i64::from(newer.width);
-    let newer_bottom = i64::from(newer.y) + i64::from(newer.height);
-    let older_right = i64::from(older.x) + i64::from(older.width);
-    let older_bottom = i64::from(older.y) + i64::from(older.height);
-    newer.x <= older.x
-        && newer.y <= older.y
-        && newer_right >= older_right
-        && newer_bottom >= older_bottom
-}
-
-pub(super) struct ControlWriter {
-    queue: Arc<ControlQueue>,
-}
-
-struct ControlQueue {
-    state: Mutex<ControlQueueState>,
-    ready: Condvar,
-}
-
-struct ControlQueueState {
-    messages: VecDeque<ControlMessage>,
-    closed: bool,
-    error: Option<String>,
-}
-
-enum ControlMessage {
-    Motion(String),
-    Ordered(String),
-}
-
-impl ControlWriter {
-    pub(super) fn start(mut stream: UnixStream) -> Self {
-        let queue = Arc::new(ControlQueue {
-            state: Mutex::new(ControlQueueState {
-                messages: VecDeque::new(),
-                closed: false,
-                error: None,
-            }),
-            ready: Condvar::new(),
-        });
-        let worker_queue = Arc::clone(&queue);
-        thread::spawn(move || {
-            while let Some(message) = worker_queue.next() {
-                let line = match message {
-                    ControlMessage::Motion(line) | ControlMessage::Ordered(line) => line,
-                };
-                if let Err(error) = stream.write_all(line.as_bytes()) {
-                    worker_queue.fail(error);
-                    break;
-                }
-            }
-        });
-        Self { queue }
-    }
-
-    pub(super) fn send(&self, line: String) -> Result<(), String> {
-        self.queue.push(ControlMessage::Ordered(line))
-    }
-
-    pub(super) fn send_motion(&self, line: String) -> Result<(), String> {
-        let Ok(mut state) = self.queue.state.lock() else {
-            return Err("control queue lock was poisoned".to_string());
-        };
-        if state.closed {
-            return Err(state
-                .error
-                .clone()
-                .unwrap_or_else(|| "control writer is closed".to_string()));
-        }
-        if state.messages.len() >= MAX_QUEUED_CONTROLS {
-            if let Some(pending) = state
-                .messages
-                .iter_mut()
-                .rev()
-                .find_map(|message| match message {
-                    ControlMessage::Motion(pending) => Some(pending),
-                    ControlMessage::Ordered(_) => None,
-                })
-            {
-                *pending = line;
-            }
-            return Ok(());
-        }
-        if let Some(ControlMessage::Motion(pending)) = state.messages.back_mut() {
-            *pending = line;
-        } else {
-            state.messages.push_back(ControlMessage::Motion(line));
-        }
-        drop(state);
-        self.queue.ready.notify_one();
-        Ok(())
-    }
-}
-
-impl Drop for ControlWriter {
-    fn drop(&mut self) {
-        if let Ok(mut state) = self.queue.state.lock() {
-            state.closed = true;
-        }
-        self.queue.ready.notify_one();
-    }
-}
-
-impl ControlQueue {
-    fn push(&self, message: ControlMessage) -> Result<(), String> {
-        let Ok(state) = self.state.lock() else {
-            return Err("control queue lock was poisoned".to_string());
-        };
-        let mut state = state;
-        while state.messages.len() >= MAX_QUEUED_CONTROLS && !state.closed {
-            let Ok(next) = self.ready.wait(state) else {
-                return Err("control queue lock was poisoned".to_string());
-            };
-            state = next;
-        }
-        if state.closed {
-            return Err(state
-                .error
-                .clone()
-                .unwrap_or_else(|| "control writer is closed".to_string()));
-        }
-        state.messages.push_back(message);
-        drop(state);
-        self.ready.notify_one();
-        Ok(())
-    }
-
-    fn next(&self) -> Option<ControlMessage> {
-        let mut state = self.state.lock().ok()?;
-        loop {
-            if let Some(message) = state.messages.pop_front() {
-                self.ready.notify_all();
-                return Some(message);
-            }
-            if state.closed {
-                return None;
-            }
-            state = self.ready.wait(state).ok()?;
-        }
-    }
-
-    fn fail(&self, error: io::Error) {
-        if let Ok(mut state) = self.state.lock() {
-            state.closed = true;
-            state.error = Some(error.to_string());
-        }
-        self.ready.notify_all();
-    }
 }
 
 pub(super) fn start_layer_parent_bridge_reader(sender: Sender<LayerHostEvent>) {
@@ -379,22 +130,86 @@ fn parse_presentation_control(line: &str) -> Option<(bool, u64, f32, ShellSurfac
     ))
 }
 
-pub(super) fn open_socket_reader(
-    sender: Sender<LayerHostEvent>,
-    authentication_token: String,
-    app_id: &str,
-) -> Option<PathBuf> {
-    let (endpoint, listener) = match crate::osr::transport::IpcEndpoint::bind(app_id) {
-        Ok(connection) => connection,
-        Err(error) => {
-            eprintln!("failed to bind Sabine layer OSR socket: {error}");
-            return None;
+pub(super) struct PendingLayerSocket {
+    endpoint: Option<crate::osr::transport::IpcEndpoint>,
+    listener: Option<UnixListener>,
+}
+
+pub(super) struct LayerSocketHandle {
+    endpoint: crate::osr::transport::IpcEndpoint,
+    cancelled: Arc<AtomicBool>,
+    cancellation: UnixStream,
+    armed: bool,
+}
+
+impl PendingLayerSocket {
+    pub(super) fn bind(app_id: &str) -> Option<Self> {
+        let (endpoint, listener) = match crate::osr::transport::IpcEndpoint::bind(app_id) {
+            Ok(connection) => connection,
+            Err(error) => {
+                eprintln!("failed to bind Sabine layer OSR socket: {error}");
+                return None;
+            }
+        };
+        Some(Self {
+            endpoint: Some(endpoint),
+            listener: Some(listener),
+        })
+    }
+
+    pub(super) fn endpoint(&self) -> Option<&crate::osr::transport::IpcEndpoint> {
+        self.endpoint.as_ref()
+    }
+
+    pub(super) fn start(
+        mut self,
+        sender: Sender<LayerHostEvent>,
+        authentication_token: String,
+    ) -> Option<LayerSocketHandle> {
+        let listener = self.listener.take()?;
+        let endpoint = self.endpoint.take()?;
+        let (cancellation, cancellation_reader) = UnixStream::pair().ok()?;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        start_socket_reader(
+            listener,
+            endpoint.clone(),
+            authentication_token,
+            sender,
+            Arc::clone(&cancelled),
+            cancellation_reader,
+        );
+        Some(LayerSocketHandle {
+            endpoint,
+            cancelled,
+            cancellation,
+            armed: true,
+        })
+    }
+}
+
+impl Drop for PendingLayerSocket {
+    fn drop(&mut self) {
+        if let Some(endpoint) = &self.endpoint {
+            endpoint.unlink();
         }
-    };
-    let crate::osr::transport::IpcEndpoint::Unix(ref socket_path) = endpoint;
-    let path = socket_path.clone();
-    start_socket_reader(listener, endpoint, authentication_token, sender);
-    Some(path)
+    }
+}
+
+impl LayerSocketHandle {
+    pub(super) fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for LayerSocketHandle {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.cancelled.store(true, Ordering::Release);
+        let _ = self.cancellation.shutdown(Shutdown::Both);
+        self.endpoint.unlink();
+    }
 }
 
 fn start_socket_reader(
@@ -402,14 +217,28 @@ fn start_socket_reader(
     endpoint: crate::osr::transport::IpcEndpoint,
     authentication_token: String,
     sender: Sender<LayerHostEvent>,
+    cancelled: Arc<AtomicBool>,
+    cancellation: UnixStream,
 ) {
     thread::spawn(move || {
         let messages = Arc::new(MessageQueue::new());
         let mut stream = loop {
+            if cancelled.load(Ordering::Acquire) {
+                endpoint.unlink();
+                return;
+            }
+            if !wait_for_socket_connection(&listener, &cancellation) {
+                endpoint.unlink();
+                return;
+            }
             let Ok((mut candidate, _)) = listener.accept() else {
                 endpoint.unlink();
                 return;
             };
+            if cancelled.load(Ordering::Acquire) {
+                endpoint.unlink();
+                return;
+            }
             if let Err(error) = candidate.set_read_timeout(Some(Duration::from_millis(750))) {
                 eprintln!("Sabine layer OSR could not set authentication deadline: {error}");
                 continue;
@@ -430,6 +259,11 @@ fn start_socket_reader(
                 }
             }
         };
+        if cancelled.load(Ordering::Acquire) {
+            endpoint.unlink();
+            let _ = stream.shutdown(Shutdown::Both);
+            return;
+        }
         if let Ok(writer) = stream.try_clone() {
             let _ = sender.send(LayerHostEvent::Connected(writer));
         }
@@ -463,6 +297,39 @@ fn start_socket_reader(
         let _ = stream.shutdown(Shutdown::Both);
         let _ = sender.send(LayerHostEvent::Disconnected);
     });
+}
+
+fn wait_for_socket_connection(listener: &UnixListener, cancellation: &UnixStream) -> bool {
+    let mut descriptors = [
+        libc::pollfd {
+            fd: listener.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: cancellation.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+    loop {
+        let result = unsafe {
+            libc::poll(
+                descriptors.as_mut_ptr(),
+                descriptors.len() as libc::nfds_t,
+                -1,
+            )
+        };
+        if result > 0 {
+            return descriptors[1].revents == 0 && descriptors[0].revents != 0;
+        }
+        if result == 0 {
+            continue;
+        }
+        if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+            return false;
+        }
+    }
 }
 
 fn parse_visibility_control(line: &str) -> Option<(bool, Option<u64>)> {

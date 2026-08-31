@@ -8,6 +8,9 @@ use super::types::OsrLayerHost;
 
 impl OsrLayerHost {
     pub(super) fn update_main_effect(&mut self, state: &mut WindowState<()>) {
+        if !self.visible || !self.surface_lifecycle.presentation_ready() {
+            return;
+        }
         let (width, height) = self.surface_size;
         let blur = blur_option(
             self.config.transparent,

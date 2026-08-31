@@ -20,7 +20,9 @@ use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent, menu::MenuEvent};
 pub(super) type EventQueue = crossbeam_channel::Sender<PlatformEvent>;
 
 mod helpers;
+mod instance;
 use helpers::*;
+use instance::SingleInstanceGuard;
 
 pub struct DesktopServiceState {
     _event_sender: EventQueue,

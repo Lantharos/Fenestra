@@ -18,11 +18,14 @@ impl OsrLayerHost {
         self.loading = None;
         self.presentation_buffer.clear();
         self.presentation_full_damage = true;
-        state.request_refresh_all(RefreshRequest::NextFrame);
+        if self.visible && self.surface_lifecycle.presentation_ready() {
+            let main_id = state.main_window().id();
+            state.request_refresh(main_id, RefreshRequest::NextFrame);
+        }
     }
 
     pub(super) fn refresh_loading(&mut self, state: &mut WindowState<()>) -> bool {
-        if !self.visible {
+        if !self.visible || !self.surface_lifecycle.presentation_ready() {
             return false;
         }
         let Some(mut loading) = self.loading else {
@@ -30,7 +33,8 @@ impl OsrLayerHost {
         };
         let now = Instant::now();
         if now < loading.reveal_at {
-            state.request_refresh_all(RefreshRequest::At(loading.reveal_at));
+            let main_id = state.main_window().id();
+            state.request_refresh(main_id, RefreshRequest::At(loading.reveal_at));
             return true;
         }
         let (width, height) = self.buffer_size;
@@ -61,13 +65,18 @@ impl OsrLayerHost {
         self.commit_surface(state, damage);
         loading.next_frame = now + LOADING_ANIMATION_INTERVAL;
         self.loading = Some(loading);
-        state.request_refresh_all(RefreshRequest::At(loading.next_frame));
+        let main_id = state.main_window().id();
+        state.request_refresh(main_id, RefreshRequest::At(loading.next_frame));
         true
     }
 
     fn schedule_loading(&self, state: &mut WindowState<()>) {
-        if let Some(loading) = self.loading {
-            state.request_refresh_all(RefreshRequest::At(loading.reveal_at));
+        if self.visible
+            && self.surface_lifecycle.presentation_ready()
+            && let Some(loading) = self.loading
+        {
+            let main_id = state.main_window().id();
+            state.request_refresh(main_id, RefreshRequest::At(loading.reveal_at));
         }
     }
 }

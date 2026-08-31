@@ -251,7 +251,7 @@ impl OsrNativeHost {
 
     pub(in crate::osr::host) fn forward_mouse_move(&self, leave: bool) {
         if let Some((x, y)) = self.content_position(self.cursor_x, self.cursor_y) {
-            self.send_control(&format!(
+            self.send_mouse_motion(format!(
                 "mouse_move\t{:.2}\t{:.2}\t{}\t{}\n",
                 x,
                 y,

@@ -169,6 +169,8 @@ impl OsrNativeHost {
         {
             let _ = socket.shutdown(std::net::Shutdown::Both);
         }
+        self.control_writer = None;
+        self.pending_messages = None;
         self.socket = None;
         self.awaiting_connection = false;
         self.main_frame = None;

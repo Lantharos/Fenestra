@@ -10,12 +10,17 @@ const REVEAL_DELAY: Duration = Duration::from_millis(500);
 
 impl OsrLayerHost {
     pub(super) fn update_tooltip(&mut self, text: String, state: &mut WindowState<()>) {
+        if !self.visible || !self.surface_lifecycle.presentation_ready() {
+            self.tooltip = None;
+            return;
+        }
         let text = text.trim().to_string();
         if text.is_empty() {
             if self.tooltip.take().is_some_and(|tooltip| tooltip.shown) {
                 self.presentation_buffer.clear();
                 self.presentation_full_damage = true;
-                state.request_refresh_all(RefreshRequest::NextFrame);
+                let main_id = state.main_window().id();
+                state.request_refresh(main_id, RefreshRequest::NextFrame);
             }
             return;
         }
@@ -27,10 +32,14 @@ impl OsrLayerHost {
             reveal_at,
             shown: false,
         });
-        state.request_refresh_all(RefreshRequest::At(reveal_at));
+        let main_id = state.main_window().id();
+        state.request_refresh(main_id, RefreshRequest::At(reveal_at));
     }
 
     pub(super) fn drive_tooltip(&mut self, state: &mut WindowState<()>) {
+        if !self.visible || !self.surface_lifecycle.presentation_ready() {
+            return;
+        }
         let Some(tooltip) = self.tooltip.as_mut() else {
             return;
         };
@@ -39,12 +48,14 @@ impl OsrLayerHost {
         }
         let now = Instant::now();
         if now < tooltip.reveal_at {
-            state.request_refresh_all(RefreshRequest::At(tooltip.reveal_at));
+            let main_id = state.main_window().id();
+            state.request_refresh(main_id, RefreshRequest::At(tooltip.reveal_at));
             return;
         }
         tooltip.shown = true;
         self.presentation_full_damage = true;
-        state.request_refresh_all(RefreshRequest::NextFrame);
+        let main_id = state.main_window().id();
+        state.request_refresh(main_id, RefreshRequest::NextFrame);
     }
 
     pub(super) fn prepare_tooltip_buffer(&mut self) {

@@ -10,7 +10,6 @@ use crate::osr::protocol::{OsrPaintBatch, OsrSurface};
 use super::buffer::{
     DamageRect, compose_frames_buffer, copy_pixels_to_canvas, paint_buffer_file, pixel_stride,
 };
-use super::shell::{anchor_for_shell, keyboard_for_shell, layer_for_shell};
 use super::types::OsrLayerHost;
 
 const MAX_MAIN_BUFFERS: usize = 4;
@@ -72,7 +71,6 @@ impl OsrLayerHost {
             self.scratch.clear();
         }
         self.buffer_size = (width, height);
-        self.surface_mapped = false;
         let byte_len = buffer_len(width, height);
         if paint_buffer_file(
             file,
@@ -190,9 +188,21 @@ impl OsrLayerHost {
     }
 
     pub(super) fn hide_surface(&mut self, state: &mut WindowState<()>) {
-        if !self.surface_mapped {
+        if !self.surface_lifecycle.is_mapped() {
             self.acknowledge_visibility(false);
             return;
+        }
+        if self.surface_lifecycle.schedule_unmap() {
+            self.pending_surface_refresh = false;
+            self.pending_surface_damage = None;
+            let main_id = state.main_window().id();
+            state.request_refresh(main_id, RefreshRequest::NextFrame);
+        }
+    }
+
+    pub(super) fn commit_pending_unmap(&mut self, state: &mut WindowState<()>) -> bool {
+        if !self.surface_lifecycle.unmap_pending() {
+            return false;
         }
         let unit = state.main_window();
         unit.get_wlsurface().attach(None, 0, 0);
@@ -202,12 +212,14 @@ impl OsrLayerHost {
         unit.request_sync(sync_token);
         if !flush_surface(unit.get_wlsurface()) {
             self.wayland_failed = true;
-            return;
+            return true;
         }
-        self.surface_mapped = false;
-        self.remap_sync_token = Some(sync_token);
-        self.remap_configure_generation = None;
+        self.surface_lifecycle.complete_unmap(sync_token);
+        self.layer_layout_dirty = true;
+        self.presentation_dirty = true;
+        self.blur_option = None;
         self.acknowledge_visibility(false);
+        true
     }
 
     pub(super) fn main_frame_ready(&self) -> bool {
@@ -240,15 +252,17 @@ impl OsrLayerHost {
         if !self.visible {
             return;
         }
-        if self.remap_sync_token.is_some() || self.remap_configure_generation.is_some() {
+        if !self.surface_lifecycle.presentation_ready() {
             self.pending_surface_refresh = true;
             return;
         }
-        if !self.surface_mapped {
-            self.restore_layer_state(state);
+        if self.layer_layout_dirty {
+            self.pending_surface_refresh = true;
+            self.request_layer_configure(state);
+            return;
         }
         let unit = state.main_window();
-        let damage = if self.surface_mapped && !self.presentation_full_damage {
+        let damage = if self.surface_lifecycle.is_mapped() && !self.presentation_full_damage {
             damage
         } else {
             DamageRect::full(self.buffer_size.0, self.buffer_size.1)
@@ -257,13 +271,15 @@ impl OsrLayerHost {
             BufferPreparation::Ready(index) => index,
             BufferPreparation::Busy => {
                 self.pending_surface_refresh = true;
-                let surface = unit.get_wlsurface().clone();
                 let unit_id = unit.id();
-                state.request_next_present(unit_id);
-                surface.commit();
-                if !flush_surface(&surface) {
-                    self.wayland_failed = true;
-                    return;
+                if self.surface_lifecycle.is_mapped() {
+                    let surface = unit.get_wlsurface().clone();
+                    state.request_next_present(unit_id);
+                    surface.commit();
+                    if !flush_surface(&surface) {
+                        self.wayland_failed = true;
+                        return;
+                    }
                 }
                 state.request_refresh(unit_id, RefreshRequest::NextFrame);
                 return;
@@ -295,18 +311,9 @@ impl OsrLayerHost {
         }
         self.pending_surface_refresh = false;
         self.pending_surface_damage = None;
-        self.surface_mapped = true;
+        self.surface_lifecycle.mark_mapped();
         self.presentation_full_damage = false;
         self.acknowledge_visibility(true);
-    }
-
-    pub(super) fn commit_current_layer_state(&mut self, state: &mut WindowState<()>) {
-        self.restore_layer_state(state);
-        self.presentation_full_damage = true;
-        self.commit_surface(
-            state,
-            DamageRect::full(self.buffer_size.0, self.buffer_size.1),
-        );
     }
 
     pub(super) fn commit_pending_surface(&mut self, state: &mut WindowState<()>) {
@@ -317,6 +324,13 @@ impl OsrLayerHost {
             .pending_surface_damage
             .unwrap_or_else(|| DamageRect::full(self.buffer_size.0, self.buffer_size.1));
         self.commit_surface(state, damage);
+    }
+
+    pub(super) fn commit_invalidated_surface(&mut self, state: &mut WindowState<()>) {
+        if self.presentation_full_damage && !self.pending_surface_refresh {
+            self.refresh_surface(state);
+        }
+        self.commit_pending_surface(state);
     }
 
     fn current_buffer_ready(&self) -> bool {
@@ -398,51 +412,6 @@ impl OsrLayerHost {
         }
         self.main_buffers.push(buffer);
         BufferPreparation::Ready(self.main_buffers.len() - 1)
-    }
-
-    pub(super) fn restore_layer_state(&mut self, state: &mut WindowState<()>) {
-        let Some(shell_surface) = self.config.shell_surface.clone() else {
-            return;
-        };
-        let main_id = state.main_window().id();
-        let (width, height) = self.layer_commit_size();
-        let unit = state
-            .get_mut_unit_with_id(main_id)
-            .expect("main layer surface must exist");
-        unit.set_layout(
-            anchor_for_shell(shell_surface.anchor),
-            super::layer_size_for_shell((width, height)),
-        );
-        unit.set_margin((
-            shell_surface.margin.top,
-            shell_surface.margin.right,
-            shell_surface.margin.bottom,
-            shell_surface.margin.left,
-        ));
-        unit.set_layer(layer_for_shell(shell_surface.layer));
-        unit.set_exclusive_zone(shell_surface.exclusive_zone.unwrap_or_default());
-        unit.set_keyboard_interactivity(keyboard_for_shell(shell_surface.keyboard_interactivity));
-        if self.alpha_modifier.is_none() {
-            self.alpha_modifier = super::alpha::LayerAlphaModifier::bind(state);
-        }
-        if let Some(modifier) = &self.alpha_modifier {
-            let _ = modifier.set_alpha(self.surface_alpha);
-        }
-        self.update_main_effect(state);
-    }
-
-    fn layer_commit_size(&self) -> (u32, u32) {
-        if let Some(shell_surface) = &self.config.shell_surface
-            && let Some((width, height)) = shell_surface.size
-        {
-            let width = if width == 0 && shell_surface.anchor.left && shell_surface.anchor.right {
-                0
-            } else {
-                width.max(1)
-            };
-            return (width, height.max(1));
-        }
-        (self.surface_size.0.max(1), self.surface_size.1.max(1))
     }
 }
 

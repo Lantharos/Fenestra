@@ -62,6 +62,16 @@ pub fn dispatch_host_mode_from_args(args: &[String]) -> bool {
     launch::dispatch_host_mode_from_args(args)
 }
 
+#[cfg(target_os = "linux")]
+pub fn adopt_inherited_wayland_broker() -> std::io::Result<()> {
+    osr::wayland_broker::adopt()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn adopt_inherited_wayland_broker() -> std::io::Result<()> {
+    Ok(())
+}
+
 pub(crate) use bridge::{
     parse_host_control, prepare_bridge_command, spawn_bridge_dispatch,
     spawn_bridge_dispatch_for_window,

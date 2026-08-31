@@ -48,10 +48,11 @@ futures-util = "0.3.33"
 getrandom = "0.4.3"
 glyphon = "0.12.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
-layershellev = { package = "exwlshellev", git = "https://github.com/Lantharos/exwlshelleventloop.git", rev = "5c56310b589190188bc2e6e5b3b72d6a222b7501" }
+layershellev = { package = "exwlshellev", git = "https://github.com/Lantharos/exwlshelleventloop.git", rev = "fdff48c7a525f00e2229fef9734030d9cb3d24cb" }
 smithay-client-toolkit = "0.20.0"
 ksni = { version = "0.3.6", features = ["blocking"] }
 libc = "0.2.189"
+rustix = { version = "1.1.4", features = ["net"] }
 pollster = "1.0.1"
 clap = { version = "4.6.6", features = ["derive"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSGraphics", "NSResponder", "NSView", "NSVisualEffectView"] }

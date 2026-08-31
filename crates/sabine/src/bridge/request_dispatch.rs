@@ -1,8 +1,4 @@
-use std::{
-    io::Write,
-    sync::{Arc, Mutex},
-    thread,
-};
+use std::thread;
 
 use sabine_bridge::{BridgeCommand, BridgeError, BridgeResult};
 
@@ -93,7 +89,7 @@ impl BridgeRequestDispatcher {
         runtime: sabine_bridge::BridgeRuntime,
         activity: sabine_bridge::ActivityRegistry,
         activity_emitter: super::events::BridgeEventEmitter,
-        stdin: Arc<Mutex<std::process::ChildStdin>>,
+        writer: super::events::BridgeWriter,
     ) -> Self {
         let (request_sender, request_receiver) =
             crossbeam_channel::bounded::<BridgeIpcRequest>(MAX_PENDING_REQUESTS);
@@ -130,7 +126,7 @@ impl BridgeRequestDispatcher {
 
         thread::spawn(move || {
             while let Ok(response) = response_receiver.recv() {
-                if !write_response(&stdin, response) {
+                if !writer.send(response.to_string()) {
                     break;
                 }
             }
@@ -157,14 +153,4 @@ impl BridgeRequestDispatcher {
             }
         }
     }
-}
-
-fn write_response(
-    stdin: &Arc<Mutex<std::process::ChildStdin>>,
-    response: BridgeIpcResponse,
-) -> bool {
-    let Ok(mut stdin) = stdin.lock() else {
-        return false;
-    };
-    writeln!(stdin, "{response}").is_ok() && stdin.flush().is_ok()
 }

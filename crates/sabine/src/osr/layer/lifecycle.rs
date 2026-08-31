@@ -58,9 +58,20 @@ impl OsrLayerHost {
         )
     }
 
-    pub(super) fn send_resize(&self) {
+    pub(super) fn send_resize(&mut self) {
         let (width, height, scale) = self.content_size_for_cef();
-        self.send_control(&format!("resize\t{width}\t{height}\t{scale:.4}\n"));
+        let content_size = (width, height, scale.to_bits());
+        if self.last_sent_content_size == Some(content_size) {
+            return;
+        }
+        let Some(writer) = &self.control_writer else {
+            return;
+        };
+        if let Err(error) = writer.send(format!("resize\t{width}\t{height}\t{scale:.4}\n")) {
+            eprintln!("Sabine layer OSR control send failed: {error}");
+            return;
+        }
+        self.last_sent_content_size = Some(content_size);
     }
 
     pub(super) fn suspend(&mut self, reason: &str) {
@@ -102,14 +113,14 @@ impl OsrLayerHost {
     ) {
         match request_id {
             Some(request_id) => {
-                self.acknowledge_superseded_visibility(self.surface_mapped);
+                self.acknowledge_superseded_visibility(self.surface_lifecycle.is_mapped());
                 self.pending_visibility_ack = Some((request_id, visible));
             }
             None if self
                 .pending_visibility_ack
                 .is_some_and(|(_, requested_visible)| requested_visible != visible) =>
             {
-                self.acknowledge_superseded_visibility(self.surface_mapped);
+                self.acknowledge_superseded_visibility(self.surface_lifecycle.is_mapped());
             }
             None => {}
         }
@@ -129,22 +140,20 @@ impl OsrLayerHost {
         margin: sabine_platform::ShellSurfaceMargin,
         state: &mut WindowState<()>,
     ) {
-        self.acknowledge_superseded_visibility(self.surface_mapped);
+        self.acknowledge_superseded_visibility(self.surface_lifecycle.is_mapped());
         self.pending_visibility_ack = Some((request_id, visible));
-        self.surface_alpha = alpha.clamp(0.0, 1.0);
-        if let Some(shell_surface) = self.config.shell_surface.as_mut() {
+        let alpha = alpha.clamp(0.0, 1.0);
+        if (self.surface_alpha - alpha).abs() > 0.001 {
+            self.surface_alpha = alpha;
+            self.presentation_dirty = true;
+        }
+        if let Some(shell_surface) = self.config.shell_surface.as_mut()
+            && shell_surface.margin != margin
+        {
             shell_surface.margin = margin;
+            self.presentation_dirty = true;
         }
         self.visible = visible;
-        self.restore_layer_state(state);
-        if !visible && !self.surface_mapped {
-            let surface = state.main_window().get_wlsurface();
-            surface.commit();
-            if !super::surface::flush_surface(surface) {
-                self.wayland_failed = true;
-                return;
-            }
-        }
         if visible {
             self.show_surface(state);
         } else {
@@ -153,12 +162,32 @@ impl OsrLayerHost {
     }
 
     pub(super) fn show_surface(&mut self, state: &mut WindowState<()>) {
+        self.surface_lifecycle.cancel_scheduled_unmap();
+        let was_suspended = self.lifecycle_state == LayerLifecycleState::Suspended;
+        self.resume("visible");
+        if was_suspended {
+            self.send_resize();
+        }
+        if !self.surface_lifecycle.presentation_ready() {
+            return;
+        }
+        if self.layer_layout_dirty
+            || (!self.surface_lifecycle.is_mapped() && self.presentation_dirty)
+        {
+            self.request_layer_configure(state);
+            return;
+        }
+        self.apply_pending_presentation(state);
+        if self.wayland_failed {
+            return;
+        }
+        if self.surface_lifecycle.is_mapped() {
+            self.acknowledge_visibility(true);
+            return;
+        }
+
         let retained_frame_ready = self.retained_frame_ready();
-        let awaiting_sync = self.remap_sync_token.is_some();
-        let awaiting_configure = self.remap_configure_generation.is_some();
-        if awaiting_configure && !awaiting_sync {
-            self.restore_layer_state(state);
-        } else if retained_frame_ready {
+        if retained_frame_ready {
             self.loading = None;
             self.presentation_buffer.clear();
             self.presentation_full_damage = true;
@@ -167,12 +196,10 @@ impl OsrLayerHost {
                 super::buffer::DamageRect::full(self.buffer_size.0, self.buffer_size.1),
             );
         }
-        self.force_resume("visible");
-        self.send_resize();
         if self.pointer_inside {
             self.forward_mouse_move(false);
         }
-        if retained_frame_ready || awaiting_sync || awaiting_configure {
+        if retained_frame_ready {
             return;
         }
         if self.main_frame_ready() && self.loading.is_some() {
@@ -197,6 +224,11 @@ impl OsrLayerHost {
         self.send_control("focus\t0\n");
         self.force_suspend("hidden");
         self.send_resize();
+        self.tooltip = None;
+        self.presentation_buffer.clear();
+        self.presentation_full_damage = true;
+        self.pending_surface_refresh = false;
+        self.pending_surface_damage = None;
         self.hide_surface(state);
         if !self.config.lifecycle.retain_hidden_frame {
             self.release_hidden_frame_memory();
@@ -209,9 +241,8 @@ impl OsrLayerHost {
             return;
         }
         self.surface_alpha = alpha;
-        if self.surface_mapped {
-            self.commit_current_layer_state(state);
-        }
+        self.presentation_dirty = true;
+        self.apply_pending_presentation(state);
     }
 
     pub(super) fn set_surface_margin(
@@ -226,9 +257,8 @@ impl OsrLayerHost {
             return;
         }
         shell_surface.margin = margin;
-        if self.surface_mapped {
-            self.commit_current_layer_state(state);
-        }
+        self.presentation_dirty = true;
+        self.apply_pending_presentation(state);
     }
 
     pub(super) fn set_surface_size(
@@ -245,14 +275,7 @@ impl OsrLayerHost {
             return;
         }
         shell_surface.size = Some(size);
-        self.restore_layer_state(state);
-        if self.surface_mapped {
-            self.presentation_full_damage = true;
-            self.commit_surface(
-                state,
-                super::buffer::DamageRect::full(self.buffer_size.0, self.buffer_size.1),
-            );
-        }
+        self.request_layer_configure(state);
     }
 
     pub(super) fn begin_close(&mut self) {

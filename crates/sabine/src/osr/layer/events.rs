@@ -4,7 +4,7 @@ use std::{
 };
 
 use layershellev::{
-    DispatchMessage, ExWlShellEvent as LayerShellEvent, ReturnData, WindowState, id,
+    DispatchMessage, ExWlShellEvent as LayerShellEvent, RefreshRequest, ReturnData, WindowState, id,
 };
 
 use crate::osr::host::guest_preview_data_url;
@@ -25,9 +25,10 @@ impl OsrLayerHost {
         if self.wayland_failed {
             return ReturnData::RequestExit;
         }
-        match event {
+        let result = match event {
             LayerShellEvent::InitRequest => ReturnData::RequestBind,
             LayerShellEvent::BindProvide(globals, qh) => {
+                self.alpha_manager_name = super::alpha::alpha_manager_name(globals);
                 let Ok(shm) =
                     globals.bind::<layershellev::reexport::wl_shm::WlShm, _, _>(qh, 1..=1, ())
                 else {
@@ -58,21 +59,28 @@ impl OsrLayerHost {
                     self.clear_frames();
                 }
                 let buffer = self.install_wayland_buffer(file, shm, qh, width, height);
-                self.surface_mapped = true;
+                self.surface_lifecycle.mark_mapped();
                 if self.visible {
                     self.update_main_effect(state);
+                } else {
+                    self.hide_surface(state);
                 }
                 ReturnData::WlBuffer(buffer)
             }
             LayerShellEvent::RequestMessages(message) => self.handle_message(message, state, id),
             LayerShellEvent::UserEvent(event) => self.handle_host_event(event, state, id),
             LayerShellEvent::NormalDispatch => {
-                self.drive_child();
+                self.drive_child(state);
                 self.refresh_loading(state);
                 self.drive_tooltip(state);
                 ReturnData::None
             }
             _ => ReturnData::None,
+        };
+        if self.wayland_failed {
+            ReturnData::RequestExit
+        } else {
+            result
         }
     }
 
@@ -111,17 +119,16 @@ impl OsrLayerHost {
                     self.commit_pending_popup_surface(state);
                     return ReturnData::None;
                 }
-                self.configure_generation = *configure_generation;
-                if self.remap_sync_token.is_some() {
+                if self.commit_pending_unmap(state) {
                     return ReturnData::None;
                 }
-                if self
-                    .remap_configure_generation
-                    .is_some_and(|generation| *configure_generation <= generation)
+                self.configure_generation = self.configure_generation.max(*configure_generation);
+                if !self
+                    .surface_lifecycle
+                    .accept_configure(*configure_generation)
                 {
                     return ReturnData::None;
                 }
-                self.remap_configure_generation = None;
                 let surface_size = ((*width).max(1), (*height).max(1));
                 let size_changed = self.surface_size != surface_size;
                 self.surface_size = surface_size;
@@ -130,9 +137,16 @@ impl OsrLayerHost {
                     self.recreate_wayland_buffer(surface_size.0, surface_size.1);
                 }
                 if self.visible {
+                    if self.layer_layout_dirty
+                        || (!self.surface_lifecycle.is_mapped() && self.presentation_dirty)
+                    {
+                        self.request_layer_configure(state);
+                        return ReturnData::None;
+                    }
+                    self.apply_pending_presentation(state);
                     self.update_main_effect(state);
                 }
-                self.ensure_child();
+                self.ensure_child(state);
                 self.send_resize();
                 self.drive_tooltip(state);
                 if !self.visible {
@@ -145,18 +159,13 @@ impl OsrLayerHost {
                 if self.visible && self.loading.is_some() {
                     self.refresh_loading(state);
                 } else if self.visible && self.main_frame_ready() {
-                    self.refresh_surface(state);
-                    self.commit_pending_surface(state);
+                    self.commit_invalidated_surface(state);
                 } else if self.visible {
                     self.hide_surface(state);
                 }
             }
-            DispatchMessage::SyncDone { token } if self.remap_sync_token == Some(*token) => {
-                self.remap_sync_token = None;
-                self.remap_configure_generation = Some(self.configure_generation);
-                if self.visible {
-                    self.restore_layer_state(state);
-                }
+            DispatchMessage::SyncDone { token } => {
+                self.complete_remap_sync(*token, state);
             }
             DispatchMessage::Focused(_) if self.visible => {
                 self.focused = true;
@@ -247,12 +256,15 @@ impl OsrLayerHost {
             }
             DispatchMessage::Ime(ime) if self.visible => self.forward_ime(ime),
             DispatchMessage::Closed => {
-                if self
-                    .popup
-                    .as_ref()
-                    .is_some_and(|popup| Some(popup.id) == id)
-                {
-                    self.popup = None;
+                let main_id = state.main_window().id();
+                if id.is_some_and(|closed_id| closed_id != main_id) {
+                    if self
+                        .popup
+                        .as_ref()
+                        .is_some_and(|popup| Some(popup.id) == id)
+                    {
+                        self.popup = None;
+                    }
                     return ReturnData::None;
                 }
                 self.begin_close();
@@ -271,9 +283,13 @@ impl OsrLayerHost {
     ) -> ReturnData<()> {
         match event {
             LayerHostEvent::Connected(stream) => {
+                if let Some(socket) = self.pending_socket.take() {
+                    socket.disarm();
+                }
                 self.child_retry_at = None;
                 self.child_handoff_deadline = None;
-                self.control_writer = Some(super::socket::ControlWriter::start(stream));
+                self.control_writer = Some(crate::osr::control::ControlWriter::start(stream));
+                self.last_sent_content_size = None;
                 if !self.visible {
                     self.force_suspend("hidden");
                 }
@@ -287,8 +303,14 @@ impl OsrLayerHost {
                         .sender
                         .send(LayerHostEvent::MessagesReady(Arc::clone(&messages)));
                 }
-                for message in queued {
+                let mut queued = queued;
+                while let Some(message) = queued.pop_front() {
                     if let Some(return_data) = self.handle_osr_message(message, state, id) {
+                        if messages.requeue_front(queued) {
+                            let _ = self
+                                .sender
+                                .send(LayerHostEvent::MessagesReady(Arc::clone(&messages)));
+                        }
                         return return_data;
                     }
                 }
@@ -317,6 +339,7 @@ impl OsrLayerHost {
             }
             LayerHostEvent::Disconnected => {
                 self.control_writer = None;
+                self.last_sent_content_size = None;
                 return ReturnData::RequestExit;
             }
         }
@@ -453,16 +476,18 @@ impl OsrLayerHost {
         None
     }
 
-    pub(super) fn ensure_child(&mut self) {
-        if self.control_writer.is_some()
-            || self.child.is_some()
-            || self
-                .child_retry_at
-                .is_some_and(|deadline| Instant::now() < deadline)
-            || self
-                .child_handoff_deadline
-                .is_some_and(|deadline| Instant::now() < deadline)
-        {
+    pub(super) fn ensure_child(&mut self, state: &mut WindowState<()>) {
+        if self.control_writer.is_some() || self.child.is_some() {
+            return;
+        }
+        let now = Instant::now();
+        let next_deadline = [self.child_retry_at, self.child_handoff_deadline]
+            .into_iter()
+            .flatten()
+            .filter(|deadline| *deadline > now)
+            .min();
+        if let Some(deadline) = next_deadline {
+            self.request_child_wake(state, deadline);
             return;
         }
         let Some(app_id) = self
@@ -479,16 +504,16 @@ impl OsrLayerHost {
             eprintln!("failed to secure Sabine layer OSR transport");
             return;
         };
-        let Some(socket_path) = super::socket::open_socket_reader(
-            self.sender.clone(),
-            authentication_token.clone(),
-            app_id,
-        ) else {
+        let Some(pending_socket) = super::socket::PendingLayerSocket::bind(app_id) else {
+            self.schedule_child_retry(state);
+            return;
+        };
+        let Some(endpoint) = pending_socket.endpoint().cloned() else {
+            self.schedule_child_retry(state);
             return;
         };
 
         let (width, height, scale) = self.content_size_for_cef();
-        let endpoint = crate::osr::transport::IpcEndpoint::Unix(socket_path);
         let mut command = match crate::osr::cef_osr_command(
             &self.config.runtime_dir,
             &self.config.host_binary,
@@ -506,22 +531,33 @@ impl OsrLayerHost {
             Ok(command) => command,
             Err(error) => {
                 eprintln!("failed to prepare Sabine layer OSR child: {error}");
+                self.schedule_child_retry(state);
                 return;
             }
         };
-        let child = match command.spawn() {
+        let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
                 eprintln!("failed to launch Sabine layer OSR child: {error}");
+                self.schedule_child_retry(state);
                 return;
             }
         };
+        let Some(socket_handle) = pending_socket.start(self.sender.clone(), authentication_token)
+        else {
+            let _ = child.kill();
+            let _ = child.wait();
+            self.schedule_child_retry(state);
+            return;
+        };
+        self.pending_socket = Some(socket_handle);
         self.child_retry_at = None;
         self.child_handoff_deadline = None;
         self.child = Some(child);
+        self.request_child_wake(state, Instant::now() + CHILD_POLL_INTERVAL);
     }
 
-    fn drive_child(&mut self) {
+    fn drive_child(&mut self, state: &mut WindowState<()>) {
         if self.control_writer.is_some() {
             return;
         }
@@ -529,6 +565,7 @@ impl OsrLayerHost {
             match child.try_wait() {
                 Ok(None) => {
                     self.child = Some(child);
+                    self.request_child_wake(state, Instant::now() + CHILD_POLL_INTERVAL);
                     return;
                 }
                 Ok(Some(status))
@@ -537,12 +574,14 @@ impl OsrLayerHost {
                     self.child_handoff_deadline = Some(Instant::now() + PROFILE_HANDOFF_TIMEOUT);
                 }
                 Ok(Some(status)) => {
+                    self.pending_socket = None;
                     eprintln!(
                         "Sabine layer OSR child exited ({status}); retrying shared-profile launch"
                     );
                     self.child_retry_at = Some(Instant::now() + CHILD_RETRY_DELAY);
                 }
                 Err(error) => {
+                    self.pending_socket = None;
                     eprintln!("failed to inspect Sabine layer OSR child: {error}");
                     self.child_retry_at = Some(Instant::now() + CHILD_RETRY_DELAY);
                 }
@@ -553,12 +592,27 @@ impl OsrLayerHost {
             .is_some_and(|deadline| Instant::now() >= deadline)
         {
             eprintln!("Sabine layer OSR profile handoff timed out; retrying launch");
+            self.pending_socket = None;
             self.child_handoff_deadline = None;
         }
-        self.ensure_child();
+        self.ensure_child(state);
+    }
+
+    fn schedule_child_retry(&mut self, state: &mut WindowState<()>) {
+        let deadline = Instant::now() + CHILD_RETRY_DELAY;
+        self.child_retry_at = Some(deadline);
+        self.request_child_wake(state, deadline);
+    }
+
+    fn request_child_wake(&self, state: &mut WindowState<()>, deadline: Instant) {
+        let Some(main_id) = state.windows().first().map(|unit| unit.id()) else {
+            return;
+        };
+        state.request_refresh(main_id, RefreshRequest::At(deadline));
     }
 }
 
 const CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED: i32 = 24;
+const CHILD_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const CHILD_RETRY_DELAY: Duration = Duration::from_millis(150);
 const PROFILE_HANDOFF_TIMEOUT: Duration = Duration::from_secs(15);

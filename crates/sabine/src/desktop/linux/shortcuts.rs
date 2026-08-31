@@ -12,6 +12,7 @@ pub(super) fn spawn_global_shortcut(
     events: EventQueue,
 ) -> ShortcutRuntime {
     let registration = registration.clone();
+    let (cancel, cancelled) = tokio::sync::oneshot::channel();
     let thread = thread::spawn(move || {
         let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -19,17 +20,31 @@ pub(super) fn spawn_global_shortcut(
         else {
             return;
         };
-        let _ = runtime.block_on(run_portal_shortcut(registration, events));
+        runtime.block_on(async move {
+            tokio::select! {
+                _ = cancelled => {}
+                _ = run_portal_shortcut(registration, events) => {}
+            }
+        });
     });
-    ShortcutRuntime { thread }
+    ShortcutRuntime {
+        cancel: Some(cancel),
+        thread: Some(thread),
+    }
 }
 pub(super) struct ShortcutRuntime {
-    thread: JoinHandle<()>,
+    cancel: Option<tokio::sync::oneshot::Sender<()>>,
+    thread: Option<JoinHandle<()>>,
 }
 
 impl Drop for ShortcutRuntime {
     fn drop(&mut self) {
-        let _ = self.thread.thread().id();
+        if let Some(cancel) = self.cancel.take() {
+            let _ = cancel.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 pub(super) async fn run_portal_shortcut(

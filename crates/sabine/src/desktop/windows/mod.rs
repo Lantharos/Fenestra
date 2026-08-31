@@ -21,7 +21,9 @@ pub(super) type MenuActions = HashMap<String, (String, String, Option<String>)>;
 pub(super) type ShortcutActions = HashMap<u32, (String, String)>;
 
 mod helpers;
+mod instance;
 use helpers::*;
+use instance::SingleInstanceGuard;
 
 pub struct DesktopServiceState {
     _event_sender: EventQueue,

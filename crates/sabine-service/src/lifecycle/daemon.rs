@@ -297,9 +297,8 @@ fn same_executable(left: &Path, right: &Path) -> bool {
     let right = fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
     #[cfg(windows)]
     {
-        return left
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&right.to_string_lossy());
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
     }
     #[cfg(not(windows))]
     {

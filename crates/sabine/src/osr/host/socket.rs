@@ -1,7 +1,12 @@
-use std::{sync::mpsc, thread};
+use std::{
+    sync::{Arc, mpsc},
+    thread,
+    time::Duration,
+};
 
 use winit::event_loop::EventLoopProxy;
 
+use crate::osr::message_queue::MessageQueue;
 use crate::osr::protocol::read_message;
 use crate::osr::transport::{IpcEndpoint, IpcListener};
 
@@ -16,6 +21,7 @@ pub(super) fn start_socket_reader(
     proxy: EventLoopProxy,
 ) {
     thread::spawn(move || {
+        let messages = Arc::new(MessageQueue::new());
         let mut stream = loop {
             let Ok((mut candidate, _)) = listener.accept() else {
                 endpoint.unlink();
@@ -23,8 +29,18 @@ pub(super) fn start_socket_reader(
                 proxy.wake_up();
                 return;
             };
+            if let Err(error) = candidate.set_read_timeout(Some(Duration::from_millis(750))) {
+                eprintln!("Sabine OSR could not set authentication deadline: {error}");
+                continue;
+            }
             match crate::osr::transport::authenticate(&mut candidate, &authentication_token) {
-                Ok(crate::osr::transport::Authentication::Accepted) => break candidate,
+                Ok(crate::osr::transport::Authentication::Accepted) => {
+                    if let Err(error) = candidate.set_read_timeout(None) {
+                        eprintln!("Sabine OSR could not clear authentication deadline: {error}");
+                        continue;
+                    }
+                    break candidate;
+                }
                 Ok(crate::osr::transport::Authentication::Probe) => continue,
                 Err(error) => {
                     eprintln!("Sabine OSR reject connect: {error}");
@@ -42,13 +58,18 @@ pub(super) fn start_socket_reader(
         loop {
             match read_message(&mut stream) {
                 Ok(Some(message)) => {
-                    if sender
-                        .send(OsrHostEvent::Message(generation, message))
-                        .is_err()
-                    {
-                        break;
+                    if messages.push(message) {
+                        if sender
+                            .send(OsrHostEvent::MessagesReady(
+                                generation,
+                                Arc::clone(&messages),
+                            ))
+                            .is_err()
+                        {
+                            break;
+                        }
+                        proxy.wake_up();
                     }
-                    proxy.wake_up();
                 }
                 Ok(None) => break,
                 Err(error)

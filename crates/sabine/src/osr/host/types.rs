@@ -1,5 +1,8 @@
 use std::{
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -60,6 +63,7 @@ pub(super) fn uses_sabine_chrome(chrome: SabineWindowChrome) -> bool {
 pub(super) enum OsrHostEvent {
     Connected(u64, IpcStream),
     Message(u64, OsrMessage),
+    MessagesReady(u64, Arc<crate::osr::message_queue::MessageQueue>),
     HostControl(HostControl),
     /// Forward a bridge or guest-control line to the owning CEF handler socket.
     ControlLine(String),
@@ -71,6 +75,7 @@ impl OsrHostEvent {
         match self {
             Self::Connected(generation, _)
             | Self::Message(generation, _)
+            | Self::MessagesReady(generation, _)
             | Self::Disconnected(generation) => Some(*generation),
             Self::HostControl(_) | Self::ControlLine(_) => None,
         }

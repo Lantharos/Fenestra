@@ -1,12 +1,14 @@
 use std::{
     env, fs,
     fs::{File, OpenOptions},
-    io,
-    io::{Read, Write},
+    io::{self, Read, Write},
+    net::Shutdown,
     os::fd::AsRawFd,
-    os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
-    os::unix::net::{UnixListener, UnixStream},
-    path::PathBuf,
+    os::unix::{
+        fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+        net::{UnixListener, UnixStream},
+    },
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -17,8 +19,7 @@ use std::{
 
 use sabine_platform::{PlatformEvent, SingleInstanceActivation, SingleInstancePolicy};
 
-use super::EventQueue;
-use super::util::sanitize_desktop_id;
+use super::{EventQueue, helpers::sanitize_id};
 
 const INSTANCE_IO_TIMEOUT: Duration = Duration::from_secs(2);
 const INSTANCE_STARTUP_TIMEOUT: Duration = Duration::from_millis(750);
@@ -40,8 +41,7 @@ impl SingleInstanceGuard {
         policy: SingleInstancePolicy,
         events: EventQueue,
     ) -> Result<Self, String> {
-        let socket_path =
-            single_instance_socket_path(instance_id).map_err(|error| error.to_string())?;
+        let socket_path = single_instance_socket_path(instance_id)?;
         if let Some(parent) = socket_path.parent() {
             prepare_socket_directory(parent).map_err(|error| error.to_string())?;
         }
@@ -74,7 +74,7 @@ impl Drop for SingleInstanceGuard {
     }
 }
 
-pub(super) fn spawn_single_instance_listener(
+fn spawn_single_instance_listener(
     lock: File,
     socket_path: PathBuf,
     listener: UnixListener,
@@ -120,7 +120,7 @@ pub(super) fn spawn_single_instance_listener(
     }
 }
 
-pub(super) fn read_single_instance_activation(
+fn read_single_instance_activation(
     policy: SingleInstancePolicy,
     mut stream: UnixStream,
 ) -> Option<SingleInstanceActivation> {
@@ -134,16 +134,20 @@ pub(super) fn read_single_instance_activation(
     if body.len() as u64 > MAX_ACTIVATION_BYTES {
         return None;
     }
-    let value: serde_json::Value = serde_json::from_slice(&body).ok()?;
+    activation_from_json(policy, &body)
+}
+
+fn activation_from_json(
+    policy: SingleInstancePolicy,
+    body: &[u8],
+) -> Option<SingleInstanceActivation> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
     let arguments = value
         .get("arguments")
-        .and_then(|value| value.as_array())
-        .map(|values| {
-            values
-                .iter()
-                .map(|value| value.as_str().map(str::to_string))
-                .collect::<Option<Vec<_>>>()
-        })??;
+        .and_then(|value| value.as_array())?
+        .iter()
+        .map(|value| value.as_str().map(str::to_string))
+        .collect::<Option<Vec<_>>>()?;
     let mut activation = SingleInstanceActivation::new(policy, arguments);
     if let Some(cwd) = value.get("cwd").and_then(|value| value.as_str()) {
         activation = activation.working_directory(cwd);
@@ -159,13 +163,10 @@ pub(super) fn read_single_instance_activation(
     Some(activation)
 }
 
-pub(super) fn send_single_instance_activation(socket_path: &std::path::Path) -> io::Result<()> {
-    let cwd = env::current_dir()
-        .ok()
-        .map(|path| path.display().to_string());
+fn send_single_instance_activation(socket_path: &Path) -> io::Result<()> {
     let body = serde_json::to_vec(&serde_json::json!({
         "arguments": env::args().collect::<Vec<_>>(),
-        "cwd": cwd,
+        "cwd": env::current_dir().ok().map(|path| path.display().to_string()),
         "activationToken": startup_activation_token(),
     }))
     .map_err(io::Error::other)?;
@@ -178,10 +179,10 @@ pub(super) fn send_single_instance_activation(socket_path: &std::path::Path) -> 
     let mut stream = UnixStream::connect(socket_path)?;
     stream.set_write_timeout(Some(INSTANCE_IO_TIMEOUT))?;
     stream.write_all(&body)?;
-    stream.shutdown(std::net::Shutdown::Write)
+    stream.shutdown(Shutdown::Write)
 }
 
-fn notify_existing_instance(socket_path: &std::path::Path) -> io::Result<()> {
+fn notify_existing_instance(socket_path: &Path) -> io::Result<()> {
     let deadline = std::time::Instant::now() + INSTANCE_STARTUP_TIMEOUT;
     loop {
         match send_single_instance_activation(socket_path) {
@@ -194,7 +195,7 @@ fn notify_existing_instance(socket_path: &std::path::Path) -> io::Result<()> {
     }
 }
 
-pub(super) fn startup_activation_token() -> Option<String> {
+fn startup_activation_token() -> Option<String> {
     env::var("XDG_ACTIVATION_TOKEN")
         .or_else(|_| env::var("DESKTOP_STARTUP_ID"))
         .ok()
@@ -202,27 +203,32 @@ pub(super) fn startup_activation_token() -> Option<String> {
         .filter(|token| !token.is_empty())
 }
 
-pub(super) fn single_instance_socket_path(instance_id: Option<&str>) -> io::Result<PathBuf> {
-    let runtime = env::var_os("XDG_RUNTIME_DIR")
-        .map(|path| PathBuf::from(path).join("sabine"))
-        .unwrap_or_else(|| env::temp_dir().join(format!("sabine-{}", current_uid())));
+fn single_instance_socket_path(instance_id: Option<&str>) -> Result<PathBuf, String> {
+    let runtime = match env::var_os("XDG_RUNTIME_DIR") {
+        Some(path) => PathBuf::from(path).join("sabine"),
+        None => super::helpers::home_dir()?
+            .join("Library")
+            .join("Caches")
+            .join("sabine"),
+    };
     let id = instance_id
         .map(str::trim)
         .filter(|id| !id.is_empty())
-        .map(sanitize_desktop_id)
+        .map(sanitize_id)
         .map(Ok)
         .unwrap_or_else(|| {
             env::current_exe().map(|exe| {
                 exe.file_stem()
                     .and_then(|name| name.to_str())
-                    .map(sanitize_desktop_id)
+                    .map(sanitize_id)
                     .unwrap_or_else(|| "app".to_string())
             })
-        })?;
+        })
+        .map_err(|error| error.to_string())?;
     Ok(runtime.join(format!("{id}.sock")))
 }
 
-fn prepare_socket_directory(path: &std::path::Path) -> io::Result<()> {
+fn prepare_socket_directory(path: &Path) -> io::Result<()> {
     if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -240,7 +246,7 @@ fn prepare_socket_directory(path: &std::path::Path) -> io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
 }
 
-fn bind_listener(path: &std::path::Path) -> io::Result<UnixListener> {
+fn bind_listener(path: &Path) -> io::Result<UnixListener> {
     let listener = UnixListener::bind(path)?;
     if let Err(error) = fs::set_permissions(path, fs::Permissions::from_mode(0o600)) {
         drop(listener);
@@ -250,7 +256,7 @@ fn bind_listener(path: &std::path::Path) -> io::Result<UnixListener> {
     Ok(listener)
 }
 
-fn remove_stale_socket(path: &std::path::Path) -> io::Result<()> {
+fn remove_stale_socket(path: &Path) -> io::Result<()> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -265,7 +271,7 @@ fn remove_stale_socket(path: &std::path::Path) -> io::Result<()> {
     fs::remove_file(path)
 }
 
-fn acquire_instance_lock(path: &std::path::Path) -> io::Result<File> {
+fn acquire_instance_lock(path: &Path) -> io::Result<File> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)

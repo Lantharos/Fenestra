@@ -100,7 +100,7 @@ fn process_alive(pid: u32) -> bool {
         let active = unsafe { GetExitCodeProcess(process, &mut exit_code) }.is_ok()
             && exit_code == STILL_ACTIVE.0 as u32;
         let _ = unsafe { CloseHandle(process) };
-        return active;
+        active
     }
     #[cfg(not(any(unix, windows)))]
     false

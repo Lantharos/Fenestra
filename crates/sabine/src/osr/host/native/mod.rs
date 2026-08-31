@@ -2,7 +2,7 @@ mod window;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::{BufRead, Write},
+    io::BufRead,
     path::PathBuf,
     process::Child,
     sync::{Arc, Mutex, mpsc},
@@ -17,6 +17,7 @@ use winit::{
     window::{ActivationToken, Window as WinitWindow},
 };
 
+use crate::osr::control::ControlWriter;
 use crate::osr::frame_buffer::FrameBuffer;
 use crate::osr::protocol::OsrFrame;
 use crate::osr::transport::IpcStream;
@@ -41,6 +42,8 @@ pub(super) struct OsrNativeHost {
     pub(super) effect: Option<WindowEffect>,
     pub(super) children: Vec<Child>,
     pub(super) socket: Option<Arc<Mutex<IpcStream>>>,
+    pub(super) control_writer: Option<Arc<ControlWriter>>,
+    pub(super) pending_messages: Option<(u64, Arc<crate::osr::message_queue::MessageQueue>)>,
     pub(super) connection_generation: u64,
     pub(super) awaiting_connection: bool,
     pub(super) surface_size: winit::dpi::PhysicalSize<u32>,
@@ -122,6 +125,8 @@ impl OsrNativeHost {
             effect: None,
             children: Vec::new(),
             socket: None,
+            control_writer: None,
+            pending_messages: None,
             connection_generation: 0,
             awaiting_connection: false,
             surface_size,
@@ -202,14 +207,6 @@ impl OsrNativeHost {
         self.main_load_ready = false;
         self.cef_handed_off = false;
         self.handoff_deadline = None;
-        start_socket_reader(
-            generation,
-            listener,
-            endpoint.clone(),
-            authentication_token.clone(),
-            self.sender.clone(),
-            self.proxy.clone(),
-        );
 
         let (width, height, scale) = self.content_size_for_cef();
         let mut command = match osr::cef_osr_command(
@@ -232,6 +229,7 @@ impl OsrNativeHost {
             Ok(command) => command,
             Err(error) => {
                 self.awaiting_connection = false;
+                endpoint.unlink();
                 eprintln!("failed to prepare Sabine OSR child: {error}");
                 return;
             }
@@ -240,10 +238,19 @@ impl OsrNativeHost {
             Ok(child) => child,
             Err(error) => {
                 self.awaiting_connection = false;
+                endpoint.unlink();
                 eprintln!("failed to launch CEF OSR child: {error}");
                 return;
             }
         };
+        start_socket_reader(
+            generation,
+            listener,
+            endpoint,
+            authentication_token,
+            self.sender.clone(),
+            self.proxy.clone(),
+        );
         self.children.push(child);
     }
 
@@ -296,12 +303,20 @@ impl OsrNativeHost {
     }
 
     pub(super) fn send_control(&self, line: &str) {
-        let Some(socket) = &self.socket else {
+        let Some(writer) = &self.control_writer else {
             return;
         };
-        if let Ok(mut socket) = socket.lock() {
-            let _ = socket.write_all(line.as_bytes());
-            let _ = socket.flush();
+        if let Err(error) = writer.send(line.to_string()) {
+            eprintln!("Sabine native OSR control send failed: {error}");
+        }
+    }
+
+    pub(super) fn send_mouse_motion(&self, line: String) {
+        let Some(writer) = &self.control_writer else {
+            return;
+        };
+        if let Err(error) = writer.send_motion(line) {
+            eprintln!("Sabine native OSR pointer send failed: {error}");
         }
     }
 
@@ -355,6 +370,8 @@ impl OsrNativeHost {
         for child in &mut self.children {
             let _ = child.try_wait();
         }
+        self.control_writer = None;
+        self.pending_messages = None;
         self.socket = None;
         event_loop.exit();
     }

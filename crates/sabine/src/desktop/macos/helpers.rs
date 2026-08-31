@@ -4,18 +4,7 @@
 
 #![cfg(target_os = "macos")]
 
-use std::{
-    collections::HashMap,
-    env, fs, io,
-    io::{Read, Write},
-    os::unix::net::{UnixListener, UnixStream},
-    path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread::{self, JoinHandle},
-};
+use std::{collections::HashMap, env, fs, path::PathBuf};
 
 use global_hotkey::{
     GlobalHotKeyManager,
@@ -23,14 +12,14 @@ use global_hotkey::{
 };
 use sabine_platform::{
     AutostartEntry, DeepLinkRegistration, GlobalShortcutRegistration, NativeMessagingHost,
-    PlatformEvent, Shortcut, SingleInstanceActivation, SingleInstancePolicy, TrayIcon,
+    Shortcut, TrayIcon,
 };
 use tray_icon::{
     Icon, TrayIconBuilder,
     menu::{Menu, MenuItem, PredefinedMenuItem},
 };
 
-pub(super) use super::{EventQueue, HotkeyRuntime, TrayRuntime};
+pub(super) use super::{HotkeyRuntime, TrayRuntime};
 
 pub(super) fn spawn_tray_icon(
     icon: &TrayIcon,
@@ -294,102 +283,10 @@ pub(super) fn register_native_messaging_host(host: &NativeMessagingHost) -> Resu
     Ok(())
 }
 
-pub(super) struct SingleInstanceGuard {
-    _listener: Option<JoinHandle<()>>,
-    running: Arc<AtomicBool>,
-    socket_path: PathBuf,
-}
-
-impl SingleInstanceGuard {
-    pub(super) fn acquire(
-        id: Option<&str>,
-        policy: SingleInstancePolicy,
-        events: EventQueue,
-    ) -> Result<Self, String> {
-        let runtime = runtime_dir()?;
-        fs::create_dir_all(&runtime).map_err(|error| error.to_string())?;
-        let key = sanitize_id(id.unwrap_or("default-instance"));
-        let socket_path = runtime.join(format!("{key}.sock"));
-        let listener = match UnixListener::bind(&socket_path) {
-            Ok(listener) => listener,
-            Err(_) if notify_existing_instance(&socket_path).is_ok() => {
-                return Err(crate::desktop::INSTANCE_ALREADY_RUNNING.to_string());
-            }
-            Err(_) => {
-                fs::remove_file(&socket_path).map_err(|error| error.to_string())?;
-                UnixListener::bind(&socket_path).map_err(|error| error.to_string())?
-            }
-        };
-        let running = Arc::new(AtomicBool::new(true));
-        let thread_running = Arc::clone(&running);
-        let thread = thread::spawn(move || {
-            while thread_running.load(Ordering::Relaxed) {
-                match listener.accept() {
-                    Ok((mut stream, _)) => {
-                        if !thread_running.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        let mut buffer = String::new();
-                        let _ = stream.read_to_string(&mut buffer);
-                        let arguments = buffer
-                            .lines()
-                            .map(str::to_string)
-                            .filter(|line| !line.is_empty())
-                            .collect::<Vec<_>>();
-                        push_event(
-                            &events,
-                            PlatformEvent::SingleInstance(SingleInstanceActivation::new(
-                                policy, arguments,
-                            )),
-                        );
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-        Ok(Self {
-            _listener: Some(thread),
-            running,
-            socket_path,
-        })
-    }
-}
-
-impl Drop for SingleInstanceGuard {
-    fn drop(&mut self) {
-        self.running.store(false, Ordering::Relaxed);
-        let _ = UnixStream::connect(&self.socket_path);
-        if let Some(thread) = self._listener.take() {
-            let _ = thread.join();
-        }
-        let _ = fs::remove_file(&self.socket_path);
-    }
-}
-
-pub(super) fn notify_existing_instance(socket_path: &Path) -> Result<(), String> {
-    let mut stream = UnixStream::connect(socket_path).map_err(|error| error.to_string())?;
-    let payload = std::env::args().collect::<Vec<_>>().join("\n");
-    stream
-        .write_all(payload.as_bytes())
-        .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-pub(super) fn push_event(events: &EventQueue, event: PlatformEvent) {
-    let _ = events.send(event);
-}
-
 pub(super) fn home_dir() -> Result<PathBuf, String> {
     env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| "HOME is required for macOS desktop integration".to_string())
-}
-
-pub(super) fn runtime_dir() -> Result<PathBuf, String> {
-    if let Some(path) = env::var_os("XDG_RUNTIME_DIR") {
-        return Ok(PathBuf::from(path).join("sabine"));
-    }
-    Ok(home_dir()?.join("Library").join("Caches").join("sabine"))
 }
 
 pub(super) fn sanitize_id(value: &str) -> String {
