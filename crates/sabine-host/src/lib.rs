@@ -21,7 +21,7 @@ use build_lock::HostBuildLock;
 use sources::write_host_source;
 use toolchain::apply_cmake_generator;
 
-const RUNTIME_PROBE_VERSION: u32 = 2;
+const RUNTIME_PROBE_VERSION: u32 = 3;
 
 pub fn host_binary_name() -> &'static str {
     if cfg!(target_os = "windows") {
@@ -43,6 +43,7 @@ pub fn host_release_binary(runtime_dir: &Path) -> PathBuf {
 }
 
 pub fn ensure_host(runtime_dir: &Path) -> Result<PathBuf, String> {
+    sabine_runtime::prepare_runtime_assets(runtime_dir).map_err(|error| error.to_string())?;
     if let Some(host) = available_host(runtime_dir) {
         return Ok(host);
     }
@@ -244,6 +245,7 @@ pub fn runtime_binary_directory(runtime_dir: &Path) -> PathBuf {
 }
 
 pub fn prepare_host_runtime(host: &Path, runtime_dir: &Path) -> Result<(), String> {
+    sabine_runtime::prepare_runtime_assets(runtime_dir).map_err(|error| error.to_string())?;
     #[cfg(target_os = "macos")]
     {
         let framework = [runtime_dir.join("Release"), runtime_dir.to_path_buf()]

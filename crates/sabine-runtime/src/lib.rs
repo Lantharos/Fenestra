@@ -1,3 +1,4 @@
+mod assets;
 mod detect;
 mod download;
 mod error;
@@ -12,6 +13,7 @@ mod version;
 
 pub(crate) const MIN_CEF_MAJOR: &str = "151";
 
+pub use assets::prepare_runtime_assets;
 pub use download::{DEFAULT_CEF_INDEX_URL, latest_install_plan};
 pub use error::RuntimeError;
 pub use install::{

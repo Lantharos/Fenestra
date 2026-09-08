@@ -293,3 +293,5 @@ headless smoke probe. Its JSON output includes `probe_error` when the host canno
 
 Sabine is dual-licensed under MIT or Apache-2.0. CEF and Chromium keep their own licenses; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+On Linux, runtime preparation places ICU data beside `Release/libcef.so`, where Chromium loads it before browser resource settings apply. This preparation also runs when using a prebuilt Sabine host; it does not require rebuilding CEF or downloading an already complete runtime.

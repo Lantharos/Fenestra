@@ -143,6 +143,7 @@ fn install_user_runtime_inner(
     let extracted = first_extracted_runtime_dir(&work_dir).ok_or_else(|| {
         RuntimeError::InstallationFailed("download did not contain a runtime directory".to_string())
     })?;
+    crate::prepare_runtime_assets(&extracted)?;
     if plan.install_dir.exists() {
         progress(RuntimeInstallProgress::new(
             RuntimeInstallStep::RemovingOldRuntime,

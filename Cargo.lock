@@ -2796,6 +2796,7 @@ name = "sabine-host"
 version = "0.22.0"
 dependencies = [
  "sabine-bridge",
+ "sabine-runtime",
  "serde",
  "serde_json",
  "windows",
